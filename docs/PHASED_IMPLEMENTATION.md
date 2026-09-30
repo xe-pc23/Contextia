@@ -41,13 +41,27 @@
 | D: 統合・AWS | Claude Opus 5.5 | API handler/application、CDK、Cognito、CI/CD、環境設定、リリース統合 | `apps/api/**`、`infra/cdk/**`、`packages/config/**`、`.github/**`、ルート設定・lockfile |
 | E: モバイル | GPT-6-sol | Expo、端末context取得、画面・認証・ローカル通知・実機テスト | `apps/mobile/**` |
 
+### 工数の目安
+
+これはコード量ではなく、実装・テスト・AWS/実機検証を含む全工程の粗い見積もり。依存サービスの利用可否で変動する。
+
+| 担当 | 比重 | 重くなる要因 |
+|---|---:|---|
+| A | 18% | 共通契約、ガード、5つのdetectorと境界テスト |
+| B | 24% | 5種の外部provider、Bedrock、DynamoDB、通知adapter |
+| C | 15% | 地図・入力編集・結果表示を持つScenario Console |
+| D | 23% | API統合、Cognito/CDK、OIDC、dev/prodデプロイ |
+| E | 20% | Expo権限、iOS/Androidの歩数と背景処理、実機試験 |
+
+BとDが最も重く、統合の待ち時間も発生しやすい。担当パスの重複を増やして均等化するより、A/C/Eの独立した作業を早めに開始し、B/Dの契約・AWS確認を先に通す。
+
 ドキュメントの変更担当は、`API.md` と `TEST_STRATEGY.md` がA、`DEMO.md` がC、`ARCHITECTURE.md`・`DATA_MODEL.md`・`CI_CD.md`・`docs/hackathon/AGENT_LOG.md` がD。`SPEC.md` の製品仕様変更は人間が判断する。B/C/D/Eが契約・保存仕様の変更を必要としたら、担当者に要求と失敗するテストを渡す。担当外のファイルをその場で直さない。
 
 `apps/mobile/**` はEだけが所有し、Aは端末contextを契約型として提供する。ルートの `pnpm-lock.yaml` はDだけが更新する。各workspaceの依存追加は該当レーンがDに先に伝え、Dのlockfile更新後に各ブランチをrebaseする。
 
 ### 必須の受け渡し順
 
-1. Dがpnpm workspace・共通scripts・各workspaceの空の足場を作る。以降、各レーンは専有パスだけを編集する。
+1. Dがpnpm workspace・共通scripts・各workspaceの空の足場を作る。Aは自分のパス内のZod契約から先行着手してよい。検証・統合にはDの足場を取り込む。以降、各レーンは専有パスだけを編集する。
 2. Aが `packages/contracts` のv1 Zod schemaと型を公開する。APIの全列挙値・入力上限・レスポンスを[API.md](./API.md)に合わせる。
 3. Bが `packages/providers/src/ports/**` の引数・戻り値とprovider statusを公開する。Aのdomainはport型に依存しない。
 4. Dがcontracts/portsを取り込み、handler・application・CDKを接続する。CとEは同じcontractsで両クライアントを作る。変更が必要なら契約担当のPRを先に通す。
@@ -68,7 +82,7 @@
 | C | `apps/web` のVite/React画面の足場を作り、contractsをimportしてbuildできることを確認する。完成前の画面には「未接続」と明示し、推薦を捏造しない。 |
 | E | `apps/mobile` のExpo/TypeScript足場を作り、contractsをimportしてbuildできることを確認する。iOS/Android development buildの手順と端末権限の必要条件をREADMEに記す。 |
 
-**統合順:** Dの足場 → Aのcontracts → Bのports → C/Eのクライアント足場。各人の作業ブランチは分離し、Phase 1の実行可能な統合PRでCI・dev smokeを通す。
+**統合順:** Dの足場 → Aのcontracts → Bのports → C/Eのクライアント足場。AはDを待たず契約ファイルを作れるが、Phase 0の完了判定には共通scriptsでの検証が必要。各人の作業ブランチは分離し、Phase 1の実行可能な統合PRでCI・dev smokeを通す。
 
 ### Phase 1 — 公開できる最初の縦断動作（Ship Gateの土台）
 
@@ -151,6 +165,8 @@
 
 以下の `{担当}` と `{Phase}` だけ置き換え、各人が自分のAIに送る。1回の依頼で次のフェーズを含めない。
 
+司令塔への短い指示 **「担当Aを実装して」** は、[TEAM_BOARD.md](./hackathon/TEAM_BOARD.md)にあるAの次の未完了フェーズを意味する。B〜Eも同じ。司令塔は指定レーンのブランチでそのフェーズの作業を進め、実行した検証と未解決の依存を記録する。フェーズ内の独立した作業は進め、依存がないため実行できない検証は保留理由を残す。次のフェーズには統合ゲートが通ってから進む。「担当AのPhase 2を実装して」のように明示された場合はそのフェーズを対象にするが、先行契約を飛ばさない。
+
 ```text
 Contextia の {担当=A/B/C/D/E}、Phase {0/1/2/3/4} を担当してください。
 まず AGENTS.md と docs/README_IMPLEMENTATION.md、docs/SPEC.md、docs/ARCHITECTURE.md、docs/API.md、docs/DATA_MODEL.md、docs/TEST_STRATEGY.md、docs/DEMO.md を読んでください。
@@ -161,7 +177,7 @@ Phase 0は本計画の割当済みブランチを使い、次のPhaseからは f
 最後に変更点、変更ファイル、テスト結果、AWSへの影響、未解決リスク、次の担当者への受け渡しを報告してください。
 ```
 
-Phase 0の最初の依頼だけはDから始める。A/B/C/Eは足場のcommitを取り込んでから各自のPhase 0を進める。各フェーズの統合ゲートを通過した後に、5人が次のPhaseをAIへ依頼する。
+Phase 0の統合はDの足場から始める。Aは契約ファイルを先行作成でき、BはAの型が定まった部分、C/Eは各クライアントの足場を独立して進められる。全員が共通scriptsで検証する前にDの足場を取り込む。各フェーズの統合ゲートを通過した後に次のPhaseをAIへ依頼する。
 
 ## 4. 仕様の優先順位
 
