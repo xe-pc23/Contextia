@@ -12,6 +12,9 @@
 
 ## 全フェーズ共通の制約
 
+- AWSはアカウント `634512763705`、リージョン `ap-northeast-1`。`dev`/`prod` は同一アカウント・リージョン内の別stack/リソース/データとして論理分離する。profile名だけを分離の根拠にしない。
+- 通常の実装、検証、CDK synth、dev stackの`cdk diff`とdevデプロイは `hackathon-dev` を使う。`hackathon-prod` はプロジェクト所有者が本番差分を確認し、反映する時だけ使う。GitHub ActionsはローカルprofileでなくOIDC roleを使う。
+- 本番は検証済み`main`からプロジェクト所有者が手動でデプロイを起動する。担当AIはprodを自動反映しない。詳細は[CI_CD.md](./CI_CD.md)。
 - `dev` と `prod` を分離し、AWSリソース名は `contextia-{stage}-...`。本番S3は非公開でCloudFront OACを使う。
 - domainからAWS SDKを直接呼ばない。外部入力とBedrock出力はZodで検証する。`any`、秘密情報のコミット、偽の交通時刻・天気を禁止する。
 - Bedrockはハードガードと候補生成の後だけ呼ぶ。通知上限・重複判定は決定的なコードで扱う。
@@ -76,7 +79,7 @@ BとDが最も重く、統合の待ち時間も発生しやすい。担当パス
 
 | 担当 | 実装タスクと検証可能な成果 |
 |---|---|
-| D | ルート `package.json`、`pnpm-workspace.yaml`、`tsconfig.base.json`、lockfile、共通5 scriptsを作る。`infra/cdk` のdev/prod stackと `apps/api` の `/health` の足場を作り、`cdk:synth` とCDK assertionで環境分離・Node.js 24.xを確認する。 |
+| D | ルート `package.json`、`pnpm-workspace.yaml`、`tsconfig.base.json`、lockfile、共通5 scriptsとdev専用の`cdk:diff:dev`を作る。`infra/cdk` のdev/prod stackと `apps/api` の `/health` の足場を作り、明示stage・期待account/Region確認・`cdk:synth` とCDK assertionで環境分離・Node.js 24.xを確認する。 |
 | A | `packages/contracts/src` にv1 request/response・列挙値・入力上限をZodで実装し、正しいreal/proactiveとsimulation/preview、座標・時刻・件数・timezoneの異常値テストを追加する。`packages/test-fixtures/scenarios` の5シナリオの入力とmock provider応答の形を決める。 |
 | B | `packages/providers/src/ports` にPlaces、Geocoding、Weather、Routes、RecommendationModel、StateRepository、NotificationProviderを定義し、`ok/degraded/unavailable/timeout/error/not_requested` の共通結果を固定する。SDK型を公開しない型チェックを行う。 |
 | C | `apps/web` のVite/React画面の足場を作り、contractsをimportしてbuildできることを確認する。完成前の画面には「未接続」と明示し、推薦を捏造しない。 |
@@ -93,7 +96,7 @@ BとDが最も重く、統合の待ち時間も発生しやすい。担当パス
 | A | 通知無効・日次上限（low=1/normal=3/high=6件/日）・5分fingerprint・30分trigger/anchorのガード、時計注入、previewの診断、step-goal detectorを実装。timezoneはprofile→検証済みclient→UTCの順に使い、正例・負例・境界・同日重複・DST・preview再実行テストを通す。 |
 | B | Places V2 `SearchNearby`、選択後 `GetPlace(Storage)`、Open-Meteo、Bedrock Converse、DynamoDB profile/state/context/recommendation repositoryを実装。各adapterの正規化・timeout・エラー・AI修復1回・place ID照合・TTL/transactionテストを通す。 |
 | C | Cognitoログイン、MapLibre地図、地図クリック/緯度経度、時刻/歩数/予定/好み入力、step-goal preset、Run、推薦最大3件、usedSignals/providerStatus/エラー表示をWebで実装。previewを固定し、API実応答のschemaを検証する。 |
-| D | Cognito JWT付きHTTP API、`/v1/context/evaluate`、profile読み込み、guard→detector→provider→Bedrock→Storage intent保存のapplication service、構造化ログを接続。previewは設定済みScenario Console/demo認証文脈だけに許可する。CDKでprivate S3+CloudFront OAC、API、Lambda、DynamoDB TTL、Web/Mobile用Cognito app client、制限付きmap API keyをdev/prod分離で作る。OIDCのCIとdev/prod smokeを作り、Claude Code→AWSの実操作をログに残す。 |
+| D | Cognito JWT付きHTTP API、`/v1/context/evaluate`、profile読み込み、guard→detector→provider→Bedrock→Storage intent保存のapplication service、構造化ログを接続。previewは設定済みScenario Console/demo認証文脈だけに許可する。CDKでprivate S3+CloudFront OAC、API、Lambda、DynamoDB TTL、Web/Mobile用Cognito app client、制限付きmap API keyをdev/prod分離で作る。OIDCのCIとdev/prod smokeを作り、prodは`main`から所有者が手動起動する設定にする。Claude Code→AWSの実操作をログに残す。 |
 | E | Expo開発buildの認証・権限取得経路を作り、前景GPS・カレンダー読み取りの小さな試作を実機で動かす。許可フィールドだけを`ContextInput`に詰める関数を単体テストし、API統合はPhase 2で行う。 |
 
 **統合ゲート:** 5コマンドとCDK assertionが成功。devでログイン→step-goal preview→実Places+Bedrock→schema-valid応答を確認し、同一preview再実行でも結果が表示され通知数は増えない。`main` からprodをデプロイし、公開URL・`/health`・認証済み1シナリオを確認する。これを満たすまで「公開済み」と呼ばない。
@@ -140,7 +143,7 @@ BとDが最も重く、統合の待ち時間も発生しやすい。担当パス
 1. 各メンバーは別worktree/checkout・独立したAIセッションで作業する。1つの作業ツリーやAI会話を5人で共有しない。Phase 0は下表の専用ブランチで小さなcommitに分け、Phase 1の最初の動く縦断sliceを統合PRとしてmainへ提出する。以後は `feature/<lane>-<phase>-<topic>` の成果ごとのPRにする。
 2. Phase 0の足場と契約を取り込んでから5レーンで並走する。契約変更はAのPRを先に統合し、B→D→C/Eの順で依存を更新する。変更範囲が自分のレーンを越えたら、担当者に再現・要求・失敗テストを渡す。
 3. 1 PRは1つの検証可能な成果に絞る。PR本文に「変更点、変更ファイル、実行したテスト、AWS影響、未解決リスク、次の作業」を記す。AIへの依頼も同じ大きさにする。
-4. dev deployは `deploy-dev` concurrencyで直列化する。統合中に別PRがdevを上書きし得るため、smoke結果は実行したcommit SHAと結び付ける。prodは`main`の成功後だけ更新する。
+4. dev deployは `deploy-dev` concurrencyで直列化する。統合中に別PRがdevを上書きし得るため、smoke結果は実行したcommit SHAと結び付ける。prodは`main`の成功後に所有者が手動起動し、差分を確認して更新する。
 5. コーディングエージェントがAWSを操作したら、担当者が日時・操作・commit/PR・秘密を含まない証跡をDに渡し、Dが `AGENT_LOG.md` に記録する。CodexとClaude Codeの接続証拠をそれぞれ残す。
 
 ### Phase 0のブランチ割当

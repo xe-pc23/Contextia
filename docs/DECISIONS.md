@@ -114,6 +114,8 @@ Every evaluation returns provider statuses for:
 | Dev deploy IAM role | `GitHubDevDeployRole` |
 | Prod deploy IAM role | `GitHubProdDeployRole` |
 | Stack/resource prefix | `contextia-{stage}-...` |
+| AWS target | account `634512763705`, Region `ap-northeast-1`; local dev profile `hackathon-dev` |
+| Production release | project-owner manual start from validated `main`; local prod profile `hackathon-prod` |
 
 ## H. CI/CD
 
@@ -124,6 +126,7 @@ feature branch
   -> dev deploy
   -> dev smoke
   -> merge main
+  -> project owner starts release
   -> prod deploy
   -> prod smoke
 ```

@@ -7,7 +7,7 @@
 | A | `feature/phase0-a-contracts-domain` | 0 | Zod契約と5 fixtureの形を作る | 着手可能。共通scriptsでの検証はDの足場待ち |
 | B | `feature/phase0-b-providers` | 0 | provider portsと共通結果型を作る | Aの契約型を確認後に統合 |
 | C | `feature/phase0-c-web` | 0 | WebのVite/React足場を作る | 着手可能。workspaceへの統合はDの足場待ち |
-| D | `feature/phase0-d-platform` | 0 | pnpm workspace、共通scripts、CDK/API足場を作る | 着手可能。最初の統合commitを共有する |
+| D | `feature/phase0-d-platform` | 0 | pnpm workspace、共通scripts、CDK/API足場、dev専用diffを作る | 着手可能。AWSは `hackathon-dev`、account `634512763705`、Region `ap-northeast-1`。最初の統合commitを共有する |
 | E | `feature/phase0-e-mobile` | 0 | Expo/TypeScript足場を作る | 着手可能。workspaceへの統合はDの足場待ち |
 
 ## フェーズゲート
@@ -25,3 +25,5 @@
 ## GitHub共有状況
 
 Phase 0の5ブランチと `feature/coordination-plan` はローカルに作成済み。GitHubへのpushは自動承認審査で保留中。公開許可が得られたら司令塔がpushし、担当者に取得方法を共有する。
+
+AWSの両ローカルprofileは2026-10-01に設定リージョンとSTSのアカウントを読み取り確認済み。dev/prodへのデプロイ、CDK bootstrap、IAM変更は未実施。本番反映は所有者が検証済み`main`から手動起動する。

@@ -113,7 +113,7 @@ feature branch
   -> deploy dev
   -> smoke test
   -> merge main
-  -> deploy prod
+  -> project owner starts prod deploy from validated main
   -> production smoke test
 ```
 

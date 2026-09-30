@@ -610,6 +610,7 @@ concurrency:
 
 ### Main
 - repeat validation
+- project owner starts deployment from validated `main`
 - assume `GitHubProdDeployRole`
 - deploy prod
 - smoke test public URL

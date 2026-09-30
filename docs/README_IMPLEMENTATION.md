@@ -107,7 +107,7 @@ Pull Request
 merge to main
      |
      +--> full validation
-     +--> deploy PROD
+     +--> project owner starts deploy PROD
      +--> web smoke test
      +--> API smoke test
      +--> record deployment metadata
