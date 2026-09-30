@@ -13,12 +13,16 @@ It exists because judges should be able to experience context-aware behavior wit
 
 The Console injects synthetic device context into the **same production backend** used by mobile.
 
+Its delivery policy is `preview`: the evaluation/providers/Bedrock path is real, but the judge does not consume notification quota or get blocked from seeing an answer because another judge ran the same scenario seconds earlier.
+
 ## 2. Judge flow
 
 ```text
 Open public URL
   ↓
-Sign in with demo account
+Sign in with shared demo account
+  ↓
+Console selects preview delivery mode
   ↓
 Choose preset or create custom scenario
   ↓
@@ -215,14 +219,19 @@ Expected:
 
 ## 9. Duplicate prevention demo
 
-Run same scenario twice.
+Production judge Console runs in preview mode, so a shared account must remain usable.
+
+Run the same scenario twice.
 
 Expected:
-- first may notify,
-- second is suppressed by context/trigger dedup,
-- Console shows machine-safe reason such as `DUPLICATE_CONTEXT`.
+- content evaluation can still be displayed;
+- second response shows `delivery.wouldSuppress=true`;
+- `delivery.guardCodes` contains `DUPLICATE_CONTEXT` or `RECENT_SAME_TRIGGER` when appropriate;
+- notification counters are not consumed.
 
-This is a strong demonstration that the product is not an LLM spam loop.
+For a true suppression demonstration, use a dev-only proactive-delivery test account/path.
+
+This demonstrates anti-spam behavior without making the public judge experience appear broken.
 
 ## 10. Mobile live demo
 

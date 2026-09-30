@@ -197,6 +197,7 @@ packages/domain/src/
 packages/providers/src/
 ├── ports/
 │   ├── PlacesProvider.ts
+│   ├── GeocodingProvider.ts
 │   ├── WeatherProvider.ts
 │   ├── RouteProvider.ts
 │   ├── RecommendationModel.ts
@@ -204,6 +205,7 @@ packages/providers/src/
 │   └── NotificationProvider.ts
 └── adapters/
     ├── amazonLocationPlaces.ts
+    ├── amazonLocationGeocoding.ts
     ├── amazonLocationRoutes.ts
     ├── openMeteo.ts
     ├── bedrock.ts
@@ -244,7 +246,7 @@ sequenceDiagram
     A->>B: context + candidates + recent summaries
     B-->>A: structured decision
     A->>A: Zod validation
-    A->>D: store recommendation metadata/state
+    A->>D: store latest context + recommendation metadata/state
     A-->>C: notify/silent + structured result
   end
 ```
@@ -262,6 +264,12 @@ export interface PlacesProvider {
     maxResults?: number;
     persistenceIntent: "single-use" | "storage";
   }): Promise<ProviderResult<Place[]>>;
+
+  getPlace(input: {
+    placeId: string;
+    locale?: string;
+    persistenceIntent: "single-use" | "storage";
+  }): Promise<ProviderResult<Place>>;
 }
 ```
 
@@ -272,10 +280,27 @@ Important:
 - Use Places V2.
 - Search without category restriction by default.
 - Use category filters only when a detector has a strong reason.
-- Set `IntendedUse` according to persistence intent.
+- Candidate discovery is normally `SingleUse`.
+- Before persisting a selected place, call `GetPlace(..., persistenceIntent: "storage")` and persist only normalized fields returned by that Storage-intent call.
 - Do not persist raw provider response bodies.
 
-### 6.2 Weather
+### 6.2 Geocoding
+
+```ts
+export interface GeocodingProvider {
+  geocode(input: {
+    queryText: string;
+    biasPosition?: GeoPoint;
+    locale?: string;
+    persistenceIntent: "single-use" | "storage";
+  }): Promise<ProviderResult<GeocodedPlace[]>>;
+}
+```
+
+MVP:
+`AmazonLocationGeocodingProvider` using Places V2 `Geocode`.
+
+### 6.3 Weather
 
 ```ts
 export interface WeatherProvider {
@@ -290,7 +315,7 @@ export interface WeatherProvider {
 MVP:
 `OpenMeteoWeatherProvider`.
 
-### 6.3 Routes
+### 6.4 Routes
 
 ```ts
 export interface RouteProvider {
@@ -309,7 +334,7 @@ MVP:
 
 Transit coverage is data-provider-dependent. `unavailable` is a valid result.
 
-### 6.4 Bedrock model
+### 6.5 Bedrock model
 
 ```ts
 export interface RecommendationModel {
@@ -323,7 +348,7 @@ Model ID must come from environment configuration:
 
 Prefer Bedrock Converse Structured Outputs when model support is available.
 
-### 6.5 Notifications
+### 6.6 Notifications
 
 ```ts
 export interface RemoteNotificationProvider {
@@ -345,24 +370,28 @@ Each detector declares needs:
 
 ```ts
 type ProviderNeed =
+  | "geocode-event-location"
   | "places-near-current"
   | "places-near-destination"
   | "weather-current"
-  | "route-to-next-event";
+  | "weather-today"
+  | "route-to-next-event"
+  | "route-to-place-candidates";
 ```
 
 The application service:
 1. unions the needs of viable candidates,
 2. deduplicates calls,
 3. executes independent providers in parallel,
-4. applies per-provider timeout,
-5. returns partial results if some providers fail.
+4. respects dependencies (`geocode-event-location` before `route-to-next-event`; places before `route-to-place-candidates`),
+5. applies per-provider timeout,
+6. returns partial results if some providers fail.
 
 Suggested provider timeout budget:
 - Places: 2.5 s
 - Weather: 2.0 s
 - Routes: 3.0 s
-- Bedrock: 8.0 s
+- Bedrock: 7.0 s
 
 Overall Lambda timeout: 15–20 s.
 
@@ -405,13 +434,16 @@ interface HardGuard {
 }
 ```
 
-Guard order:
+Delivery guard order:
 1. request/context validation
 2. user notification enabled
 3. daily cap
 4. duplicate context fingerprint
 5. duplicate trigger/anchor window
-6. candidate minimum signal availability
+
+Candidate minimum-signal/provider-coverage checks belong to detector/candidate filtering. `MISSING_REQUIRED_SIGNAL` must not globally suppress unrelated viable candidates.
+
+In Scenario Console preview mode, delivery guards are evaluated for diagnostics (`wouldSuppress`) but do not consume counters or hide an otherwise useful recommendation.
 
 Do not use an LLM to enforce absolute delivery limits.
 
@@ -429,7 +461,7 @@ Example:
   },
   "context": {
     "localTime": "2026-09-30T14:10:00+09:00",
-    "position": {"lat": 35.6812, "lon": 139.7671},
+    "position": {"latitude": 35.6812, "longitude": 139.7671},
     "stepsToday": 10432,
     "nextEvent": {
       "title": "Meeting",
@@ -525,7 +557,9 @@ Using Amplify Auth as a client SDK is acceptable; this does **not** imply Amplif
 - pre-create a dedicated judge/demo user.
 - do not hardcode password in repository.
 - publish credentials only through the approved submission mechanism.
-- keep demo user's data isolated.
+- Scenario Console uses `deliveryMode=preview`, so multiple judges sharing the account do not consume daily notification quota or get blocked by duplicate-delivery guards.
+- preview responses still expose `wouldSuppress` diagnostics.
+- keep demo user's data isolated from normal users.
 
 ### Automated judge risk
 The hackathon requires the application to be accessible to AI scoring and human judges. Before submission, verify whether the scoring system can complete the selected login flow.
@@ -546,10 +580,10 @@ Do not assume the selected model exists in the application region. Bedrock model
 
 Stack names:
 ```text
-concierge-dev-core
-concierge-dev-web
-concierge-prod-core
-concierge-prod-web
+contextia-dev-core
+contextia-dev-web
+contextia-prod-core
+contextia-prod-web
 ```
 
 ## 14. CI/CD architecture
@@ -563,7 +597,7 @@ concierge-prod-web
 - unit tests
 - build all
 - `cdk synth`
-- assume `DevDeployRole` via OIDC
+- assume `GitHubDevDeployRole` via OIDC
 - deploy dev
 - run live smoke/integration test
 
@@ -576,7 +610,7 @@ concurrency:
 
 ### Main
 - repeat validation
-- assume `ProdDeployRole`
+- assume `GitHubProdDeployRole`
 - deploy prod
 - smoke test public URL
 - smoke test API

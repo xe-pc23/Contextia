@@ -63,7 +63,21 @@ PK = USER#{userId}
 SK = RECOMMENDATION#{timestamp}#{recommendationId}
 ```
 
-### Conversation metadata/messages
+### Recommendation ID pointer
+```text
+PK = USER#{userId}
+SK = RECOMMENDATION_REF#{recommendationId}
+```
+
+The pointer stores `targetSK` for the timestamp-sortable recommendation item. This resolves `/recommendations/{recommendationId}` without a GSI.
+
+### Conversation metadata
+```text
+PK = RECOMMENDATION#{recommendationId}
+SK = CONVERSATION
+```
+
+### Conversation messages
 ```text
 PK = RECOMMENDATION#{recommendationId}
 SK = CHAT#{timestamp}#{messageId}
@@ -113,6 +127,8 @@ Purpose:
 - daily notification count,
 - latest context reference,
 - recent trigger anchors.
+
+`notificationDay` is the user's local calendar date computed from `PROFILE.preferences.timezone` (IANA timezone), not UTC.
 
 Example:
 ```json
@@ -168,7 +184,7 @@ Example:
       "location": "Tokyo Station"
     }
   ],
-  "expiresAt": 1790754600,
+  "expiresAt": 1790831400,
   "createdAt": "...",
   "updatedAt": "...",
   "schemaVersion": 1
@@ -220,7 +236,9 @@ Example:
 
 Important:
 - avoid storing full Amazon Location raw objects.
-- if provider-returned fields are intentionally persisted, call Places with storage intent required by service terms.
+- SearchNearby candidate lists are transient (`SingleUse`) and are not stored.
+- for every selected place that will appear in persisted recommendation history, call Places V2 `GetPlace` with `IntendedUse=Storage` before writing the recommendation.
+- persist only normalized minimal fields from that Storage-intent response.
 - keep dedup summary concise.
 
 Retention:
@@ -233,7 +251,49 @@ For the hackathon, recommended:
 RECOMMENDATION_TTL_DAYS=7
 ```
 
-## 8. CHAT items
+### Recommendation pointer item
+
+Write transactionally with the recommendation:
+
+```json
+{
+  "PK": "USER#abc",
+  "SK": "RECOMMENDATION_REF#rec_123",
+  "entityType": "RecommendationRef",
+  "recommendationId": "rec_123",
+  "targetSK": "RECOMMENDATION#2026-09-30T05:10:04.000Z#rec_123",
+  "expiresAt": 1791349804,
+  "createdAt": "2026-09-30T05:10:04.000Z",
+  "updatedAt": "2026-09-30T05:10:04.000Z",
+  "schemaVersion": 1
+}
+```
+
+The example `expiresAt=1791349804` is `2026-10-07T05:10:04Z`, exactly 7 days after creation.
+
+Pointer and recommendation share the same logical expiry. Use `TransactWriteItems` so a pointer is not created without its target.
+
+## 8. CONVERSATION and CHAT items
+
+One recommendation owns at most one short-lived conversation.
+
+Conversation metadata:
+```json
+{
+  "PK": "RECOMMENDATION#rec_123",
+  "SK": "CONVERSATION",
+  "entityType": "Conversation",
+  "conversationId": "conv_123",
+  "userId": "abc",
+  "turnCount": 1,
+  "expiresAt": 1790752800,
+  "createdAt": "2026-09-30T05:20:00Z",
+  "updatedAt": "2026-09-30T05:20:00Z",
+  "schemaVersion": 1
+}
+```
+
+### Chat message
 
 Short-lived recommendation-scoped chat.
 
@@ -246,7 +306,7 @@ Example:
   "userId": "abc",
   "role": "user",
   "content": "もっと静かな場所はある？",
-  "expiresAt": 1790673600,
+  "expiresAt": 1790752800,
   "createdAt": "...",
   "updatedAt": "...",
   "schemaVersion": 1
@@ -292,33 +352,37 @@ Example:
   "entityType": "Idempotency",
   "requestHash": "sha256:...",
   "responsePointer": "eval_123",
-  "expiresAt": 1790668800,
-  "createdAt": "...",
-  "updatedAt": "...",
+  "expiresAt": 1790758800,
+  "createdAt": "2026-09-30T08:00:00Z",
+  "updatedAt": "2026-09-30T08:00:00Z",
   "schemaVersion": 1
 }
 ```
 
+The example `expiresAt=1790758800` is `2026-09-30T09:00:00Z`, exactly one hour after creation.
+
 TTL:
 - 1 hour is sufficient.
 
-## 11. Indexes
+## 11. Access patterns and indexes
 
-Start with **no GSI** unless a concrete access pattern requires one.
+v1 requires **no GSI**.
 
-Required queries are naturally partitioned by user.
+| Access pattern | Key strategy |
+|---|---|
+| list recent recommendations | `PK=USER#id`, `begins_with(SK, "RECOMMENDATION#")`, descending |
+| get recommendation by ID | get `RECOMMENDATION_REF#id`, then get `targetSK` |
+| get conversation | `PK=RECOMMENDATION#id`, `SK=CONVERSATION` |
+| list chat messages | same PK, `begins_with(SK, "CHAT#")` |
+| get profile/state | direct GetItem |
 
-Potential later GSI:
-```text
-GSI1PK = RECOMMENDATION#{recommendationId}
-GSI1SK = USER#{userId}
-```
-
-But prefer including a recommendation-owner lookup mapping only if needed. Do not add GSIs speculatively.
+If later requirements need a global recommendation lookup without authenticated user context, add a GSI deliberately. The current API always has the authenticated user ID, so a pointer item is sufficient.
 
 ## 12. Atomicity / concurrency
 
-Daily notification count and anchor updates must be concurrency-safe.
+Daily notification count and anchor updates must be concurrency-safe and use the user's local date.
+
+Recommendation + recommendation-pointer writes must also be atomic.
 
 Use DynamoDB:
 - conditional update
@@ -342,7 +406,7 @@ Handle date rollover explicitly.
 | Exact location context | yes | 24h logical TTL |
 | Calendar title/time/location | yes in short context | 24h |
 | Calendar attendees/emails | no | never |
-| Raw Amazon Location response | no by default | request only |
+| Raw Amazon Location response | no | never persisted; selected normalized Place data comes from Storage-intent GetPlace |
 | Weather raw response | no by default | request only |
 | Recommendation summary | yes | 7d default |
 | Short chat | yes | ~2h |

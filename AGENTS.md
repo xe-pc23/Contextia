@@ -122,6 +122,8 @@ export const GeoPointSchema = z.object({
 export type GeoPoint = z.infer<typeof GeoPointSchema>;
 ```
 
+Canonical enums (`SignalName`, `TriggerType`, `DeliveryMode`, `ProviderNeed`) are defined in contracts. Do not create free-form alternative spellings elsewhere.
+
 When API contract changes:
 1. change schema first,
 2. update API handler,
@@ -156,7 +158,12 @@ Each external service:
 6. never return the raw SDK response to domain/UI.
 
 ### Amazon Location Places
-Use Places V2 `SearchNearby`, not legacy Place Index APIs.
+Use Places V2, not legacy Place Index APIs.
+
+- nearby discovery: `SearchNearby`
+- text/address to coordinates: dedicated `GeocodingProvider` using `Geocode`
+- selected persistent place detail: `GetPlace` with `IntendedUse=Storage`
+- never persist data returned only under `SingleUse`
 
 ### Amazon Location Routes
 Use current Routes API and explicit transit/intermodal mode.
@@ -173,8 +180,10 @@ Use AWS CDK TypeScript.
 
 Resource naming:
 ```text
-{project}-{stage}-{resource}
+contextia-{stage}-{resource}
 ```
+
+The technical project slug is `contextia` until a human explicitly approves a repository-wide rename.
 
 Required stages:
 ```text
@@ -274,8 +283,8 @@ AWS_SECRET_ACCESS_KEY
 as long-lived GitHub repository secrets.
 
 Use:
-- `DevDeployRole`
-- `ProdDeployRole`
+- `GitHubDevDeployRole`
+- `GitHubProdDeployRole`
 
 Prod role trust must be narrower than dev.
 
@@ -334,13 +343,25 @@ Model output:
 - only reference place IDs/routes supplied in model input,
 - concise reason, not hidden reasoning.
 
-## 16. Scope-control rule
+## 16. Scenario Console delivery semantics
+
+Production Scenario Console uses `deliveryMode="preview"`.
+
+Preview:
+- runs the same evaluation/providers/model,
+- does not send a notification,
+- does not increment daily notification quota,
+- returns `wouldSuppress` delivery diagnostics instead of allowing a shared judge account to be blocked by dedup.
+
+Do not add a public `force=true` switch that disables guards for real proactive delivery.
+
+## 17. Scope-control rule
 
 If you identify an improvement that is not required for the current milestone:
 - add it to `docs/BACKLOG.md`,
 - do not implement it unless it is very small and cannot jeopardize shipping.
 
-## 17. Completion message format
+## 18. Completion message format
 
 At the end of each agent task, summarize:
 1. what changed,

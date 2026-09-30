@@ -1,82 +1,160 @@
-# DECISIONS.md — Consolidated Product Decisions
+# DECISIONS.md — Consolidated Architecture Decisions
 
-## Confirmed
+> v1.1 — 2026-09-30  
+> This file records current decisions by concern. The earlier questionnaire numbers are retained as references where useful, but duplicated questions have been consolidated.
 
-| # | Decision |
+## A. Product and platform
+
+| Decision | Current choice | Source questions |
+|---|---|---|
+| Project/repository working name | **Contextia** | review resolution |
+| Technical resource slug | **`contextia`** | review resolution |
+| Geography | global-ready architecture; Japan-focused demo | #1 |
+| Primary clients | iOS + Android | #2 |
+| Judge client | separate Web Scenario Console | #2, #27 |
+| Web stack | React + Vite + TypeScript | #34 |
+| Mobile stack | React Native + Expo + TypeScript | #2 |
+| Auth | Cognito | #3 |
+| UI | dashboard + recommendation feed | #25–26 |
+| Follow-up | short recommendation-scoped chat | #23, #49 |
+
+## B. Context and signals
+
+| Decision | Choice |
 |---|---|
-| 1 | Global-ready provider architecture; Japan-focused demo quality |
-| 2 | iOS + Android main product; separate Web Scenario Console |
-| 3 | Cognito authentication |
-| 4 | Preferences: interests + step goal + notification frequency |
-| 5 | Foreground + background location |
-| 6 | Multi-day calendar context |
-| 7 | Calendar sends title + time + location only |
-| 8 | Today's steps + goal-reached state |
-| 9 | Extensible trigger patterns; initial five polished demos |
-| 10 | Deterministic rule/guard layer then Bedrock |
-| 11 | Context updates + background events |
-| 12 | Amazon Location primary Places provider |
-| 13 | Nearby category selection broadly available; AI chooses relevance |
-| 14 | Nearby radius 1 km |
-| 15 | Current + same-day weather forecast |
-| 16 | Up to 3 recommendations |
-| 17 | Internal structured JSON + free natural-language copy |
-| 18 | Local notification + Expo Push + SNS-capable provider architecture |
-| 19 | Hard guards + AI semantic duplicate/relevance judgment |
-| 20 | DynamoDB: preferences + state + recommendation history |
-| 21 | Context history 24 hours |
-| 22 | Bedrock model configurable |
-| 23 | Short follow-up chat after recommendation |
-| 24 | Open maps / external website; no auto booking |
-| 25 | Dashboard + recommendation feed |
-| 26 | Dashboard shows location/weather/steps/next event/recommendations |
-| 27 | Real data + Scenario Mode |
-| 28 | Graceful degradation with available signals |
-| 29 | Coding agents connect to AWS using AWS Agent Toolkit / MCP |
-| 30 | Monorepo |
-| 31 | Codex first; Claude Code also used; both may work on tasks |
-| 32 | CI/CD + tests |
-| 33 | AWS CDK TypeScript |
-| 34 | Web React + Vite |
-| 35 | Web hosting: S3 + CloudFront |
-| 36 | Judge/demo Cognito account |
-| 37 | Structured response internally |
-| 38 | Hard guards + AI duplicate handling |
-| 39 | Transit provider abstraction; Amazon Location implementation |
-| 40 | MapLibre + Amazon Location |
-| 41 | Scenario position by map click + lat/lon |
-| 42 | All future patterns supported; initial 5 polished |
-| 43 | Backend TypeScript |
-| 44 | pnpm workspaces |
-| 45 | Scenario time freely selectable |
-| 46 | Weather is real provider data for simulated location |
-| 47 | Multiple calendar events in Scenario Console |
-| 48 | 24h context logical TTL |
-| 49 | Recommendation-scoped short chat |
-| 50 | dev + prod only |
-| 51 | PR → dev; main → prod |
-| 52 | CloudWatch Logs + Metrics |
+| Location | foreground + background-capable; no guaranteed 5-minute cron |
+| Calendar | multi-day events; title/time/location only |
+| Steps | today's count + goal state; iOS Pedometer / Android Health Connect abstraction |
+| Weather | real Open-Meteo current + same-day forecast |
+| Places | Amazon Location Places V2 |
+| Geocoding | dedicated Amazon Location Places V2 `Geocode` adapter |
+| Transit | provider abstraction; Amazon Location Routes implementation |
+| Search radius | 1 km default |
+| Scenario time | arbitrary |
+| Scenario calendar | multiple events |
+| Scenario location | map click + lat/lon |
 
-## Technical clarification added during design
+Canonical `SignalName`:
+```text
+time, location, calendar, steps, weather, places, transit, preferences
+```
 
-Android step counting cannot rely on Expo Pedometer alone for robust background/today totals.
+## C. Recommendation engine
 
-Therefore:
-- step collection is a provider/interface.
-- iOS: Expo Pedometer.
-- Android: Health Connect preferred.
-- Web: simulated steps.
-- foreground sensor fallback remains possible.
+| Decision | Choice |
+|---|---|
+| Control flow | deterministic guards → candidate detectors → provider enrichment → Bedrock |
+| Initial trigger types | UPCOMING_EVENT_TRANSIT, STEP_GOAL_REST, FREE_TIME_NEARBY, WEATHER_ADAPTATION, EARLY_ARRIVAL_DETOUR |
+| AI output | structured JSON + natural-language fields |
+| Returned recommendations | max 3 |
+| Model | environment-configurable Bedrock model |
+| Duplicate policy | deterministic delivery guards + AI semantic duplicate/relevance judgment |
+| Candidate missing signal | candidate exclusion, not global hard guard |
 
-This does not change product behavior; it makes the agreed cross-platform behavior implementable.
+## D. Scenario/judge behavior
 
-## Open but non-blocking
+Scenario Console uses `deliveryMode=preview`.
 
-- product name
+Preview:
+- executes the real context/detector/provider/Bedrock pipeline;
+- does not send a notification;
+- does not increment daily notification quota;
+- returns `wouldSuppress` diagnostics for dedup/cap guards.
+
+This resolves the shared-demo-account risk without adding an unsafe public "force evaluate" bypass.
+
+## E. Persistence
+
+| Decision | Choice |
+|---|---|
+| DB | DynamoDB single table per environment |
+| Context retention | 24h logical TTL |
+| Recommendation retention | 7d default, configurable |
+| Chat retention | ~2h |
+| By-ID recommendation lookup | same-user `RECOMMENDATION_REF#{id}` pointer → timestamped recommendation SK |
+| GSI | none required in v1 |
+| Daily notification day | user's IANA timezone |
+| Place persistence | transient candidate search is SingleUse; selected persisted place is re-read via GetPlace with Storage intent |
+
+## F. API/contract
+
+Canonical types:
+- `SignalName`
+- `TriggerType`
+- `ProviderNeed`
+- `DeliveryMode`
+
+Evaluation returns a stable top-level `recommendationId` when a recommendation exists.
+
+`RecommendationDecision` is a discriminated union:
+- notify: urgency/message/recommendations required;
+- silent: urgency/message are null and recommendations empty.
+
+Every evaluation returns provider statuses for:
+- geocoding
+- places
+- weather
+- routes
+- bedrock
+
+## G. AWS and infrastructure
+
+| Decision | Choice |
+|---|---|
+| Backend | TypeScript on Lambda |
+| IaC | AWS CDK TypeScript |
+| API | API Gateway HTTP API |
+| Web hosting | private S3 + CloudFront OAC |
+| Map | MapLibre + Amazon Location |
+| Environments | dev + prod |
+| Repository | pnpm workspaces monorepo |
+| Observability | CloudWatch Logs + metrics |
+| Agent connection | AWS Agent Toolkit / AWS MCP Server |
+| CI AWS auth | GitHub OIDC |
+| Dev deploy IAM role | `GitHubDevDeployRole` |
+| Prod deploy IAM role | `GitHubProdDeployRole` |
+| Stack/resource prefix | `contextia-{stage}-...` |
+
+## H. CI/CD
+
+```text
+feature branch
+  -> PR
+  -> validation
+  -> dev deploy
+  -> dev smoke
+  -> merge main
+  -> prod deploy
+  -> prod smoke
+```
+
+No staging environment for the hackathon.
+
+## I. Notifications
+
+Architecture supports:
+- local notifications,
+- Expo Push,
+- SNS provider adapter.
+
+Only one path may deliver a given recommendation.
+
+## J. Initial five polished demos
+
+1. upcoming event + transit
+2. step goal + nearby rest
+3. free time + personalized nearby activity
+4. weather-aware adaptation
+5. early arrival + destination-area detour
+
+Architecture remains extensible to additional trigger detectors.
+
+## K. Non-blocking open decisions
+
+- final marketing name if different from Contextia
 - license
-- hackathon category
-- hackathon lane
-- final Bedrock model ID
-- final AWS application region
+- hackathon category/lane
+- exact Bedrock model ID
+- exact AWS region/model routing
 - custom domain
-- exact visual identity
+- final visual identity

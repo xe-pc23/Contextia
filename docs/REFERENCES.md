@@ -42,6 +42,12 @@ Key verified requirements:
 
 - Places V2 SearchNearby  
   https://docs.aws.amazon.com/location/latest/APIReference/API_geoplaces_SearchNearby.html
+- Places V2 Geocode  
+  https://docs.aws.amazon.com/location/latest/APIReference/API_geoplaces_Geocode.html
+- Places V2 GetPlace  
+  https://docs.aws.amazon.com/location/latest/APIReference/API_geoplaces_GetPlace.html
+- Places IntendedUse  
+  https://docs.aws.amazon.com/location/latest/developerguide/places-intended-use.html
 - Routes overview  
   https://docs.aws.amazon.com/location/latest/developerguide/routes.html
 - Transit routing  

@@ -26,6 +26,53 @@ All IDs are opaque strings.
 
 All request bodies are runtime-validated with Zod.
 
+### 1.1 Canonical enums
+
+```ts
+type SignalName =
+  | "time"
+  | "location"
+  | "calendar"
+  | "steps"
+  | "weather"
+  | "places"
+  | "transit"
+  | "preferences";
+
+type TriggerType =
+  | "UPCOMING_EVENT_TRANSIT"
+  | "STEP_GOAL_REST"
+  | "FREE_TIME_NEARBY"
+  | "WEATHER_ADAPTATION"
+  | "EARLY_ARRIVAL_DETOUR";
+
+type DeliveryMode = "proactive" | "preview";
+```
+
+### 1.2 Input limits
+
+These are part of the v1 API contract and must be implemented in Zod.
+
+| Field | Limit |
+|---|---|
+| calendar events | max 100 |
+| event `id` | 1–128 chars |
+| event `title` | 1–200 chars |
+| event `location` | 0–200 chars |
+| interests | max 20 |
+| interest value | 1–64 chars |
+| locale | 2–35 chars |
+| timezone | 1–64 chars, valid IANA timezone |
+| `stepsToday` | integer 0–200,000 |
+| `stepGoal` | integer 1–200,000 |
+| accuracy | 0–100,000 m |
+| chat message | 1–1,000 chars |
+
+For each event:
+- `endAt >= startAt`;
+- non-all-day event duration should not exceed 31 days;
+- invalid timestamps are rejected.
+
 ## 2. Standard envelope
 
 Successful responses generally use:
@@ -111,6 +158,7 @@ type UserPreferences = {
 ```ts
 type ContextInput = {
   mode: "real" | "simulation";
+  deliveryMode: "proactive" | "preview";
   capturedAt: string;
   scenarioTime?: string;
   location: LocationContext;
@@ -119,6 +167,12 @@ type ContextInput = {
   preferencesOverride?: Partial<UserPreferences>;
 };
 ```
+
+Allowed production combinations:
+- `mode="real"` + `deliveryMode="proactive"`
+- `mode="simulation"` + `deliveryMode="preview"`
+
+Other combinations are rejected. The backend also validates that simulation/preview requests originate from the configured Scenario Console/demo authorization context; `preview` is not a generic bypass for mobile proactive delivery.
 
 ## 4. GET /health
 
@@ -200,6 +254,7 @@ Request:
 ```json
 {
   "mode": "simulation",
+  "deliveryMode": "preview",
   "capturedAt": "2026-09-30T14:10:00+09:00",
   "scenarioTime": "2026-09-30T14:10:00+09:00",
   "location": {
@@ -239,10 +294,12 @@ Request:
   "requestId": "req_123",
   "data": {
     "evaluationId": "eval_123",
+    "recommendationId": "rec_123",
     "decision": "notify",
+    "decisionReason": "The upcoming event and route duration make a departure reminder useful.",
     "triggerType": "UPCOMING_EVENT_TRANSIT",
-    "message": "16時の予定に向けて、そろそろ移動を意識すると安心です。",
     "urgency": "medium",
+    "message": "16時の予定に向けて、そろそろ移動を意識すると安心です。",
     "recommendations": [
       {
         "id": "rec_item_1",
@@ -263,20 +320,30 @@ Request:
       }
     ],
     "usedSignals": [
+      "time",
       "location",
       "calendar",
       "transit"
     ],
-    "providerStatus": {
-      "places": "not_requested",
-      "weather": "ok",
-      "routes": "ok",
-      "bedrock": "ok"
+    "delivery": {
+      "mode": "preview",
+      "status": "preview",
+      "wouldSuppress": false,
+      "guardCodes": []
     },
-    "expiresAt": "2026-10-01T14:10:00+09:00"
+    "providerStatus": {
+      "geocoding": {"status": "ok", "latencyMs": 73},
+      "places": {"status": "not_requested"},
+      "weather": {"status": "ok", "latencyMs": 91},
+      "routes": {"status": "ok", "latencyMs": 182},
+      "bedrock": {"status": "ok", "latencyMs": 1320}
+    },
+    "contextExpiresAt": "2026-10-01T14:10:00+09:00"
   }
 }
 ```
+
+`recommendationId` is the stable key used by recommendation-detail and follow-up-chat routes.
 
 ### Response — silent
 
@@ -285,15 +352,28 @@ Request:
   "requestId": "req_123",
   "data": {
     "evaluationId": "eval_123",
+    "recommendationId": null,
     "decision": "silent",
+    "decisionReason": "No candidate is useful enough to interrupt the user.",
     "triggerType": null,
+    "urgency": null,
     "message": null,
     "recommendations": [],
     "usedSignals": [],
-    "providerStatus": {},
-    "guard": {
-      "code": "NO_MEANINGFUL_OPPORTUNITY"
-    }
+    "delivery": {
+      "mode": "proactive",
+      "status": "suppressed",
+      "wouldSuppress": true,
+      "guardCodes": ["DUPLICATE_CONTEXT"]
+    },
+    "providerStatus": {
+      "geocoding": {"status": "not_requested"},
+      "places": {"status": "not_requested"},
+      "weather": {"status": "not_requested"},
+      "routes": {"status": "not_requested"},
+      "bedrock": {"status": "not_requested"}
+    },
+    "contextExpiresAt": "2026-10-01T14:10:00+09:00"
   }
 }
 ```
@@ -304,9 +384,13 @@ Machine-readable:
 - `DAILY_CAP_REACHED`
 - `DUPLICATE_CONTEXT`
 - `RECENT_SAME_TRIGGER`
-- `MISSING_REQUIRED_SIGNAL`
 - `NO_CANDIDATE`
 - `NO_MEANINGFUL_OPPORTUNITY`
+
+Candidate-level diagnostic codes (not global hard guards) include:
+- `MISSING_REQUIRED_SIGNAL`
+- `PROVIDER_UNAVAILABLE`
+- `GEOCODE_AMBIGUOUS`
 
 Do not expose internal AI chain-of-thought as guard/reason text.
 
@@ -345,10 +429,17 @@ Auth: yes
 
 Returns recommendation detail owned by current user.
 
+Lookup semantics:
+- authentication supplies `userId`;
+- repository first gets `USER#{userId} / RECOMMENDATION_REF#{recommendationId}`;
+- the pointer contains the timestamped recommendation SK;
+- repository then gets the recommendation item;
+- no GSI is required for this v1 access pattern.
+
 404 if:
-- does not exist,
-- expired,
-- belongs to another user.
+- pointer or target does not exist,
+- target is expired,
+- pointer belongs to another user partition.
 
 ## 10. POST /recommendations/{recommendationId}/chat
 
@@ -363,6 +454,8 @@ Request:
 
 Limits:
 - max message length: 1000 chars
+- exactly one short conversation per recommendation
+- `conversationId` identifies the conversation metadata item owned by the recommendation
 - short recommendation-scoped chat only
 - server may cap total turns, initial target 8 user messages
 
@@ -449,21 +542,44 @@ type ProviderStatus = {
   latencyMs?: number;
   code?: string;
 };
+
+type ProviderStatusMap = {
+  geocoding: ProviderStatus;
+  places: ProviderStatus;
+  weather: ProviderStatus;
+  routes: ProviderStatus;
+  bedrock: ProviderStatus;
+};
 ```
+
+Every evaluation response returns all five keys. Providers that were not needed use `not_requested`.
 
 Never return raw upstream secrets/error bodies.
 
 ## 15. Recommendation structured schema
 
+Internal Bedrock decision is a discriminated union:
+
 ```ts
-type RecommendationDecision = {
-  decision: "notify" | "silent";
-  decisionReason: string; // concise, safe summary
+type NotifyDecision = {
+  decision: "notify";
+  decisionReason: string;
   urgency: "low" | "medium" | "high";
-  message: string | null;
-  recommendations: RecommendationItem[];
+  message: string;
+  recommendations: RecommendationItem[]; // 1..3
   usedSignals: SignalName[];
 };
+
+type SilentDecision = {
+  decision: "silent";
+  decisionReason: string;
+  urgency: null;
+  message: null;
+  recommendations: [];
+  usedSignals: SignalName[];
+};
+
+type RecommendationDecision = NotifyDecision | SilentDecision;
 
 type RecommendationItem = {
   title: string;
@@ -491,6 +607,8 @@ type RecommendationItem = {
 ```
 
 Bedrock output must not create a `placeId` not present in provider input.
+
+Before any selected place data is persisted, the backend performs `GetPlace` with `IntendedUse=Storage` for that selected `placeId` and uses the normalized Storage-intent result for persistence.
 
 ## 16. Idempotency and duplicate protection
 

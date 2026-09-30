@@ -4,7 +4,11 @@
 >
 > Last verified: **2026-09-30**
 >
-> Product name: **TBD**
+> Product / repository working name: **Contextia**
+>
+> Infrastructure slug: **`contextia`**
+>
+> Branding may still change before submission, but code/resource naming uses `contextia` until an explicit rename decision.
 >
 > This repository is intended to be implemented primarily by Codex / Claude Code, with humans owning product decisions, review, credentials, and production approval.
 
@@ -59,7 +63,8 @@ A separate **Web Scenario Console** allows judges to simulate the same backend w
 | Database | Amazon DynamoDB |
 | AI | Amazon Bedrock Converse API |
 | AI output | Structured JSON internally; natural-language message externally |
-| Nearby places | Amazon Location Service Places V2 / SearchNearby |
+| Nearby places | Amazon Location Service Places V2 / SearchNearby + GetPlace(Storage for persisted selections) |
+| Geocoding | Amazon Location Service Places V2 / Geocode |
 | Transit / routes | Amazon Location Service Routes (Transit / Intermodal) |
 | Weather | Open-Meteo |
 | Web map | MapLibre GL JS + Amazon Location Maps |
@@ -127,14 +132,23 @@ AWS credentials are **not** stored as long-lived GitHub secrets. GitHub Actions 
 ├── infra/
 │   └── cdk/                    # dev/prod stacks
 ├── docs/
+│   ├── README.md
 │   ├── SPEC.md
 │   ├── ARCHITECTURE.md
 │   ├── API.md
 │   ├── DATA_MODEL.md
 │   ├── TEST_STRATEGY.md
 │   ├── DEMO.md
-│   └── REFERENCES.md
+│   ├── CI_CD.md
+│   ├── DECISIONS.md
+│   ├── REVIEW_RESOLUTION.md
+│   ├── REFERENCES.md
+│   ├── BACKLOG.md
+│   └── hackathon/
+│       └── AGENT_LOG.md
 ├── AGENTS.md
+├── README.md
+├── .gitignore
 ├── pnpm-workspace.yaml
 ├── package.json
 └── tsconfig.base.json
@@ -211,7 +225,7 @@ If SearchNearby results are persisted in customer infrastructure, `IntendedUse=S
 ## 10. Non-blocking decisions still open
 
 These do not block implementation:
-- Final product name.
+- Final marketing/branding name (technical project slug remains `contextia` until explicitly changed).
 - Hackathon category.
 - Community vs Startup lane.
 - Repository license.

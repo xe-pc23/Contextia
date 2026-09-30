@@ -40,6 +40,7 @@ Do not make every CI run depend on live Bedrock/Open-Meteo/Location calls.
 Required:
 - notifications disabled
 - low/normal/high daily cap
+- daily-cap rollover in user IANA timezone, including DST boundary where applicable
 - duplicate fingerprint within 5 min
 - fingerprint after dedup window
 - same trigger+anchor within 30 min
@@ -116,9 +117,18 @@ Test:
 - radius = 1000 default.
 - MaxResults cap.
 - category filter omitted by default.
-- `IntendedUse` mapping.
+- candidate SearchNearby uses `SingleUse` and is not persisted.
+- selected place calls `GetPlace` with `Storage` before persistence.
 - response normalization.
 - throttling/error mapping.
+
+### Amazon Location Geocoding
+Test:
+- event location text -> Geocode request.
+- bias position mapping.
+- `[longitude, latitude]` provider ordering.
+- ambiguous/empty result maps to a candidate exclusion, not a fabricated coordinate.
+- transient request uses `SingleUse`.
 
 ### Amazon Location Routes
 Test:
@@ -148,13 +158,18 @@ Test:
 ## 7. API contract tests
 
 Test Zod schemas for:
-- valid real context.
-- valid simulation context.
+- valid real + `deliveryMode=proactive`.
+- valid simulation + `deliveryMode=preview`.
 - invalid coordinates.
 - invalid event end before start.
-- too many calendar events (set a sane max, e.g. 100).
-- negative steps.
-- message length.
+- >100 calendar events.
+- event ID >128 chars.
+- title/location >200 chars.
+- >20 interests or interest >64 chars.
+- negative steps and >200,000 steps.
+- step goal outside 1..200,000.
+- chat message 0 or >1,000 chars.
+- invalid IANA timezone.
 - unknown enum.
 
 Handler integration:
@@ -170,11 +185,13 @@ Handler integration:
 At minimum:
 - correct keys.
 - state update.
-- notification counter atomic semantics.
+- notification counter atomic semantics using user-local date.
 - TTL calculation.
 - expired context filtered on read.
+- recommendation + `RECOMMENDATION_REF` transactional write.
+- by-ID lookup through pointer.
 - recommendation ownership.
-- chat TTL.
+- conversation metadata + chat TTL.
 - device token rotation.
 
 Use local/unit repository abstractions or mocked DynamoDB client in CI; a deployed dev integration test validates real IAM/table behavior.
@@ -192,7 +209,16 @@ Assertions:
 - no overly broad `*` IAM actions unless explicitly justified.
 - dev/prod names are parameterized.
 
-## 10. Web UI tests
+## 10. Scenario preview tests
+
+Required:
+- same repeated scenario in preview still produces content evaluation;
+- response reports `wouldSuppress=true` and duplicate guard codes when applicable;
+- preview does not increment daily notification count;
+- preview does not send remote/local notifications;
+- proactive mode still enforces the actual guard.
+
+## 11. Web UI tests
 
 Component:
 - map click updates location fields.
@@ -213,7 +239,7 @@ Playwright:
 
 For prod public smoke, avoid destructive account assumptions.
 
-## 11. Mobile tests
+## 12. Mobile tests
 
 Unit:
 - context collector combines sources.
@@ -235,7 +261,7 @@ Manual real-device matrix:
 | today's steps | verify | verify Health Connect |
 | deep link/map action | verify | verify |
 
-## 12. Scenario fixtures
+## 13. Scenario fixtures
 
 Put canonical fixtures under:
 ```text
@@ -258,7 +284,7 @@ Each fixture must have assertions for:
 - maximum recommendation count
 - key signals used
 
-## 13. Live integration tests
+## 14. Live integration tests
 
 Run against dev after deployment.
 
@@ -279,7 +305,7 @@ Run against dev after deployment.
 
 Use a dedicated test user and avoid excessive paid calls.
 
-## 14. CI gates
+## 15. CI gates
 
 ### PR gate
 Must pass:
@@ -304,7 +330,7 @@ If smoke fails:
 - workflow fails visibly.
 - do not claim successful deployment.
 
-## 15. Non-deterministic AI testing
+## 16. Non-deterministic AI testing
 
 Never assert exact prose.
 
@@ -319,7 +345,7 @@ Assert structure:
 Prompt regression:
 keep a small golden set and evaluate manually/dev, not as a brittle exact-text unit test.
 
-## 16. Performance checks
+## 17. Performance checks
 
 Record:
 - hard-guard-only latency.
@@ -329,7 +355,7 @@ Record:
 
 Do not optimize prematurely, but ensure no accidentally sequential provider calls when they can run in parallel.
 
-## 17. Security checks
+## 18. Security checks
 
 Automated/basic:
 - secret scanning.
@@ -343,7 +369,7 @@ Manual:
 - expired token rejected.
 - demo account cannot obtain AWS IAM credentials beyond intended application behavior.
 
-## 18. Release checklist
+## 19. Release checklist
 
 Before submission:
 - all five fixtures pass.

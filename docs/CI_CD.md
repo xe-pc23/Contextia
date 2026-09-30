@@ -74,6 +74,8 @@ Create:
 - `GitHubDevDeployRole`
 - `GitHubProdDeployRole`
 
+These exact names are canonical across the documentation.
+
 Trust conditions must restrict the repository.
 
 Prod trust should only permit the expected main/environment subject.

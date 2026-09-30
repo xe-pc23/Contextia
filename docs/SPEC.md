@@ -91,6 +91,44 @@ As a judge, I want to set arbitrary context and execute the production backend s
 
 ## 6. Functional requirements
 
+### 6.0 Canonical contract enums
+
+These values are owned by `packages/contracts`. No package may invent alternate spellings.
+
+```ts
+export const SignalName = [
+  "time",
+  "location",
+  "calendar",
+  "steps",
+  "weather",
+  "places",
+  "transit",
+  "preferences",
+] as const;
+
+export const TriggerType = [
+  "UPCOMING_EVENT_TRANSIT",
+  "STEP_GOAL_REST",
+  "FREE_TIME_NEARBY",
+  "WEATHER_ADAPTATION",
+  "EARLY_ARRIVAL_DETOUR",
+] as const;
+
+export const ProviderNeed = [
+  "geocode-event-location",
+  "places-near-current",
+  "places-near-destination",
+  "weather-current",
+  "weather-today",
+  "route-to-next-event",
+  "route-to-place-candidates",
+] as const;
+```
+
+`geocoding` is an implementation/provider operation, not a user-facing `SignalName`; a recommendation that relied on geocoding normally reports `location`, `calendar`, and/or `transit`.
+
+
 ### FR-001 Authentication
 - Cognito User Pool authentication is required for normal APIs.
 - Mobile and Web use separate Cognito app clients where useful.
@@ -111,6 +149,8 @@ Initial notification frequency policy:
 - `high`: max 6/day
 
 These values must be configuration, not scattered constants.
+
+Daily caps are calculated in the user's IANA timezone from `profile.preferences.timezone`, **not UTC**. If the profile is missing/invalid, fall back to the authenticated client's validated timezone and then UTC only as a last resort. DST transitions must be handled by a timezone-aware library.
 
 ### FR-003 Location
 Mobile:
@@ -189,6 +229,19 @@ Before Bedrock:
 - retain distance and provider IDs
 - never invent ratings/reviews that the provider did not return
 
+### FR-007A Geocoding
+Event `location` is transmitted as human-readable text. When a trigger requires destination coordinates, the backend uses a dedicated geocoding port.
+
+Primary implementation:
+- Amazon Location Service Places V2 `Geocode`.
+
+Requirements:
+- `GeocodingProvider` is distinct from nearby search.
+- use event/current geographic context as a bias when helpful.
+- transient geocoding used only inside the evaluation uses `SingleUse`.
+- if a geocoded result itself will be persisted, perform the relevant Places request with `IntendedUse=Storage`.
+- ambiguous/low-confidence geocoding returns `unavailable/ambiguous`; do not silently choose a distant place.
+
 ### FR-008 Transit / routing
 Primary provider: Amazon Location Routes.
 
@@ -241,13 +294,13 @@ Future detectors may be added without changing API contracts.
 ### FR-010 Hard guards
 Run before Bedrock.
 
-Mandatory guards:
+Mandatory delivery guards:
 - notifications disabled
 - daily notification cap reached
 - identical context fingerprint recently processed
 - identical trigger + anchor recently notified
-- missing minimum required signal for candidate
-- explicitly unsupported provider coverage
+
+`MISSING_REQUIRED_SIGNAL` and unsupported provider coverage are **candidate exclusion reasons**, not global hard guards. One candidate may be dropped while another candidate continues.
 
 Initial dedup windows:
 - same context fingerprint: 5 minutes
@@ -338,11 +391,27 @@ Do not persist complete raw external-provider payloads by default.
 ### FR-019 Provider storage intent
 Amazon Location Places requests must explicitly reflect whether returned provider data will be persisted.
 
-Default:
-- transient enrichment: `SingleUse`
-- flows that intentionally persist provider-returned details: `Storage`
+Default strategy:
+1. broad candidate discovery (`SearchNearby`, `Geocode`) uses `SingleUse` when the result exists only in-memory for the current evaluation;
+2. after Bedrock selects up to 3 place candidates, call Places V2 `GetPlace` for each selected place with `IntendedUse=Storage`;
+3. only data returned from the Storage-intent request may be persisted in recommendation history or reused by recommendation-scoped chat;
+4. raw SingleUse candidate lists are never persisted.
+
+If a future flow needs to persist a SearchNearby/Geocode result directly, that call itself must use `Storage`.
 
 ### FR-020 Scenario Console
+Production Scenario Console runs evaluations in **preview delivery mode** by default.
+
+Preview mode:
+- is authorized only for the configured Scenario Console/demo context; it is not a generic delivery-guard bypass;
+- uses the same validation, detector, provider, Bedrock, and recommendation pipeline as mobile;
+- does not send a push/local notification;
+- does not increment the user's daily notification count;
+- does not let duplicate-delivery guards hide an otherwise useful recommendation;
+- returns `wouldSuppress` diagnostics showing which delivery guards would have fired.
+
+This prevents a shared judge account from looking "broken" when several judges run the same scenario. A dev-only test path may execute true proactive delivery semantics for dedup tests.
+
 Must provide:
 - interactive MapLibre map
 - map click position
@@ -455,10 +524,11 @@ Flow:
 
 ### NFR-002 Latency target
 For normal evaluation:
-- hard guard / no-AI response: target < 1 second backend time
-- provider + Bedrock: target < 8 seconds under normal service conditions
+- deterministic hard-guard / no-AI path: target < 750 ms backend time;
+- provider + Bedrock path: target p50 < 6 seconds and p95 < 10 seconds under normal service conditions;
+- Lambda hard timeout budget: 15–20 seconds.
 
-These are targets, not hard SLOs.
+These are hackathon performance targets, not contractual SLOs.
 
 ### NFR-003 Cost
 - Do not invoke Bedrock if hard guards reject.
