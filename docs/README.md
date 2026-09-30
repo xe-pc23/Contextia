@@ -16,6 +16,7 @@ This directory is the implementation contract for Contextia.
 10. [REVIEW_RESOLUTION.md](./REVIEW_RESOLUTION.md) — v1.0 review findings and v1.1 resolution.
 11. [REFERENCES.md](./REFERENCES.md) — verified official references.
 12. [BACKLOG.md](./BACKLOG.md) — explicitly deferred scope.
+13. [PHASED_IMPLEMENTATION.md](./PHASED_IMPLEMENTATION.md) — five-person ownership, phase gates, and AI work orders.
 
 Repository-level agent instructions live at [`../AGENTS.md`](../AGENTS.md).
 

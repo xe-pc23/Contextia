@@ -226,7 +226,7 @@ Example:
     }
   ],
   "providerRefs": {
-    "placesPersistenceIntent": "single-use"
+    "placesPersistenceIntent": "storage"
   },
   "createdAt": "...",
   "updatedAt": "...",

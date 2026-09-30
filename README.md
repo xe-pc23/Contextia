@@ -67,6 +67,8 @@ The core contracts are:
 
 Coding agents must read [AGENTS.md](AGENTS.md) before making implementation changes.
 
+The [five-person phased implementation plan](docs/PHASED_IMPLEMENTATION.md) assigns file ownership and phase gates for the build.
+
 ## Core architecture
 
 ```text
