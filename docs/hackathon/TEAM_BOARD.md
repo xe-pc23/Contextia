@@ -24,6 +24,6 @@
 
 ## GitHub共有状況
 
-Phase 0の5ブランチと `feature/coordination-plan` はローカルに作成済み。GitHubへのpushは自動承認審査で保留中。公開許可が得られたら司令塔がpushし、担当者に取得方法を共有する。
+Phase 0の5ブランチと `feature/coordination-plan` は `origin` にpush済み。各担当者は自分のブランチを取得し、別worktree/checkoutで作業する。`main` はまだ計画を取り込んでいないため、実装PRの依存元は計画ブランチにする。
 
 AWSの両ローカルprofileは2026-10-01に設定リージョンとSTSのアカウントを読み取り確認済み。dev/prodへのデプロイ、CDK bootstrap、IAM変更は未実施。本番反映は所有者が検証済み`main`から手動起動する。
