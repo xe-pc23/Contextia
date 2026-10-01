@@ -4,6 +4,8 @@ Expo/React Native/strict TypeScript shell with `expo-dev-client`. The app import
 
 Versions follow the official Expo SDK 57 TypeScript template: Expo 57.0.26, React 19.2.3 and React Native 0.86.3. Use the repository's Node 24 and pnpm 10. The SDK's default Metro setup supports this pnpm monorepo; no manual hoisting/resolver workaround is configured.
 
+The repository pins the tested Node 24.13.1; the minimum supported Node 24 release is 24.3.0. Shell commands and package scripts use POSIX environment assignments, tested on macOS. Linux/WSL can use the same command syntax; native Windows cmd.exe/PowerShell execution has not been verified.
+
 From the repository root:
 
 ```bash

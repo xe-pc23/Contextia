@@ -9,11 +9,11 @@ A separate Web **Scenario Console** lets judges choose arbitrary location/time/s
 ## Status
 
 Specification: **v1.1 candidate**  
-Implementation: **Phase 0 common foundation implemented; contracts/providers/Web/Mobile pending**
+Implementation: **Phase 0 integrated and verified; five lanes ready for Phase 1**
 
 Public production URL: `TBD after deployment`
 
-The common workspace, five verification commands, local `/health`, and separate dev/prod CDK health stacks are available. See the [Phase 0 handoff](docs/hackathon/PHASE0_HANDOFF.md) to assign the remaining lanes. No AWS deployment has been performed.
+The common workspace, v1 Zod contracts, five input/provider fixtures, seven provider ports, React/Vite shell, Expo development-client shell, local `/health`, and separate dev/prod CDK health stacks are available. See the [Phase 0 handoff](docs/hackathon/PHASE0_HANDOFF.md) for evidence and the [Phase 1 assignments](docs/hackathon/PHASE1_ASSIGNMENTS.md) for ready branches and copyable task prompts. Authentication, live evaluation and provider adapters are Phase 1 work. No AWS deployment has been performed.
 
 ```bash
 pnpm install --frozen-lockfile
@@ -23,9 +23,14 @@ pnpm test
 pnpm build
 pnpm cdk:synth
 pnpm dev:api
+# In separate terminals:
+pnpm dev:web
+pnpm dev:mobile
 ```
 
-Use Node.js 24.x and pnpm 10.29.3. `pnpm dev:api` serves health at `http://127.0.0.1:3001/health`. Web and Mobile workspaces are empty foundations for C/E to replace.
+Use the tested Node.js 24.13.1 from `.node-version` (minimum 24.3.0, below 25) and pnpm 10.29.3. `pnpm dev:api` serves health at `http://127.0.0.1:3001/health`; `pnpm dev:web` opens the shell on `http://127.0.0.1:5173`. Mobile uses a development client; follow [its README](apps/mobile/README.md) for native setup. Both apps show their unconnected status.
+
+The integrated baseline passed all five verification commands with 124 tests, including a fresh archived checkout with no prior build output. The Web shell also booted in a browser. Mobile build exports both iOS/Android JavaScript/Hermes assets; native device capabilities and APK/IPA compilation remain unverified.
 
 ## Stack
 
