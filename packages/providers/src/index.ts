@@ -5,3 +5,5 @@ export type * from './ports/RouteProvider.js';
 export type * from './ports/RecommendationModel.js';
 export type * from './ports/StateRepository.js';
 export type * from './ports/NotificationProvider.js';
+export { AmazonLocationPlacesProvider, createAmazonLocationPlacesProvider } from './adapters/places.js';
+export type { AmazonLocationPlacesAdapterOptions, AmazonLocationPlacesClient, AmazonLocationPlacesConfig } from './adapters/places.js';
