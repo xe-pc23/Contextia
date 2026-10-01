@@ -1,0 +1,29 @@
+{
+  "name": "contextia",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "packageManager": "pnpm@10.29.3",
+  "engines": { "node": ">=24 <25", "pnpm": ">=10 <11" },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "pnpm -r typecheck && tsc --project tsconfig.json --noEmit",
+    "test": "vitest run",
+    "build": "pnpm -r build",
+    "cdk:synth": "node --import tsx scripts/cdk.ts synth",
+    "cdk:diff:dev": "node --import tsx scripts/cdk.ts diff dev",
+    "dev:api": "pnpm --filter @contextia/api dev"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/aws-lambda": "8.10.164",
+    "@types/node": "^24.0.0",
+    "aws-cdk": "2.1143.0",
+    "esbuild": "0.28.2",
+    "eslint": "10.11.0",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.71.0",
+    "vitest": "5.0.3"
+  }
+}

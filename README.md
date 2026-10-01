@@ -9,9 +9,23 @@ A separate Web **Scenario Console** lets judges choose arbitrary location/time/s
 ## Status
 
 Specification: **v1.1 candidate**  
-Implementation: **not started / bootstrap next**
+Implementation: **Phase 0 common foundation implemented; contracts/providers/Web/Mobile pending**
 
 Public production URL: `TBD after deployment`
+
+The common workspace, five verification commands, local `/health`, and separate dev/prod CDK health stacks are available. See the [Phase 0 handoff](docs/hackathon/PHASE0_HANDOFF.md) to assign the remaining lanes. No AWS deployment has been performed.
+
+```bash
+pnpm install --frozen-lockfile
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
+pnpm cdk:synth
+pnpm dev:api
+```
+
+Use Node.js 24.x and pnpm 10.29.3. `pnpm dev:api` serves health at `http://127.0.0.1:3001/health`. Web and Mobile workspaces are empty foundations for C/E to replace.
 
 ## Stack
 
