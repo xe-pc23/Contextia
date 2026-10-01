@@ -1,9 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { APIGatewayProxyEventV2WithJWTAuthorizer } from 'aws-lambda';
-import { ErrorResponseSchema } from '@contextia/contracts';
+import { ContextEvaluateResponseSchema, ErrorResponseSchema } from '@contextia/contracts';
+import type { EvaluationResult } from '@contextia/contracts';
 import { getScenarioInput } from '@contextia/test-fixtures';
 import { MAX_BODY_BYTES, claimsFromEvent, createLambdaHandler, createRequestHandler } from '../src/handler.js';
 import type { AuthClaims, ClientConfig, RequestLog } from '../src/handler.js';
+import { EvaluationFailure } from '../src/application/evaluateContext.js';
+import type { EvaluateContext } from '../src/application/evaluateContext.js';
 
 const clients: ClientConfig = { webClientId: 'web-client', mobileClientId: 'mobile-client' };
 const preview = getScenarioInput('step-goal');
@@ -11,9 +14,9 @@ const proactive = { ...preview, mode: 'real', deliveryMode: 'proactive', locatio
 const webUser: AuthClaims = { sub: 'user-1', clientId: 'web-client' };
 const mobileUser: AuthClaims = { sub: 'user-1', clientId: 'mobile-client' };
 
-function setup(clientConfig = clients) {
+function setup(clientConfig = clients, evaluate?: EvaluateContext) {
   const logs: RequestLog[] = [];
-  const handle = createRequestHandler({ version: 'test', clients: clientConfig, log: entry => { logs.push(entry); } });
+  const handle = createRequestHandler({ version: 'test', clients: clientConfig, log: entry => { logs.push(entry); }, ...(evaluate ? { evaluate } : {}) });
   const post = (body: unknown, claims: AuthClaims | null = webUser, raw = false) => handle({
     method: 'POST', path: '/v1/context/evaluate', requestId: 'req-eval', claims,
     body: raw ? body as string | null : JSON.stringify(body)
@@ -64,7 +67,7 @@ describe('POST /v1/context/evaluate entry', () => {
     expect((await errorOf(post(proactive, mobileUser))).statusCode).toBe(403);
   });
 
-  it('reports evaluation as unavailable instead of fabricating a result', async () => {
+  it('reports evaluation as unavailable when no evaluation service is composed', async () => {
     expect(await errorOf(setup().post(preview))).toMatchObject({ statusCode: 503, error: { code: 'EVALUATION_UNAVAILABLE' } });
     expect(await errorOf(setup().post(proactive, mobileUser))).toMatchObject({ statusCode: 503, error: { code: 'EVALUATION_UNAVAILABLE' } });
   });
@@ -74,6 +77,44 @@ describe('POST /v1/context/evaluate entry', () => {
     await post({ ...preview, calendar: [{ id: 'e1', title: 'private meeting', startAt: preview.capturedAt, endAt: preview.capturedAt, location: 'private place' }] });
     expect(logs).toEqual([{ event: 'http_request', requestId: 'req-eval', route: 'evaluate', statusCode: 503, mode: 'simulation', errorCode: 'EVALUATION_UNAVAILABLE' }]);
     expect(JSON.stringify(logs)).not.toMatch(/private|user-1|web-client|35\.68/);
+  });
+});
+
+describe('POST /v1/context/evaluate with a composed evaluation service', () => {
+  const silent: EvaluationResult = {
+    evaluationId: 'eval-1', decision: 'silent', recommendationId: null, triggerType: null, urgency: null, message: null,
+    recommendations: [], decisionReason: 'No candidate opportunity was detected.', usedSignals: [],
+    delivery: { mode: 'preview', status: 'preview', wouldSuppress: true, guardCodes: ['NO_CANDIDATE'] },
+    providerStatus: { geocoding: { status: 'not_requested' }, places: { status: 'not_requested' }, weather: { status: 'not_requested' }, routes: { status: 'not_requested' }, bedrock: { status: 'not_requested' } },
+    contextExpiresAt: '2026-10-02T05:10:00.000Z'
+  };
+
+  it('passes the verified user and validated context, returning the result envelope', async () => {
+    const evaluate = vi.fn<EvaluateContext>(() => Promise.resolve(silent));
+    const response = await setup(clients, evaluate).post(preview);
+    expect(response.statusCode).toBe(200);
+    expect(ContextEvaluateResponseSchema.parse(JSON.parse(response.body))).toEqual({ requestId: 'req-eval', data: silent });
+    expect(evaluate).toHaveBeenCalledWith({ userId: 'user-1', context: preview });
+  });
+
+  it('does not evaluate unauthorized or invalid requests', async () => {
+    const evaluate = vi.fn<EvaluateContext>(() => Promise.resolve(silent));
+    const { post } = setup(clients, evaluate);
+    await post(preview, mobileUser);
+    await post({ ...preview, mode: 'bogus' });
+    expect(evaluate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [new EvaluationFailure('PROFILE_NOT_FOUND'), 404, 'PROFILE_NOT_FOUND'],
+    [new EvaluationFailure('STATE_UNAVAILABLE'), 503, 'STATE_UNAVAILABLE'],
+    [new Error('secret upstream body'), 500, 'INTERNAL_ERROR']
+  ])('maps %s to %i without leaking internal messages', async (failure, statusCode, code) => {
+    const { post, logs } = setup(clients, () => Promise.reject(failure));
+    const response = await post(preview);
+    expect(await errorOf(Promise.resolve(response))).toMatchObject({ statusCode, error: { code } });
+    expect(response.body).not.toContain('secret');
+    expect(logs[0]).toMatchObject({ statusCode, errorCode: code, mode: 'simulation' });
   });
 });
 

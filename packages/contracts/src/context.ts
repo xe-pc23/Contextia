@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 export const OpaqueIdSchema = z.string().min(1);
+export const CalendarDateSchema = z.iso.date();
 export const TimestampSchema = z.iso.datetime({ offset: true }).refine(value => Number.isFinite(Date.parse(value)), 'Invalid timestamp');
 export const TimezoneSchema = z.string().min(1).max(64).refine(value => {
   try {
