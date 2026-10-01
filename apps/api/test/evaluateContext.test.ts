@@ -75,7 +75,7 @@ function setup(options: Options = {}) {
       stored ? { status: 'ok', data: stored.snapshot } : options.snapshot ?? { status: 'ok', data: null })),
     listRecommendations: vi.fn<EvaluationStateRepository['listRecommendations']>(() => Promise.resolve({ status: 'ok', data: { items: [], nextCursor: null } })),
     writeRecommendation: vi.fn<EvaluationStateRepository['writeRecommendation']>(() => Promise.resolve({ status: 'ok', data: null })),
-    recordProactiveDelivery: vi.fn<EvaluationStateRepository['recordProactiveDelivery']>(() => Promise.resolve(
+    commitProactiveRecommendation: vi.fn<EvaluationStateRepository['commitProactiveRecommendation']>(() => Promise.resolve(
       options.recorded === false ? { status: 'ok', data: { recorded: false, guardCodes: ['DAILY_CAP_REACHED'] } } : { status: 'ok', data: { recorded: true } }))
   } satisfies EvaluationStateRepository;
   const places = {
@@ -111,7 +111,7 @@ describe('createEvaluateContext', () => {
     expect(guardCalls.map(call => call.opportunity)).toEqual([undefined, { type: 'STEP_GOAL_REST', anchorKey: '2026-10-01' }]);
     expect(guardCalls.every(call => call.now === NOW)).toBe(true);
     // Preview never consumes delivery quota.
-    expect(state.recordProactiveDelivery).not.toHaveBeenCalled();
+    expect(state.commitProactiveRecommendation).not.toHaveBeenCalled();
   });
 
   it('shows provider place data, never model-invented fields, and persists only the Storage lookup', async () => {
@@ -142,6 +142,7 @@ describe('createEvaluateContext', () => {
     expect(write?.snapshot.expiresAt).toBe(NOW.getTime() / 1000 + 24 * 60 * 60);
     expect(write?.fingerprint).toMatch(/^[0-9a-f]{64}$/);
     expect(write?.processedAt).toBe(NOW.toISOString());
+    expect(write?.notificationDay).toBe('2026-10-01');
   });
 
   it('keeps preview results visible while reporting what proactive delivery would suppress', async () => {
@@ -175,23 +176,24 @@ describe('createEvaluateContext', () => {
     expect(decide).not.toHaveBeenCalled();
   });
 
-  it('records proactive delivery atomically before storing the recommendation', async () => {
+  it('commits proactive delivery and the recommendation in one repository operation', async () => {
     const { evaluate, state } = setup();
     const result = await evaluate({ userId: 'user-1', context: proactive });
     expect(result).toMatchObject({ decision: 'notify', delivery: { mode: 'proactive', status: 'ready', wouldSuppress: false } });
-    expect(state.recordProactiveDelivery).toHaveBeenCalledWith({ userId: 'user-1', delivery: expect.objectContaining({
-      deliveryMode: 'proactive', recommendationId: 'rec-2', notificationDay: '2026-10-01', maxDailyNotifications: 3,
-      triggerType: 'STEP_GOAL_REST', anchorKey: '2026-10-01', contextDedupSeconds: 300, anchorDedupSeconds: 1800
-    }) });
-    const [delivery] = state.recordProactiveDelivery.mock.invocationCallOrder;
-    const [write] = state.writeRecommendation.mock.invocationCallOrder;
-    expect(delivery).toBeLessThan(write ?? 0);
+    expect(state.commitProactiveRecommendation).toHaveBeenCalledWith(expect.objectContaining({
+      userId: 'user-1', recommendation: expect.objectContaining({ id: 'rec-2' }), delivery: expect.objectContaining({
+        deliveryMode: 'proactive', recommendationId: 'rec-2', notificationDay: '2026-10-01', maxDailyNotifications: 3,
+        triggerType: 'STEP_GOAL_REST', anchorKey: '2026-10-01', contextDedupSeconds: 300, anchorDedupSeconds: 1800
+      })
+    }));
+    expect(state.writeRecommendation).not.toHaveBeenCalled();
   });
 
   it('returns silent when the atomic delivery recheck rejects, without storing a recommendation', async () => {
     const { evaluate, state } = setup({ recorded: false });
     const result = await evaluate({ userId: 'user-1', context: proactive });
     expect(result).toMatchObject({ decision: 'silent', delivery: { status: 'suppressed', guardCodes: ['DAILY_CAP_REACHED'] } });
+    expect(state.commitProactiveRecommendation).toHaveBeenCalledOnce();
     expect(state.writeRecommendation).not.toHaveBeenCalled();
   });
 
@@ -318,13 +320,17 @@ describe('createEvaluateContext with the lane A domain', () => {
     for (const result of [first, second]) {
       expect(result).toMatchObject({ decision: 'notify', triggerType: 'STEP_GOAL_REST', delivery: { mode: 'preview', status: 'preview' } });
     }
-    expect(state.recordProactiveDelivery).not.toHaveBeenCalled();
+    expect(state.commitProactiveRecommendation).not.toHaveBeenCalled();
   });
 
-  it('records proactive step-goal delivery with the local-day anchor window', async () => {
+  it('commits proactive recommendation and delivery together with the local-day anchor window', async () => {
     const { evaluate, state } = setup({ domain: createEvaluationDomain() });
     expect(await evaluate({ userId: 'user-1', context: proactive })).toMatchObject({ decision: 'notify', delivery: { status: 'ready' } });
-    expect(state.recordProactiveDelivery.mock.calls[0]?.[0].delivery).toMatchObject({ anchorKey: '2026-10-01', anchorDedupSeconds: 14 * 3600 + 10 * 60 });
+    expect(state.commitProactiveRecommendation).toHaveBeenCalledWith(expect.objectContaining({
+      userId: 'user-1', recommendation: expect.objectContaining({ id: 'rec-2' }),
+      delivery: expect.objectContaining({ recommendationId: 'rec-2', anchorKey: '2026-10-01', anchorDedupSeconds: 14 * 3600 + 10 * 60 })
+    }));
+    expect(state.writeRecommendation).not.toHaveBeenCalled();
   });
 
   it('stays silent below the step goal', async () => {

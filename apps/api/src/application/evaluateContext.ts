@@ -5,7 +5,7 @@ import type {
 } from '@contextia/contracts';
 import type {
   ContextSnapshot, PlacesProvider, ProviderEnrichment, RecommendationModel, RecommendationSummary,
-  StateRepository, StoragePlace, StorageRecommendationItem
+  RecommendationWrite, StateRepository, StoragePlace, StorageRecommendationItem
 } from '@contextia/providers';
 import type { EvaluationDomain, GuardCheckInput, GuardUserState } from './evaluationDomain.js';
 import { contextFingerprint, hashCalendarId } from './fingerprint.js';
@@ -45,7 +45,7 @@ export const defaultEvaluationPolicy: EvaluationPolicy = Object.freeze({
 });
 
 export type EvaluationStateRepository = Pick<StateRepository,
-  'getProfile' | 'getState' | 'writeContextSnapshot' | 'getContextSnapshot' | 'listRecommendations' | 'writeRecommendation' | 'recordProactiveDelivery'>;
+  'getProfile' | 'getState' | 'writeContextSnapshot' | 'getContextSnapshot' | 'listRecommendations' | 'writeRecommendation' | 'commitProactiveRecommendation'>;
 
 export interface EvaluationDependencies {
   domain: EvaluationDomain;
@@ -187,7 +187,8 @@ export function createEvaluateContext(deps: EvaluationDependencies): EvaluateCon
 
     // Prior state was read above; record this context (including preview) before any provider work.
     const written = await deps.state.writeContextSnapshot({
-      userId, snapshot: snapshotOf(context, evaluationId, now, contextExpiresAt), fingerprint, processedAt: now.toISOString()
+      userId, snapshot: snapshotOf(context, evaluationId, now, contextExpiresAt), fingerprint,
+      processedAt: now.toISOString(), notificationDay: pre.notificationDay
     });
     if (written.status !== 'ok' && written.status !== 'degraded') throw new EvaluationFailure('STATE_UNAVAILABLE');
 
@@ -262,18 +263,6 @@ export function createEvaluateContext(deps: EvaluationDependencies): EvaluateCon
     const recommendationId = deps.newId('rec');
     const proactive = context.deliveryMode === 'proactive';
 
-    if (proactive) {
-      const recorded = await deps.state.recordProactiveDelivery({ userId, delivery: {
-        deliveryMode: 'proactive', evaluationId, recommendationId, notificationDay: chosen.guard.notificationDay,
-        notificationsEnabled: preferences.notificationsEnabled, maxDailyNotifications: chosen.guard.maxDailyNotifications,
-        contextFingerprint: fingerprint, triggerType: chosen.candidate.type, anchorKey: chosen.candidate.anchorKey,
-        at: now.toISOString(), contextDedupSeconds: policy.contextDedupSeconds, anchorDedupSeconds: chosen.guard.anchorDedupSeconds,
-        maxRecentAnchors: policy.maxRecentAnchors
-      } });
-      if (recorded.status !== 'ok' && recorded.status !== 'degraded') throw new EvaluationFailure('STATE_UNAVAILABLE');
-      if (!recorded.data.recorded) return silent('Delivery guards suppressed this recommendation.', recorded.data.guardCodes, decision.usedSignals);
-    }
-
     // Response items show provider-normalized places; only Storage-intent lookups may be persisted.
     const items = await Promise.all(decision.recommendations.map(async item => {
       const id = deps.newId('item');
@@ -292,14 +281,27 @@ export function createEvaluateContext(deps: EvaluationDependencies): EvaluateCon
     }));
 
     const createdAt = now.toISOString();
-    const saved = await deps.state.writeRecommendation({ userId, recommendation: {
+    const recommendation: RecommendationWrite = {
       id: recommendationId, evaluationId, contextReference: { evaluationId, capturedAt: context.capturedAt }, createdAt,
       triggerType: chosen.candidate.type, urgency: decision.urgency, message: decision.message,
       recommendations: items.map(item => item.storage), usedSignals: decision.usedSignals,
       summaryForDedup: decision.message.slice(0, 200), providerStatus,
       expiresAt: epochSeconds(now, policy.recommendationTtlSeconds)
-    } });
-    if (saved.status !== 'ok' && saved.status !== 'degraded') throw new EvaluationFailure('STATE_UNAVAILABLE');
+    };
+    if (proactive) {
+      const committed = await deps.state.commitProactiveRecommendation({ userId, recommendation, delivery: {
+        deliveryMode: 'proactive', evaluationId, recommendationId, notificationDay: chosen.guard.notificationDay,
+        notificationsEnabled: preferences.notificationsEnabled, maxDailyNotifications: chosen.guard.maxDailyNotifications,
+        contextFingerprint: fingerprint, triggerType: chosen.candidate.type, anchorKey: chosen.candidate.anchorKey,
+        at: now.toISOString(), contextDedupSeconds: policy.contextDedupSeconds, anchorDedupSeconds: chosen.guard.anchorDedupSeconds,
+        maxRecentAnchors: policy.maxRecentAnchors
+      } });
+      if (committed.status !== 'ok' && committed.status !== 'degraded') throw new EvaluationFailure('STATE_UNAVAILABLE');
+      if (!committed.data.recorded) return silent('Delivery guards suppressed this recommendation.', committed.data.guardCodes, decision.usedSignals);
+    } else {
+      const saved = await deps.state.writeRecommendation({ userId, recommendation });
+      if (saved.status !== 'ok' && saved.status !== 'degraded') throw new EvaluationFailure('STATE_UNAVAILABLE');
+    }
 
     return EvaluationResultSchema.parse({
       ...base, decision: 'notify', recommendationId, triggerType: chosen.candidate.type, urgency: decision.urgency,

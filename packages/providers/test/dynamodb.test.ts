@@ -236,7 +236,8 @@ describe('DynamoDbStateRepository', () => {
       userId: 'user-1',
       snapshot: snapshot(),
       fingerprint: 'sha256:current',
-      processedAt
+      processedAt,
+      notificationDay: '2026-10-01'
     });
 
     expect(result).toMatchObject({ status: 'ok', data: null });
@@ -256,28 +257,37 @@ describe('DynamoDbStateRepository', () => {
       ':evaluationId': 'eval-1',
       ':capturedAt': capturedAt,
       ':fingerprint': 'sha256:current',
-      ':processedAt': processedAt
+      ':processedAt': processedAt,
+      ':notificationDay': '2026-10-01',
+      ':zero': 0
     });
     expect(update?.UpdateExpression).toContain('latestContextProcessedAt');
-    expect(update?.UpdateExpression).not.toContain('notificationsSentToday');
-    expect(update?.UpdateExpression).not.toContain('recentAnchors.#anchor');
+    expect(update?.UpdateExpression).toContain('#notificationDay = if_not_exists(#notificationDay, :notificationDay)');
+    expect(update?.UpdateExpression).toContain('#notificationsSentToday = if_not_exists(#notificationsSentToday, :zero)');
+    expect(update?.UpdateExpression).not.toContain('#notificationsSentToday = if_not_exists(#notificationsSentToday, :zero) +');
+    expect(update?.UpdateExpression).not.toContain('#recentAnchors.#anchor');
   });
 
-  it('keeps preview snapshot writes away from notification counters and recent anchors', async () => {
+  it('initializes preview delivery state without incrementing counts or appending anchors', async () => {
     const fake = fakeClient();
     await repository(fake.client).writeContextSnapshot({
       userId: 'user-1',
       snapshot: snapshot({ mode: 'simulation' }),
       fingerprint: 'sha256:preview',
-      processedAt
+      processedAt,
+      notificationDay: '2026-10-01'
     });
     const request = fake.requests[0];
     if (request?.operation !== 'transactWrite') throw new Error('Expected a transaction');
     const update = request.input.TransactItems.find(item => 'Update' in item);
     if (update === undefined || !('Update' in update)) throw new Error('Expected state update');
 
-    expect(update.Update.UpdateExpression).not.toContain('notificationsSentToday');
-    expect(update.Update.UpdateExpression).not.toContain('recentAnchors');
+    expect(update.Update.UpdateExpression).toContain('#notificationDay = if_not_exists(#notificationDay, :notificationDay)');
+    expect(update.Update.UpdateExpression).toContain('#notificationsSentToday = if_not_exists(#notificationsSentToday, :zero)');
+    expect(update.Update.UpdateExpression).not.toContain('#notificationsSentToday = if_not_exists(#notificationsSentToday, :zero) +');
+    expect(update.Update.UpdateExpression).toContain('#recentAnchors = if_not_exists(#recentAnchors, :emptyMap)');
+    expect(update.Update.UpdateExpression).not.toContain('#recentAnchors.#anchor');
+    expect(update.Update.ExpressionAttributeValues).toMatchObject({ ':notificationDay': '2026-10-01', ':zero': 0, ':emptyMap': {} });
   });
 
   it('writes a normalized recommendation and ID pointer in one transaction', async () => {
@@ -306,6 +316,45 @@ describe('DynamoDbStateRepository', () => {
       targetSK: target?.SK,
       expiresAt: recommendation().expiresAt
     });
+  });
+
+  it('commits a proactive recommendation, pointer and quota update atomically without a prior pointer read', async () => {
+    const fake = fakeClient([{ Item: storedProfile() }, { Item: storedState({ notificationsSentToday: 0 }) }, {}]);
+    const repo = repository(fake.client) as unknown as {
+      commitProactiveRecommendation(input: { userId: string; recommendation: RecommendationWrite; delivery: ProactiveDeliveryWrite }): Promise<unknown>
+    };
+
+    const result = await repo.commitProactiveRecommendation({ userId: 'user-1', recommendation: recommendation(), delivery });
+
+    expect(result).toMatchObject({ status: 'ok', data: { recorded: true } });
+    expect(fake.requests.map(request => request.operation)).toEqual(['get', 'get', 'transactWrite']);
+    const request = fake.requests[2];
+    if (request?.operation !== 'transactWrite') throw new Error('Expected a transaction');
+    expect(request.input.TransactItems).toHaveLength(4);
+    const puts = request.input.TransactItems.flatMap(item => 'Put' in item ? [item.Put] : []);
+    const target = puts.find(item => item.Item.entityType === 'Recommendation');
+    const pointer = puts.find(item => item.Item.entityType === 'RecommendationRef');
+    const stateUpdate = request.input.TransactItems.find(item => 'Update' in item && item.Update.Key.SK === 'STATE');
+    expect(target?.ConditionExpression).toContain('attribute_not_exists');
+    expect(pointer?.Item).toMatchObject({
+      SK: 'RECOMMENDATION_REF#rec-1', deliveryRecordedAt: new Date(Date.parse(delivery.at)).toISOString()
+    });
+    expect(pointer?.ConditionExpression).toContain('attribute_not_exists');
+    expect(stateUpdate).toBeDefined();
+  });
+
+  it('does not persist a proactive recommendation when the atomic delivery recheck cancels', async () => {
+    const cancellation = Object.assign(new Error('private database detail'), { name: 'TransactionCanceledException' });
+    const fake = fakeClient([{ Item: storedProfile() }, { Item: storedState({ notificationsSentToday: 0 }) }, cancellation]);
+    const repo = repository(fake.client) as unknown as {
+      commitProactiveRecommendation(input: { userId: string; recommendation: RecommendationWrite; delivery: ProactiveDeliveryWrite }): Promise<unknown>
+    };
+
+    const result = await repo.commitProactiveRecommendation({ userId: 'user-1', recommendation: recommendation(), delivery });
+
+    expect(result).toMatchObject({ status: 'ok', data: { recorded: false } });
+    expect(fake.requests.map(request => request.operation)).toEqual(['get', 'get', 'transactWrite']);
+    expect(JSON.stringify(result)).not.toContain('private database detail');
   });
 
   it('resolves a recommendation through its owner-scoped pointer and validates the target evaluation', async () => {

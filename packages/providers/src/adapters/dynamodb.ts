@@ -16,6 +16,7 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import {
   ApiRecommendationItemSchema,
+  CalendarDateSchema,
   CalendarEventContextSchema,
   GeoPointSchema,
   ProfileSchema,
@@ -38,6 +39,7 @@ import type {
   ContextReference,
   ContextSnapshot,
   ConversationRecord,
+  DeliveryWriteResult,
   IdempotencyRecord,
   IdempotencyClaim,
   OwnedRead,
@@ -399,6 +401,35 @@ function projectStorageRecommendations(items: RecommendationWrite['recommendatio
   return projected;
 }
 
+function recommendationItems(
+  userId: string,
+  recommendation: z.infer<typeof RecommendationWriteSchema>,
+  deliveryAt?: string
+): { targetItem: DynamoDbItem; pointerItem: DynamoDbItem } | null {
+  const projectedRecommendations = projectStorageRecommendations(recommendation.recommendations as StorageRecommendationItem[]);
+  if (projectedRecommendations === null) return null;
+  const targetSK = recommendationSortKey(recommendation);
+  const createdAt = recommendation.createdAt;
+  const targetItem = toDynamoItem({
+    PK: userKey(userId), SK: targetSK, entityType: 'Recommendation',
+    recommendationId: recommendation.id, evaluationId: recommendation.evaluationId,
+    contextReference: recommendation.contextReference, createdAt, triggerType: recommendation.triggerType,
+    urgency: recommendation.urgency, message: recommendation.message, items: projectedRecommendations,
+    usedSignals: recommendation.usedSignals, summaryForDedup: recommendation.summaryForDedup,
+    providerStatus: recommendation.providerStatus,
+    ...(recommendation.recommendations.some(item => item.place != null) ? { providerRefs: { placesPersistenceIntent: 'storage' } } : {}),
+    expiresAt: recommendation.expiresAt, updatedAt: createdAt, schemaVersion: 1
+  });
+  const canonicalDeliveryAt = deliveryAt === undefined ? undefined : canonicalTimestamp(deliveryAt);
+  const pointerItem = toDynamoItem({
+    PK: userKey(userId), SK: `RECOMMENDATION_REF#${recommendation.id}`, entityType: 'RecommendationRef',
+    recommendationId: recommendation.id, evaluationId: recommendation.evaluationId, targetSK, expiresAt: recommendation.expiresAt,
+    createdAt, updatedAt: canonicalDeliveryAt ?? createdAt,
+    ...(canonicalDeliveryAt === undefined ? {} : { deliveryRecordedAt: canonicalDeliveryAt }), schemaVersion: 1
+  });
+  return targetItem === null || pointerItem === null ? null : { targetItem, pointerItem };
+}
+
 type ApiRecommendationItemSchemaType = z.infer<typeof ApiRecommendationItemSchema>;
 
 function toRecommendation(raw: unknown, expectedUserId?: string): RecommendationRecord | null {
@@ -505,6 +536,47 @@ function anchorKeysToPrune(
   return anchors.slice(0, Math.max(0, anchors.length - max)).map(anchor => anchor.key).filter(key => key !== newAnchor);
 }
 
+function proactiveDeliveryStateUpdate(
+  tableName: string,
+  pk: string,
+  state: z.infer<typeof StateItemSchema>,
+  delivery: z.infer<typeof DeliveryInputSchema>
+): DynamoDbUpdateInput {
+  const sameDay = state.notificationDay === delivery.notificationDay;
+  const currentAnchor = anchorMapKey(delivery.triggerType, delivery.anchorKey);
+  const pruneKeys = anchorKeysToPrune(state, currentAnchor, canonicalTimestamp(delivery.at), delivery.maxRecentAnchors);
+  const names: Record<string, string> = {
+    '#entityType': 'entityType', '#notificationDay': 'notificationDay', '#notificationsSentToday': 'notificationsSentToday',
+    '#latestContextEvaluationId': 'latestContextEvaluationId', '#latestContextFingerprint': 'latestContextFingerprint',
+    '#recentAnchors': 'recentAnchors', '#anchor': currentAnchor, '#latestRecommendationAt': 'latestRecommendationAt',
+    '#updatedAt': 'updatedAt'
+  };
+  const values: Record<string, DynamoDbValue> = {
+    ':day': delivery.notificationDay, ':evaluationId': delivery.evaluationId, ':fingerprint': delivery.contextFingerprint,
+    ':at': canonicalTimestamp(delivery.at), ':one': 1, ':zero': 0, ':max': delivery.maxDailyNotifications,
+    ':anchorCutoff': new Date(Date.parse(delivery.at) - delivery.anchorDedupSeconds * 1_000).toISOString()
+  };
+  const removePaths = pruneKeys.map((key, index) => {
+    const name = `#prune${index}`;
+    names[name] = key;
+    return `#recentAnchors.${name}`;
+  });
+  const dayCondition = sameDay
+    ? '#notificationDay = :day AND (attribute_not_exists(#notificationsSentToday) OR #notificationsSentToday < :max)'
+    : '(attribute_not_exists(#notificationDay) OR #notificationDay <> :day)';
+  const updateExpression = `${sameDay
+    ? 'SET #notificationsSentToday = if_not_exists(#notificationsSentToday, :zero) + :one'
+    : 'SET #notificationDay = :day, #notificationsSentToday = :one'}, #recentAnchors.#anchor = :at, #latestRecommendationAt = :at, #updatedAt = :at${removePaths.length > 0 ? ` REMOVE ${removePaths.join(', ')}` : ''}`;
+  return {
+    TableName: tableName,
+    Key: { PK: pk, SK: 'STATE' },
+    UpdateExpression: updateExpression,
+    ConditionExpression: `#latestContextEvaluationId = :evaluationId AND #latestContextFingerprint = :fingerprint AND ${dayCondition} AND (attribute_not_exists(#recentAnchors.#anchor) OR #recentAnchors.#anchor <= :anchorCutoff)`,
+    ExpressionAttributeNames: names,
+    ExpressionAttributeValues: values
+  };
+}
+
 export class DynamoDbStateRepository implements StateRepository {
   private readonly client: DynamoDbClient;
   private readonly tableName: string;
@@ -585,13 +657,14 @@ export class DynamoDbStateRepository implements StateRepository {
     }
   }
 
-  async writeContextSnapshot(input: { userId: string; snapshot: ContextSnapshot; fingerprint: string; processedAt: string }): Promise<ProviderResult<null>> {
+  async writeContextSnapshot(input: { userId: string; snapshot: ContextSnapshot; fingerprint: string; processedAt: string; notificationDay: string }): Promise<ProviderResult<null>> {
     const startedAt = performance.now();
     const parsed = z.strictObject({
-      userId: UserIdSchema, snapshot: ContextSnapshotInputSchema, fingerprint: z.string().min(1).max(256), processedAt: TimestampSchema
+      userId: UserIdSchema, snapshot: ContextSnapshotInputSchema, fingerprint: z.string().min(1).max(256),
+      processedAt: TimestampSchema, notificationDay: CalendarDateSchema
     }).safeParse(input);
     if (!parsed.success) return invalidRequest();
-    const { userId, fingerprint, processedAt } = parsed.data;
+    const { userId, fingerprint, processedAt, notificationDay } = parsed.data;
     const context = parsed.data.snapshot;
     const expiresAt = Math.floor(Date.parse(processedAt) / 1_000) + 86_400;
     const snapshotItem = toDynamoItem({
@@ -601,26 +674,27 @@ export class DynamoDbStateRepository implements StateRepository {
       calendar: context.calendar, createdAt: processedAt, expiresAt, schemaVersion: 1
     });
     if (snapshotItem === null) return invalidRequest();
-    const initializeAnchors = context.mode === 'real';
     const updateNames: Record<string, string> = {
       '#entityType': 'entityType', '#latestContextEvaluationId': 'latestContextEvaluationId',
       '#latestContextCapturedAt': 'latestContextCapturedAt', '#latestContextFingerprint': 'latestContextFingerprint',
-      '#latestContextProcessedAt': 'latestContextProcessedAt', '#createdAt': 'createdAt',
+      '#latestContextProcessedAt': 'latestContextProcessedAt', '#notificationDay': 'notificationDay',
+      '#notificationsSentToday': 'notificationsSentToday', '#recentAnchors': 'recentAnchors', '#createdAt': 'createdAt',
       '#updatedAt': 'updatedAt', '#schemaVersion': 'schemaVersion'
     };
-    if (initializeAnchors) updateNames['#recentAnchors'] = 'recentAnchors';
     const updateValues: Record<string, DynamoDbValue> = {
       ':entityType': 'UserState', ':evaluationId': context.evaluationId, ':capturedAt': context.capturedAt,
-      ':fingerprint': fingerprint, ':processedAt': processedAt, ':schemaVersion': 1
+      ':fingerprint': fingerprint, ':processedAt': processedAt, ':notificationDay': notificationDay,
+      ':zero': 0, ':emptyMap': {}, ':schemaVersion': 1
     };
-    if (initializeAnchors) updateValues[':emptyMap'] = {};
     const updateExpression = [
       'SET #entityType = :entityType',
       '#latestContextEvaluationId = :evaluationId',
       '#latestContextCapturedAt = :capturedAt',
       '#latestContextFingerprint = :fingerprint',
       '#latestContextProcessedAt = :processedAt',
-      ...(initializeAnchors ? ['#recentAnchors = if_not_exists(#recentAnchors, :emptyMap)'] : []),
+      '#notificationDay = if_not_exists(#notificationDay, :notificationDay)',
+      '#notificationsSentToday = if_not_exists(#notificationsSentToday, :zero)',
+      '#recentAnchors = if_not_exists(#recentAnchors, :emptyMap)',
       '#createdAt = if_not_exists(#createdAt, :processedAt)',
       '#updatedAt = :processedAt',
       '#schemaVersion = :schemaVersion'
@@ -678,34 +752,83 @@ export class DynamoDbStateRepository implements StateRepository {
     const parsed = z.strictObject({ userId: UserIdSchema, recommendation: RecommendationWriteSchema }).safeParse(input);
     if (!parsed.success) return invalidRequest();
     const recommendation = parsed.data.recommendation;
-    const projectedRecommendations = projectStorageRecommendations(recommendation.recommendations as StorageRecommendationItem[]);
-    if (projectedRecommendations === null) return invalidRequest();
-    const targetSK = recommendationSortKey(recommendation);
-    const createdAt = recommendation.createdAt;
-    const targetItem = toDynamoItem({
-      PK: userKey(parsed.data.userId), SK: targetSK, entityType: 'Recommendation',
-      recommendationId: recommendation.id, evaluationId: recommendation.evaluationId,
-      contextReference: recommendation.contextReference, createdAt, triggerType: recommendation.triggerType,
-      urgency: recommendation.urgency, message: recommendation.message, items: projectedRecommendations,
-      usedSignals: recommendation.usedSignals, summaryForDedup: recommendation.summaryForDedup,
-      providerStatus: recommendation.providerStatus,
-      ...(recommendation.recommendations.some(item => item.place != null) ? { providerRefs: { placesPersistenceIntent: 'storage' } } : {}),
-      expiresAt: recommendation.expiresAt, updatedAt: createdAt, schemaVersion: 1
-    });
-    const pointerItem = toDynamoItem({
-      PK: userKey(parsed.data.userId), SK: `RECOMMENDATION_REF#${recommendation.id}`, entityType: 'RecommendationRef',
-      recommendationId: recommendation.id, evaluationId: recommendation.evaluationId, targetSK, expiresAt: recommendation.expiresAt,
-      createdAt, updatedAt: createdAt, schemaVersion: 1
-    });
-    if (targetItem === null || pointerItem === null) return invalidRequest();
+    const items = recommendationItems(parsed.data.userId, recommendation);
+    if (items === null) return invalidRequest();
     try {
       await this.send({ operation: 'transactWrite', input: { TransactItems: [
-        { Put: { TableName: this.tableName, Item: targetItem, ConditionExpression: 'attribute_not_exists(PK)' } },
-        { Put: { TableName: this.tableName, Item: pointerItem, ConditionExpression: 'attribute_not_exists(PK)' } }
+        { Put: { TableName: this.tableName, Item: items.targetItem, ConditionExpression: 'attribute_not_exists(PK)' } },
+        { Put: { TableName: this.tableName, Item: items.pointerItem, ConditionExpression: 'attribute_not_exists(PK)' } }
       ] } });
       return available('ok', null, elapsedSince(startedAt));
     } catch (error: unknown) {
       return mapFailure(error, elapsedSince(startedAt), 'WRITE_CONFLICT');
+    }
+  }
+
+  async commitProactiveRecommendation(input: {
+    userId: string; recommendation: RecommendationWrite; delivery: ProactiveDeliveryWrite
+  }): Promise<ProviderResult<DeliveryWriteResult>> {
+    const startedAt = performance.now();
+    const parsed = z.strictObject({
+      userId: UserIdSchema, recommendation: RecommendationWriteSchema, delivery: DeliveryInputSchema
+    }).safeParse(input);
+    if (!parsed.success) return invalidRequest();
+    const { recommendation, delivery } = parsed.data;
+    if (recommendation.id !== delivery.recommendationId || recommendation.evaluationId !== delivery.evaluationId
+      || recommendation.triggerType !== delivery.triggerType) return invalidRequest();
+    if (!delivery.notificationsEnabled) {
+      return available('ok', { recorded: false, guardCodes: ['NOTIFICATIONS_DISABLED'] }, elapsedSince(startedAt));
+    }
+    const items = recommendationItems(parsed.data.userId, recommendation, delivery.at);
+    if (items === null) return invalidRequest();
+    const pk = userKey(parsed.data.userId);
+    try {
+      const profileResponse = await this.send({ operation: 'get', input: {
+        TableName: this.tableName, Key: { PK: pk, SK: 'PROFILE' }, ConsistentRead: true
+      } });
+      const rawProfile = itemFromResponse(profileResponse);
+      if (rawProfile === undefined) return unavailable('error', elapsedSince(startedAt), 'PROFILE_NOT_FOUND');
+      const profile = toProfile(parsed.data.userId, rawProfile);
+      if (profile === null) return invalidStoredData();
+      if (!profile.preferences.notificationsEnabled) {
+        return available('ok', { recorded: false, guardCodes: ['NOTIFICATIONS_DISABLED'] }, elapsedSince(startedAt));
+      }
+      if (localDateFor(delivery.at, profile.preferences.timezone) !== delivery.notificationDay) return invalidRequest();
+
+      const stateResponse = await this.send({ operation: 'get', input: {
+        TableName: this.tableName, Key: { PK: pk, SK: 'STATE' }, ConsistentRead: true
+      } });
+      const rawState = itemFromResponse(stateResponse);
+      if (rawState === undefined) return available('ok', { recorded: false, guardCodes: [] }, elapsedSince(startedAt));
+      const parsedState = StateItemSchema.safeParse(rawState);
+      if (!parsedState.success) return invalidStoredData();
+      const state = parsedState.data;
+      const guards = deliveryGuards(state, delivery);
+      if (guards.length > 0) return available('ok', { recorded: false, guardCodes: guards }, elapsedSince(startedAt));
+      if (state.latestContextEvaluationId !== delivery.evaluationId || state.latestContextFingerprint !== delivery.contextFingerprint) {
+        return available('ok', { recorded: false, guardCodes: [] }, elapsedSince(startedAt));
+      }
+
+      const stateUpdate = proactiveDeliveryStateUpdate(this.tableName, pk, state, delivery);
+      await this.send({ operation: 'transactWrite', input: { TransactItems: [
+        { ConditionCheck: {
+          TableName: this.tableName, Key: { PK: pk, SK: 'PROFILE' },
+          ConditionExpression: '#preferences.#notificationsEnabled = :enabled AND #preferences.#timezone = :timezone',
+          ExpressionAttributeNames: {
+            '#preferences': 'preferences', '#notificationsEnabled': 'notificationsEnabled', '#timezone': 'timezone'
+          },
+          ExpressionAttributeValues: { ':enabled': true, ':timezone': profile.preferences.timezone }
+        } },
+        { Update: stateUpdate },
+        { Put: { TableName: this.tableName, Item: items.targetItem, ConditionExpression: 'attribute_not_exists(PK)' } },
+        { Put: { TableName: this.tableName, Item: items.pointerItem, ConditionExpression: 'attribute_not_exists(PK)' } }
+      ] } });
+      return available('ok', { recorded: true }, elapsedSince(startedAt));
+    } catch (error: unknown) {
+      if (errorName(error) === 'TransactionCanceledException' || errorName(error) === 'ConditionalCheckFailedException') {
+        return available('ok', { recorded: false, guardCodes: [] }, elapsedSince(startedAt));
+      }
+      return mapFailure(error, elapsedSince(startedAt));
     }
   }
 
@@ -844,39 +967,7 @@ export class DynamoDbStateRepository implements StateRepository {
         return available('ok', { recorded: false, guardCodes: [] }, elapsedSince(startedAt));
       }
 
-      const sameDay = state.data.notificationDay === value.notificationDay;
-      const currentAnchor = anchorMapKey(value.triggerType, value.anchorKey);
-      const pruneKeys = anchorKeysToPrune(state.data, currentAnchor, canonicalTimestamp(value.at), value.maxRecentAnchors);
-      const names: Record<string, string> = {
-        '#entityType': 'entityType', '#notificationDay': 'notificationDay', '#notificationsSentToday': 'notificationsSentToday',
-        '#latestContextEvaluationId': 'latestContextEvaluationId', '#latestContextFingerprint': 'latestContextFingerprint',
-        '#recentAnchors': 'recentAnchors', '#anchor': currentAnchor, '#latestRecommendationAt': 'latestRecommendationAt',
-        '#updatedAt': 'updatedAt'
-      };
-      const values: Record<string, DynamoDbValue> = {
-        ':day': value.notificationDay, ':evaluationId': value.evaluationId, ':fingerprint': value.contextFingerprint,
-        ':at': canonicalTimestamp(value.at), ':one': 1, ':zero': 0, ':max': value.maxDailyNotifications,
-        ':anchorCutoff': new Date(Date.parse(value.at) - value.anchorDedupSeconds * 1_000).toISOString()
-      };
-      const removePaths = pruneKeys.map((key, index) => {
-        const name = `#prune${index}`;
-        names[name] = key;
-        return `#recentAnchors.${name}`;
-      });
-      const dayCondition = sameDay
-        ? '#notificationDay = :day AND (attribute_not_exists(#notificationsSentToday) OR #notificationsSentToday < :max)'
-        : '(attribute_not_exists(#notificationDay) OR #notificationDay <> :day)';
-      const updateExpression = `${sameDay
-        ? 'SET #notificationsSentToday = if_not_exists(#notificationsSentToday, :zero) + :one'
-        : 'SET #notificationDay = :day, #notificationsSentToday = :one'}, #recentAnchors.#anchor = :at, #latestRecommendationAt = :at, #updatedAt = :at${removePaths.length > 0 ? ` REMOVE ${removePaths.join(', ')}` : ''}`;
-      const stateUpdate: DynamoDbUpdateInput = {
-        TableName: this.tableName,
-        Key: { PK: pk, SK: 'STATE' },
-        UpdateExpression: updateExpression,
-        ConditionExpression: `#latestContextEvaluationId = :evaluationId AND #latestContextFingerprint = :fingerprint AND ${dayCondition} AND (attribute_not_exists(#recentAnchors.#anchor) OR #recentAnchors.#anchor <= :anchorCutoff)`,
-        ExpressionAttributeNames: names,
-        ExpressionAttributeValues: values
-      };
+      const stateUpdate = proactiveDeliveryStateUpdate(this.tableName, pk, state.data, value);
       await this.send({ operation: 'transactWrite', input: { TransactItems: [
         { ConditionCheck: {
           TableName: this.tableName, Key: { PK: pk, SK: 'PROFILE' },
