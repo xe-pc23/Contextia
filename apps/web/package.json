@@ -12,8 +12,10 @@
   "dependencies": {
     "@contextia/contracts": "workspace:*",
     "@contextia/test-fixtures": "workspace:*",
+    "maplibre-gl": "6.11.2",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@types/react": "19.2.2",
