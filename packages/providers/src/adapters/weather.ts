@@ -244,15 +244,21 @@ export class OpenMeteoWeatherProvider implements WeatherProvider {
     url.searchParams.set('timezone', value.timezone ?? 'auto');
     const startedAt = performance.now();
     try {
-      const response = await withTimeout(signal => this.client.fetch(url.toString(), { signal }), this.timeoutMs);
+      const result = await withTimeout(async signal => {
+        const response = await this.client.fetch(url.toString(), { signal });
+        if (!response.ok) return { response, body: null, invalidJson: false };
+        try {
+          return { response, body: await response.json(), invalidJson: false };
+        } catch {
+          return { response, body: null, invalidJson: true };
+        }
+      }, this.timeoutMs);
+      const { response, body } = result;
       if (!response.ok) {
         const status = response.status === 429 ? 'THROTTLED' : `UPSTREAM_HTTP_${response.status}`;
         return failure(status, elapsedSince(startedAt));
       }
-      let body: unknown;
-      try {
-        body = await response.json();
-      } catch {
+      if (result.invalidJson) {
         return failure('INVALID_RESPONSE', elapsedSince(startedAt));
       }
       const normalizedInput: WeatherInput = {

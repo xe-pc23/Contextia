@@ -141,4 +141,23 @@ describe('OpenMeteoWeatherProvider', () => {
     const malformed = testProvider({ payload: { timezone: 'Asia/Tokyo', hourly: { time: ['not-a-time'] } } });
     await expect(malformed.provider.getWeather(input)).resolves.toMatchObject({ status: 'error', data: null, code: 'INVALID_RESPONSE' });
   });
+
+  it('applies the finite timeout while reading the HTTP response body', async () => {
+    const bodyRead = testProvider({
+      timeoutMs: 2,
+      fetch: vi.fn<WeatherHttpClient['fetch']>().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => new Promise<unknown>(() => undefined)
+      })
+    });
+    const timedOut = Symbol('test-timeout');
+    const result = await Promise.race([
+      bodyRead.provider.getWeather(input),
+      new Promise<typeof timedOut>(resolve => setTimeout(() => resolve(timedOut), 30))
+    ]);
+
+    expect(result).not.toBe(timedOut);
+    expect(result).toMatchObject({ status: 'timeout', data: null, code: 'TIMEOUT' });
+  });
 });
