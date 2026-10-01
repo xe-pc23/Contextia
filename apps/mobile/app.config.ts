@@ -11,8 +11,22 @@ const config: ExpoConfig = {
   platforms: ['ios', 'android'],
   scheme: `contextia-${stage}`,
   ios: { bundleIdentifier: `com.contextia.${stage}`, supportsTablet: true },
-  android: { package: `com.contextia.${stage}` },
-  plugins: ['expo-dev-client']
+  android: {
+    package: `com.contextia.${stage}`,
+    permissions: ['android.permission.ACCESS_COARSE_LOCATION', 'android.permission.ACCESS_FINE_LOCATION', 'android.permission.READ_CALENDAR']
+  },
+  plugins: [
+    'expo-dev-client',
+    [
+      'expo-location',
+      { locationWhenInUsePermission: 'Contextia uses your location while you use the app to prepare relevant suggestions.' }
+    ],
+    [
+      'expo-calendar',
+      { calendarPermission: 'Contextia uses event titles, times, and locations to prepare relevant suggestions.' }
+    ],
+    ['expo-secure-store', { configureAndroidBackup: true }]
+  ]
 };
 
 export default config;
