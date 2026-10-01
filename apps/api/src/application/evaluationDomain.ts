@@ -10,6 +10,11 @@ export interface GuardCheckInput {
   deliveryMode: DeliveryMode;
   preferences: UserPreferences;
   state: UserState | null;
+  /**
+   * Server instant at which `state.latestContextFingerprint` was processed (Issue #5). Present whenever
+   * that fingerprint equals `contextFingerprint`; never the client or scenario `capturedAt`.
+   */
+  latestContextProcessedAt?: string;
   contextFingerprint: string;
   opportunity?: Pick<CandidateOpportunity, 'type' | 'anchorKey'>;
 }

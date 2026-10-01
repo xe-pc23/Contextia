@@ -7,7 +7,7 @@ import type {
   ContextSnapshot, PlacesProvider, ProviderEnrichment, RecommendationModel, RecommendationSummary,
   StateRepository, StoragePlace, StorageRecommendationItem, UserState
 } from '@contextia/providers';
-import type { EvaluationDomain } from './evaluationDomain.js';
+import type { EvaluationDomain, GuardCheckInput } from './evaluationDomain.js';
 import { contextFingerprint, hashCalendarId } from './fingerprint.js';
 
 export type EvaluationFailureCode = 'PROFILE_NOT_FOUND' | 'STATE_UNAVAILABLE';
@@ -47,7 +47,7 @@ export const defaultEvaluationPolicy: EvaluationPolicy = Object.freeze({
 });
 
 export type EvaluationStateRepository = Pick<StateRepository,
-  'getProfile' | 'getState' | 'writeContextSnapshot' | 'listRecommendations' | 'writeRecommendation' | 'recordProactiveDelivery'>;
+  'getProfile' | 'getState' | 'writeContextSnapshot' | 'getContextSnapshot' | 'listRecommendations' | 'writeRecommendation' | 'recordProactiveDelivery'>;
 
 export interface EvaluationDependencies {
   domain: EvaluationDomain;
@@ -126,6 +126,30 @@ function delivery(context: ContextInput, guardCodes: GuardCode[], silent: boolea
   return { mode: 'proactive', status: silent ? 'suppressed' : 'ready', wouldSuppress: codes.length > 0, guardCodes: codes };
 }
 
+type GuardState = Pick<GuardCheckInput, 'state' | 'latestContextProcessedAt'>;
+
+/**
+ * Issue #5: the guards need the server instant of the last processed fingerprint, which `UserState`
+ * does not carry yet. Until the port does, read it from that context snapshot's `createdAt`, which this
+ * service writes as server time. Only a matching fingerprint needs it, so other requests pay no extra read.
+ */
+async function resolveGuardState(
+  repository: EvaluationStateRepository, userId: string, nowEpochSeconds: number, state: UserState | null, fingerprint: string
+): Promise<GuardState> {
+  if (!state || state.latestContextFingerprint !== fingerprint) return { state };
+  // A fingerprint without its snapshot reference is inconsistent state: fail closed.
+  if (!state.latestContext) throw new EvaluationFailure('STATE_UNAVAILABLE');
+  const snapshot = await repository.getContextSnapshot({ userId, nowEpochSeconds, reference: state.latestContext });
+  if (snapshot.status !== 'ok' && snapshot.status !== 'degraded') throw new EvaluationFailure('STATE_UNAVAILABLE');
+  if (!snapshot.data) {
+    // The snapshot outlived the dedup window (TTL is checked at construction), so the fingerprint is stale.
+    const { latestContextFingerprint, ...rest } = state;
+    void latestContextFingerprint;
+    return { state: rest };
+  }
+  return { state, latestContextProcessedAt: snapshot.data.createdAt };
+}
+
 type ValidatedNotify = { decision: NotifyDecision; places: Map<string, ProviderPlace> };
 
 /** Model output may only reference places supplied in its input, and Phase 1 supplies no routes. */
@@ -143,6 +167,9 @@ function validateDecision(raw: unknown, supplied: ProviderPlace[]): { ok: true; 
 
 export function createEvaluateContext(deps: EvaluationDependencies): EvaluateContext {
   const policy = deps.policy ?? defaultEvaluationPolicy;
+  if (policy.contextTtlSeconds <= policy.contextDedupSeconds) {
+    throw new RangeError('contextTtlSeconds must exceed contextDedupSeconds so an expired snapshot is never a recent duplicate');
+  }
 
   return async ({ userId, context }) => {
     // One request-start instant keeps both guard passes on the same day and window.
@@ -158,10 +185,9 @@ export function createEvaluateContext(deps: EvaluationDependencies): EvaluateCon
 
     const stateResult = await deps.state.getState({ userId, nowEpochSeconds });
     if (stateResult.status !== 'ok' && stateResult.status !== 'degraded') throw new EvaluationFailure('STATE_UNAVAILABLE');
-    const state: UserState | null = stateResult.data;
-
     const fingerprint = contextFingerprint(context);
-    const guardBase = { now, deliveryMode: context.deliveryMode, preferences, state, contextFingerprint: fingerprint };
+    const guardState = await resolveGuardState(deps.state, userId, nowEpochSeconds, stateResult.data, fingerprint);
+    const guardBase: GuardCheckInput = { now, deliveryMode: context.deliveryMode, preferences, ...guardState, contextFingerprint: fingerprint };
     const pre = deps.domain.checkDeliveryGuards(guardBase);
 
     // Prior state was read above; record this context (including preview) before any provider work.

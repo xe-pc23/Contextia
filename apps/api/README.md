@@ -32,7 +32,7 @@
 7. proactive notify は`recordProactiveDelivery`で原子的に再確認してから推薦を保存する。previewは日次枠を消費しない。
 8. 応答のplaceはprovider正規化データ、保存するplaceは`GetPlace(storage)`の結果だけ。推薦は7日TTL。
 
-既知の制約: 重複判定に必要なサーバー処理時刻が`UserState`にない（issue #5）。モデルはtriggerを返さないため、Phase 1では最も確度の高い候補のtriggerを採用する。
+既知の制約: 重複判定に必要なサーバー処理時刻が`UserState`にない（issue #5）。暫定的に、fingerprintが一致したときだけ`latestContext`のsnapshotを読み、サービスが書いた`createdAt`（サーバー時刻）をガードへ渡す。snapshotが期限切れならfingerprintを古いものとして外し、読めなければ`STATE_UNAVAILABLE`で止める。Bのportに項目が入ったらその値へ切り替える。モデルはtriggerを返さないため、Phase 1では最も確度の高い候補のtriggerを採用する。
 
 ローカルserverにはJWT authorizerがないため、評価ルートは401になる。
 
