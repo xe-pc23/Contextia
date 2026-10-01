@@ -9,6 +9,7 @@ export function DeliveryDiagnostics({ delivery }: { delivery: Delivery }) {
         モード <code>{delivery.mode}</code> / 状態 <code>{delivery.status}</code>
         {delivery.mode === 'preview' ? '：プレビューのため通知は送信されず、通知回数にも数えません。' : null}
       </p>
+      <p>実際の配信なら抑止するか: <code>wouldSuppress={String(delivery.wouldSuppress)}</code></p>
       {delivery.wouldSuppress ? (
         <>
           <p className="warning">実際の配信なら、次の理由で通知は抑止されます。</p>

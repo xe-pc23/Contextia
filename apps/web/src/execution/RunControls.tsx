@@ -27,7 +27,7 @@ export function RunControls({ build, blockedReason, running, onRun }: {
         {running ? '評価中…' : 'シナリオを実行'}
       </button>
       {reason ? <p className="hint" id="run-blocked-reason">{reason}</p> : null}
-      {build.ok ? <DebugContext request={build.request} label="送信するリクエストを表示（正規化済みcontext）" /> : null}
+      {build.ok ? <DebugContext request={build.request} label="送信するコンテキストを表示（共通スキーマ検証済み）" /> : null}
     </div>
   );
 }
