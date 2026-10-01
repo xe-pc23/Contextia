@@ -38,8 +38,22 @@ const PlaceResponseSchema = z.object({
 }).passthrough();
 
 export interface AmazonLocationPlacesClient {
-  searchNearby(input: SearchNearbyCommandInput, signal: AbortSignal): Promise<unknown>;
-  getPlace(input: GetPlaceCommandInput, signal: AbortSignal): Promise<unknown>;
+  searchNearby(input: AmazonLocationSearchNearbyRequest, signal: AbortSignal): Promise<unknown>;
+  getPlace(input: AmazonLocationGetPlaceRequest, signal: AbortSignal): Promise<unknown>;
+}
+
+export interface AmazonLocationSearchNearbyRequest {
+  QueryPosition: [number, number];
+  QueryRadius: number;
+  MaxResults: number;
+  IntendedUse: 'SingleUse' | 'Storage';
+  Language?: string;
+}
+
+export interface AmazonLocationGetPlaceRequest {
+  PlaceId: string;
+  IntendedUse: 'SingleUse' | 'Storage';
+  Language?: string;
 }
 
 export interface AmazonLocationPlacesAdapterOptions {
@@ -88,8 +102,24 @@ function invalidRequest<T>(): ProviderResult<T> {
 
 function sdkBackedClient(client: GeoPlacesClient): AmazonLocationPlacesClient {
   return {
-    searchNearby: (input, signal) => client.send(new SearchNearbyCommand(input), { abortSignal: signal }),
-    getPlace: (input, signal) => client.send(new GetPlaceCommand(input), { abortSignal: signal })
+    searchNearby: (input, signal) => {
+      const sdkInput: SearchNearbyCommandInput = {
+        QueryPosition: input.QueryPosition,
+        QueryRadius: input.QueryRadius,
+        MaxResults: input.MaxResults,
+        IntendedUse: input.IntendedUse,
+        ...(input.Language === undefined ? {} : { Language: input.Language })
+      };
+      return client.send(new SearchNearbyCommand(sdkInput), { abortSignal: signal });
+    },
+    getPlace: (input, signal) => {
+      const sdkInput: GetPlaceCommandInput = {
+        PlaceId: input.PlaceId,
+        IntendedUse: input.IntendedUse,
+        ...(input.Language === undefined ? {} : { Language: input.Language })
+      };
+      return client.send(new GetPlaceCommand(sdkInput), { abortSignal: signal });
+    }
   };
 }
 
@@ -106,7 +136,7 @@ export class AmazonLocationPlacesProvider implements PlacesProvider {
     const parsedInput = NearbyInputSchema.safeParse(input);
     if (!parsedInput.success) return invalidRequest();
     const value = parsedInput.data;
-    const request: SearchNearbyCommandInput = {
+    const request: AmazonLocationSearchNearbyRequest = {
       QueryPosition: [value.position.longitude, value.position.latitude],
       QueryRadius: value.radiusMeters,
       MaxResults: Math.min(value.maxResults ?? 30, 30),
@@ -139,7 +169,7 @@ export class AmazonLocationPlacesProvider implements PlacesProvider {
     const parsedInput = GetPlaceInputSchema.safeParse(input);
     if (!parsedInput.success) return invalidRequest();
     const value = parsedInput.data;
-    const request: GetPlaceCommandInput = {
+    const request: AmazonLocationGetPlaceRequest = {
       PlaceId: value.placeId,
       IntendedUse: toAwsIntent(value.persistenceIntent),
       ...(value.locale === undefined ? {} : { Language: value.locale })
