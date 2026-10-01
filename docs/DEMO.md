@@ -15,6 +15,22 @@ The Console injects synthetic device context into the **same production backend*
 
 Its delivery policy is `preview`: the evaluation/providers/Bedrock path is real, but the judge does not consume notification quota or get blocked from seeing an answer because another judge ran the same scenario seconds earlier.
 
+### 1.1 Console status (Phase 1, lane C)
+
+- Implemented in `apps/web`:
+  - editors for coordinates (with Tokyo/Osaka Station shortcuts), scenario time with an IANA timezone, steps and goal, multiple calendar events, interests and notification preference overrides;
+  - the step-goal preset;
+  - immediate per-field validation against the shared contract, with a view of the exact request to be sent;
+  - a schema-validating API client;
+  - the result panel: up to 3 cards, used signals, provider status, preview delivery diagnostics, and a sent-context toggle.
+- Every run is fixed to `mode="simulation"` / `deliveryMode="preview"`. There is no mode switch.
+- Not connected yet:
+  - the API URL and Cognito login, which need runtime config from lane D;
+  - the MapLibre map, which needs the dependency and a map key from lane D.
+
+  Until then the Console shows "未接続", keeps Run disabled, and never shows a placeholder recommendation.
+- The other four presets come in Phase 2. Details: `apps/web/README.md`.
+
 ## 2. Judge flow
 
 ```text
@@ -22,7 +38,7 @@ Open public URL
   ↓
 Sign in with shared demo account
   ↓
-Console selects preview delivery mode
+Console runs in fixed preview delivery mode
   ↓
 Choose preset or create custom scenario
   ↓
@@ -80,7 +96,7 @@ Responsive mobile browser support is nice but secondary.
 - Lat/lon fields update map marker.
 - Optional place search/geocoder may be added if cheap.
 - Display current coordinates visibly.
-- "Use Tokyo Station", "Use Osaka Station" shortcuts may exist as demo presets, but raw arbitrary coordinates remain possible.
+- "Use Tokyo Station", "Use Osaka Station" shortcuts may exist as demo presets, but raw arbitrary coordinates remain possible. Implemented shortcuts: Tokyo Station (35.681236, 139.767125) and Osaka Station (34.702485, 135.495951).
 
 API key:
 - map-only or minimum required actions,
@@ -169,6 +185,7 @@ Judge can change all supported synthetic device inputs:
 - map location
 - coordinates
 - time
+- timezone (IANA)
 - steps
 - goal
 - calendar list
@@ -176,6 +193,8 @@ Judge can change all supported synthetic device inputs:
 - notification preference override
 
 The Console should show validation immediately.
+
+Time and calendar inputs are wall-clock times in the selected IANA timezone and are sent with that zone's offset. A blank step count is sent as unknown (`null`) and makes no goal claim.
 
 ## 7. "Why did the system do this?" panel
 

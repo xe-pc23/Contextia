@@ -1,22 +1,82 @@
-import { DeliveryModeSchema } from '@contextia/contracts';
+import { useMemo, useReducer } from 'react';
+import { getScenarioInput } from '@contextia/test-fixtures';
+import { RunControls } from './execution/RunControls.js';
+import type { ScenarioEvaluator } from './execution/scenarioApiClient.js';
+import { useScenarioRun } from './execution/useScenarioRun.js';
+import { MapPanel } from './map/MapPanel.js';
+import { ResultPanel } from './result/ResultPanel.js';
+import { CalendarEditor } from './scenario/CalendarEditor.js';
+import { ClockEditor } from './scenario/ClockEditor.js';
+import { DEFAULT_TIMEZONE, buildScenarioRequest, formFromScenarioInput, scenarioFormReducer } from './scenario/form.js';
+import type { FieldErrors } from './scenario/form.js';
+import { LocationEditor } from './scenario/LocationEditor.js';
+import { PreferencesEditor } from './scenario/PreferencesEditor.js';
+import { CONSOLE_PRESETS, DEFAULT_PRESET_ID } from './scenario/presets.js';
+import { StepsEditor } from './scenario/StepsEditor.js';
 
-const deliveryMode = DeliveryModeSchema.parse('preview');
+export type EvaluationAccess =
+  | { readonly status: 'unconnected'; readonly pending: readonly string[] }
+  | { readonly status: 'ready'; readonly evaluator: ScenarioEvaluator; readonly accountLabel: string | null };
 
-export function App() {
+const NO_ERRORS: FieldErrors = {};
+const initialForm = () => formFromScenarioInput(getScenarioInput(DEFAULT_PRESET_ID));
+
+export function App({ access }: { access: EvaluationAccess }) {
+  const [form, dispatch] = useReducer(scenarioFormReducer, undefined, initialForm);
+  const build = useMemo(() => buildScenarioRequest(form), [form]);
+  const errors = build.ok ? NO_ERRORS : build.errors;
+  const { state, run } = useScenarioRun(access.status === 'ready' ? access.evaluator : null);
+  const resultTimeZone = state.status === 'idle' ? DEFAULT_TIMEZONE : state.request.preferencesOverride?.timezone ?? DEFAULT_TIMEZONE;
+
   return (
-    <main>
-      <header><span className="brand">Contextia</span><span className="badge">未接続</span></header>
-      <section className="intro">
-        <p className="eyebrow">Scenario Console</p>
-        <h1>その状況に、役立つきっかけを。</h1>
-        <p>位置・時刻・歩数・予定を使って、今の状況を評価するコンソールです。</p>
-      </section>
-      <section className="notice" aria-label="接続状態">
-        <h2>評価の接続を準備しています</h2>
-        <p>ログインと評価APIはまだ接続していません。評価結果は未取得です。</p>
-        <p>{deliveryMode === 'preview' ? 'コンソールでの評価は通知を送らないプレビューです。' : null}</p>
-        <button type="button" disabled>評価を実行（未接続）</button>
-      </section>
-    </main>
+    <div className="console">
+      <header className="topbar">
+        <div className="title">
+          <span className="brand">Contextia</span>
+          <span className="product">Scenario Console</span>
+        </div>
+        {access.status === 'ready'
+          ? <span className="badge badge-ready">{access.accountLabel ?? 'ログイン中'}</span>
+          : <span className="badge">未接続</span>}
+      </header>
+
+      {access.status === 'unconnected' ? (
+        <section className="banner" aria-labelledby="connection-heading">
+          <h2 id="connection-heading">評価APIに未接続です</h2>
+          <p>入力の編集と送信内容の確認はできますが、評価は実行できません。結果欄には実際のAPI応答だけを表示し、仮の推薦は表示しません。</p>
+          <p>接続待ち: {access.pending.join('、')}</p>
+        </section>
+      ) : null}
+
+      <div className="workspace">
+        <section className="panel" aria-labelledby="location-heading">
+          <h2 id="location-heading">地図と位置</h2>
+          <MapPanel latitude={form.latitude} longitude={form.longitude} />
+          <LocationEditor form={form} errors={errors} dispatch={dispatch} />
+        </section>
+
+        <section className="panel" aria-labelledby="inputs-heading">
+          <h2 id="inputs-heading">シナリオ入力</h2>
+          <div className="presets" role="group" aria-label="プリセット">
+            {CONSOLE_PRESETS.map(preset => (
+              <button key={preset.id} type="button" onClick={() => dispatch({ type: 'loadInput', input: getScenarioInput(preset.id) })}>
+                プリセット「{preset.label}」を読み込む
+              </button>
+            ))}
+            <p className="hint">プリセットは入力欄だけを埋めます。結果は毎回APIで評価します。</p>
+          </div>
+          <ClockEditor form={form} errors={errors} dispatch={dispatch} />
+          <StepsEditor form={form} errors={errors} dispatch={dispatch} />
+          <CalendarEditor events={form.events} errors={errors} dispatch={dispatch} />
+          <PreferencesEditor form={form} errors={errors} dispatch={dispatch} />
+          <RunControls
+            build={build} running={state.status === 'running'} onRun={request => void run(request)}
+            blockedReason={access.status === 'ready' ? null : '評価APIとログインが未接続のため実行できません。'}
+          />
+        </section>
+      </div>
+
+      <ResultPanel state={state} timeZone={resultTimeZone} />
+    </div>
   );
 }
