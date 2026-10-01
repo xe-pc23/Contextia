@@ -14,6 +14,8 @@ Idempotency claims may have a null pointer while evaluation is in flight; a matc
 
 The proactive write carries `evaluationId`: a latest context snapshot written by that same evaluation must not suppress its first delivery as a duplicate. Another evaluation's matching fingerprint still applies. Recommendation ID recording prevents the same accepted recommendation from consuming quota twice. Follow-up selected places also require Storage wrappers before their facts are persisted with the conversation turn.
 
+`getConversation` returns each assistant turn's normalized recommendation cards, including saved place/route references. Pass those turns to `followUp`, and validate model references against the original cards, saved assistant cards and current enrichment. This lets later questions refer to a new place suggested in an earlier chat turn without recreating provider facts from text.
+
 Conversations require owner and live recommendation checks, one metadata item, an atomic maximum of eight user turns and a two-hour expiry. The append operation carries an already validated model reply; it never runs Bedrock. Notification sends are explicit server push, with one chosen delivery path per recommendation. Tokens and notification payloads are never logged. Cleanup removes all owned application records, including expired chat and idempotency, in bounded batches; Cognito deletion belongs to the application/infrastructure.
 
 `test/ports.types.ts` is a compile-time consumer check: it exercises all seven exports and rejects SingleUse persistence, preview counter updates and fabricated unavailable data. Run `pnpm --filter @contextia/providers typecheck` plus the root gate.

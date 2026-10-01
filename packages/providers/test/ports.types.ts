@@ -1,6 +1,6 @@
 import type {
   PlacesProvider, GeocodingProvider, WeatherProvider, RouteProvider, RecommendationModel,
-  StateRepository, NotificationProvider, StoragePlace, RecommendationWrite, ProactiveDeliveryWrite
+  StateRepository, NotificationProvider, StoragePlace, RecommendationWrite, ProactiveDeliveryWrite, ConversationRecord
 } from '../src/index.js';
 import type { ProviderResult } from '@contextia/contracts';
 
@@ -42,3 +42,7 @@ export function prohibitTransientPersistence(write: RecommendationWrite) {
 }
 // @ts-expect-error unusable provider results must not contain fabricated data.
 export const unavailableWithData: ProviderResult<string[]> = { status: 'unavailable', data: ['fabricated'] };
+
+export function retainedChatFacts(conversation: ConversationRecord) {
+  return conversation.messages.flatMap(message => message.role === 'assistant' ? message.recommendations.map(item => item.place?.placeId) : []);
+}

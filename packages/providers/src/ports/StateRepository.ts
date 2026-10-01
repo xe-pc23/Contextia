@@ -66,12 +66,16 @@ export interface IdempotencyRecord {
   expiresAt: number;
 }
 export type IdempotencyClaim = { status: 'claimed' } | { status: 'existing'; record: IdempotencyRecord } | { status: 'conflict' };
+export type ConversationMessage = { id: string; content: string; createdAt: string } & (
+  | { role: 'user' }
+  | { role: 'assistant'; recommendations: ApiRecommendationItem[] }
+);
 export interface ConversationRecord {
   conversationId: string;
   recommendationId: string;
   turnCount: number;
   expiresAt: number;
-  messages: { id: string; role: 'user' | 'assistant'; content: string; createdAt: string }[];
+  messages: ConversationMessage[];
 }
 
 // Domain-shaped DTOs only: no PK/SK, DynamoDB AttributeValue, SDK responses or error bodies.

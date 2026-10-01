@@ -3,6 +3,7 @@ import type {
   ProviderResult, RecommendationDecision, RecommendationItem, RouteSummary, TriggerType,
   UserPreferences, WeatherSnapshot
 } from '@contextia/contracts';
+import type { ConversationMessage } from './StateRepository.js';
 
 export interface ProviderEnrichment {
   geocoding: { eventId: string; result: ProviderResult<GeocodedPlace[]> }[];
@@ -26,7 +27,7 @@ export interface RecommendationFollowUpInput {
   context: ContextInput | null;
   preferences: UserPreferences;
   enrichment: ProviderEnrichment;
-  messages: { role: 'user' | 'assistant'; content: string; createdAt: string }[];
+  messages: ConversationMessage[];
 }
 export interface RecommendationModel {
   // Call only after deterministic guards/candidates. Validate schema AND supplied place/route references.
