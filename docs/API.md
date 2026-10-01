@@ -414,7 +414,7 @@ The HTTP request/response shape is unchanged.
   window, and an 1800-second trigger/anchor window. A complete `DeliveryPolicy`
   may be injected. An age strictly below the configured window suppresses;
   exactly at the boundary does not. Future persisted times remain suppressed
-  after clock rollback. Invalid clocks, counts, or matching-fingerprint times
+  after clock rollback. Invalid clocks, persisted calendar dates, counts, or matching-fingerprint times
   fail safely instead of authorizing delivery.
 - Run guards before detection without `opportunity`, then run them with each
   candidate's `{ type, anchorKey }` before enrichment/Bedrock. Fix the server clock
@@ -426,6 +426,10 @@ The HTTP request/response shape is unchanged.
   `scenarioTime` or a client-supplied capture time. A persisted count belonging
   to a different local date does not consume today's cap. The function returns
   the resolved timezone/day/cap for the repository's atomic delivery check.
+  Persisted `notificationDay` must be a real calendar date in strict `YYYY-MM-DD`
+  format, validated by `CalendarDateSchema`. Malformed, missing or impossible
+  dates fail closed with an exception in both proactive and preview modes;
+  they cannot be interpreted as a normal rollover.
 - `DeliveryGuardState.latestContextProcessedAt` must be the server instant when
   `latestContextFingerprint` was processed. Preview may record this minimal
   processing metadata so its next run diagnoses `DUPLICATE_CONTEXT`; it must not

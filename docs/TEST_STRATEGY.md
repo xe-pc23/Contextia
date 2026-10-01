@@ -10,6 +10,11 @@ input-state immutability. Timezone cases include profile/client/UTC fallback,
 Tokyo midnight independent of UTC midnight, year rollover, a non-hour offset,
 and New York's 23/25-hour DST days through the next local midnight.
 
+Review regression tests also reject malformed/missing/non-string persisted
+`notificationDay`, datetime values and impossible calendar dates in both modes
+even when the notification count has reached its cap. Valid leap days still
+enforce the cap and reset it on the next valid day.
+
 Guard tests use an injected server clock and a separately recorded
 `latestContextProcessedAt`. A repeated preview updates only processed-fingerprint
 metadata in the test harness; both evaluations remain eligible, the second

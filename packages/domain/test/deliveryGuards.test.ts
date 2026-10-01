@@ -136,6 +136,27 @@ describe('delivery guards', () => {
     expect(() => evaluateDeliveryGuards(input({ contextFingerprint: '' }))).toThrow();
     expect(() => evaluateDeliveryGuards(input({ policy: { ...defaultDeliveryPolicy, contextDedupSeconds: 0 } }))).toThrow();
   });
+
+  for (const deliveryMode of ['proactive', 'preview'] as const) {
+    it.each([
+      '', 'invalid', '2026-2-01', '2026-02-29', '2026-04-31', '1900-02-29',
+      '2026-13-01', '2026-00-10', '2026-10-00', '2026-10-01T00:00:00Z',
+      undefined, null, 123, true
+    ])(`fails closed on invalid persisted notificationDay %s in ${deliveryMode}`, notificationDay => {
+      // Simulate corrupt DB data crossing the typed repository boundary.
+      const corruptState = { ...state, notificationsSentToday: 3, notificationDay: notificationDay as string };
+      expect(() => evaluateDeliveryGuards(input({ deliveryMode, state: corruptState })))
+        .toThrow('Notification day must be a valid YYYY-MM-DD calendar date');
+    });
+  }
+
+  it.each(['2024-02-29', '2000-02-29'])('accepts the valid leap day %s and preserves cap/rollover behavior', notificationDay => {
+    const cappedState = { ...state, notificationDay, notificationsSentToday: 3 };
+    const onLeapDay = fixedClock(`${notificationDay}T05:10:00Z`);
+    expect(evaluateDeliveryGuards(input({ state: cappedState, clock: onLeapDay })).guardCodes).toEqual(['DAILY_CAP_REACHED']);
+    const nextDay = fixedClock(`${notificationDay.slice(0, 4)}-03-01T05:10:00Z`);
+    expect(evaluateDeliveryGuards(input({ state: cappedState, clock: nextDay })).guardCodes).toEqual([]);
+  });
 });
 
 describe('user-local date and timezone', () => {

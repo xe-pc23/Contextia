@@ -1,4 +1,4 @@
-import { TimestampSchema } from '@contextia/contracts';
+import { CalendarDateSchema, TimestampSchema } from '@contextia/contracts';
 import type { CandidateOpportunity, DeliveryDiagnostics, DeliveryGuardCode, DeliveryMode, UserPreferences } from '@contextia/contracts';
 import { clockInstant } from '../context/clock.js';
 import type { Clock } from '../context/clock.js';
@@ -76,6 +76,10 @@ export function evaluateDeliveryGuards(input: DeliveryGuardInput): DeliveryGuard
   const notificationDay = localDate(now, timezone);
   const maxDailyNotifications = policy.dailyCaps[input.preferences.notificationFrequency];
   const state = input.state;
+  // Corrupt persisted dates must not be treated as a legitimate day rollover.
+  if (state && !CalendarDateSchema.safeParse(state.notificationDay).success) {
+    throw new RangeError('Notification day must be a valid YYYY-MM-DD calendar date');
+  }
   if (state && (!Number.isSafeInteger(state.notificationsSentToday) || state.notificationsSentToday < 0)) {
     throw new RangeError('Notification count must be a non-negative safe integer');
   }
