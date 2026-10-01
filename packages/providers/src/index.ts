@@ -7,6 +7,8 @@ export type * from './ports/StateRepository.js';
 export type * from './ports/NotificationProvider.js';
 export { BedrockRecommendationModel, createBedrockRecommendationModel } from './adapters/bedrock.js';
 export type { BedrockConverseClient, BedrockConverseRequest, BedrockRecommendationAdapterOptions, BedrockRecommendationConfig } from './adapters/bedrock.js';
+export { DynamoDbStateRepository, createDynamoDbStateRepository } from './adapters/dynamodb.js';
+export type { DynamoDbClient, DynamoDbExpressionOptions, DynamoDbItem, DynamoDbKey, DynamoDbQueryInput, DynamoDbRequest, DynamoDbStateRepositoryAdapterOptions, DynamoDbStateRepositoryConfig, DynamoDbTransactionItem, DynamoDbUpdateInput, DynamoDbValue } from './adapters/dynamodb.js';
 export { AmazonLocationPlacesProvider, createAmazonLocationPlacesProvider } from './adapters/places.js';
 export type { AmazonLocationGetPlaceRequest, AmazonLocationPlacesAdapterOptions, AmazonLocationPlacesClient, AmazonLocationPlacesConfig, AmazonLocationSearchNearbyRequest } from './adapters/places.js';
 export { OpenMeteoWeatherProvider, createOpenMeteoWeatherProvider } from './adapters/weather.js';
