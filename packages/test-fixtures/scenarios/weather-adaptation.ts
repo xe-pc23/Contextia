@@ -7,3 +7,12 @@ export const weatherAdaptation: ScenarioFixture = {
   providerNeeds: ['weather-today', 'places-near-current'], context: input, preferences,
   providers: { geocoding: unrequested(), places: { status: 'ok', data: [cafe] }, weather: { status: 'ok', data: weather(input.capturedAt, true) }, routes: unrequested() }
 };
+
+export const weatherAdaptationClear: ScenarioFixture = {
+  ...weatherAdaptation, label: '天気による調整が不要',
+  providers: { ...weatherAdaptation.providers, weather: { status: 'ok', data: weather(input.capturedAt) } }
+};
+export const weatherAdaptationUnavailable: ScenarioFixture = {
+  ...weatherAdaptation, label: '天気が取得できない',
+  providers: { ...weatherAdaptation.providers, weather: { status: 'unavailable', data: null } }
+};

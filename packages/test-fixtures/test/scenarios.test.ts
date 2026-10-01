@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-  ContextInputSchema, GeocodedPlaceSchema, ProviderPlaceSchema, RouteSummarySchema,
+  CandidateEvidenceSchema, ContextInputSchema, GeocodedPlaceSchema, ProviderPlaceSchema, RouteSummarySchema,
   ScenarioIdSchema, UserPreferencesSchema, WeatherSnapshotSchema, providerResultSchema
 } from '@contextia/contracts';
-import { getScenarioInput, scenarios } from '../src/index.js';
+import { getScenarioEvidence, getScenarioInput, scenarios } from '../src/index.js';
 
 describe('shared synthetic scenarios', () => {
   it('covers the five agreed input presets', () => {
@@ -15,6 +15,7 @@ describe('shared synthetic scenarios', () => {
     for (const fixture of scenarios) {
       expect(ContextInputSchema.safeParse(JSON.parse(JSON.stringify(fixture.context))).success).toBe(true);
       expect(UserPreferencesSchema.safeParse(fixture.preferences).success).toBe(true);
+      expect(CandidateEvidenceSchema.safeParse(getScenarioEvidence(fixture)).success).toBe(true);
       expect(providerResultSchema(GeocodedPlaceSchema.array()).safeParse(fixture.providers.geocoding).success).toBe(true);
       expect(providerResultSchema(ProviderPlaceSchema.array()).safeParse(fixture.providers.places).success).toBe(true);
       expect(providerResultSchema(WeatherSnapshotSchema).safeParse(fixture.providers.weather).success).toBe(true);
