@@ -250,6 +250,9 @@ export class BedrockRecommendationModel implements RecommendationModel {
   async decide(input: RecommendationModelInput): Promise<ProviderResult<RecommendationDecision>> {
     if (input.candidates.length === 0) return { status: 'not_requested', data: null };
     const startedAt = performance.now();
+    const remainingTimeoutMs = () => this.timeoutMs - (performance.now() - startedAt);
+    const timeoutResult = (): ProviderResult<RecommendationDecision> =>
+      unavailable<RecommendationDecision>('timeout', elapsedSince(startedAt), 'TIMEOUT');
     let useStructuredOutput = this.structuredOutput;
     let decision: RecommendationDecision | null;
     let firstResponse: unknown;
@@ -263,10 +266,12 @@ export class BedrockRecommendationModel implements RecommendationModel {
         return mapBedrockFailure(error, elapsedSince(startedAt));
       }
       useStructuredOutput = false;
+      const remaining = remainingTimeoutMs();
+      if (remaining <= 0) return timeoutResult();
       try {
         firstResponse = await withTimeout(
           signal => this.client.converse(requestFor(this.modelId, input, false, false), signal),
-          this.timeoutMs
+          remaining
         );
       } catch (fallbackError: unknown) {
         return mapBedrockFailure(fallbackError, elapsedSince(startedAt));
@@ -275,10 +280,12 @@ export class BedrockRecommendationModel implements RecommendationModel {
     decision = parseDecision(firstResponse, input.enrichment);
     if (decision !== null) return available('ok', decision, elapsedSince(startedAt));
 
+    const remaining = remainingTimeoutMs();
+    if (remaining <= 0) return timeoutResult();
     try {
       const repairedResponse = await withTimeout(
         signal => this.client.converse(requestFor(this.modelId, input, useStructuredOutput, true), signal),
-        this.timeoutMs
+        remaining
       );
       decision = parseDecision(repairedResponse, input.enrichment);
     } catch (error: unknown) {

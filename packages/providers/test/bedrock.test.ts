@@ -204,6 +204,41 @@ describe('BedrockRecommendationModel', () => {
     expect(JSON.stringify(result)).not.toContain('raw-model-output');
   });
 
+  it('shares one timeout deadline across the initial decision and output repair', async () => {
+    vi.useFakeTimers();
+    try {
+      let calls = 0;
+      let repairAbortedAt: number | undefined;
+      const invalid = { ...notifyDecision, recommendations: [] };
+      const client: BedrockConverseClient = {
+        converse: vi.fn(async (_request, signal) => {
+          calls += 1;
+          if (calls === 1) {
+            await new Promise<void>(resolve => setTimeout(resolve, 8));
+            return response(invalid);
+          }
+          return new Promise((_resolve, reject) => {
+            signal.addEventListener('abort', () => {
+              repairAbortedAt = performance.now();
+              reject(new Error('repair aborted'));
+            }, { once: true });
+          });
+        })
+      };
+
+      const pending = model(client, 10).decide(modelInput());
+      await vi.advanceTimersByTimeAsync(8);
+      expect(calls).toBe(2);
+      await vi.advanceTimersByTimeAsync(2);
+      const abortedAtSharedDeadline = repairAbortedAt;
+      await vi.advanceTimersByTimeAsync(20);
+      await expect(pending).resolves.toMatchObject({ status: 'timeout', code: 'TIMEOUT', data: null });
+      expect(abortedAtSharedDeadline).toBe(10);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('enforces the contract maximum of three recommendations', async () => {
     const tooMany = { ...notifyDecision, recommendations: Array.from({ length: 4 }, () => recommendation) };
     const fake = fakeClient([response(tooMany), response(tooMany)]);
