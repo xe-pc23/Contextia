@@ -1,33 +1,35 @@
-# Team Board — 次に進める担当タスク
+# Team Board — Phase 1を開始する担当タスク
 
-司令塔は担当作業の検証後、`feature/coordination-plan` 上でこの表を更新する。担当ブランチではこのファイルを編集しない。詳細な作業内容と完了条件は[PHASED_IMPLEMENTATION.md](../PHASED_IMPLEMENTATION.md)を参照する。
+司令塔は担当作業の検証後、`feature/coordination-plan` 上でこの表を更新する。担当ブランチではこのファイルを編集しない。作業内容・完了条件は [PHASED_IMPLEMENTATION.md](../PHASED_IMPLEMENTATION.md)、担当へそのまま渡す依頼文は [PHASE1_ASSIGNMENTS.md](./PHASE1_ASSIGNMENTS.md) を参照する。
 
-| 担当 | 現在のブランチ | 次のフェーズ | 現在の次タスク | 状態 |
+2026-10-01: A–EのPhase 0を統合済み。実装基点 `d88d2bf`、引き継ぎとNode下限の修正 `b692b64`。全5コマンド・124テスト・dev/prod synthが成功し、成果物のない別checkoutでも再現した。Phase 1の全5ブランチは、調整資料を取り込んだ同じ共通基点を参照する。
+
+| 担当 | 開始ブランチ | 次のPhase | 最初の仕事 | 状態 |
 |---|---|---:|---|---|
-| A | `feature/phase0-a-contracts-domain` | 0 | Zod契約と5 fixtureの形を作る | Dの共通足場を取り込んで着手可能 |
-| B | `feature/phase0-b-providers` | 0 | provider portsと共通結果型を作る | Dの共通足場を取り込む。Aの契約型を確認後に統合 |
-| C | `feature/phase0-c-web` | 0 | WebのVite/React足場を作る | Dの共通足場を取り込んで着手可能 |
-| D | `feature/phase0-d-platform` | 0 | 共通足場を各レーンへ渡し、A/B/C/EのPhase 0成果を統合する | 足場検証済み・push済み `58ee2c9`。5コマンド、41テスト、dev/prod synth、dev限定diff、local/bundle smoke成功。AWSリソース変更なし |
-| E | `feature/phase0-e-mobile` | 0 | Expo/TypeScript足場を作る | Dの共通足場を取り込んで着手可能 |
+| A | `feature/a-phase1-step-goal` | 1 | 決定的ガード、時計/timezone、preview診断、step-goal detectorと境界テスト | 着手可能。contracts・fixtureあり |
+| B | `feature/b-phase1-live-providers` | 1 | Places V2・Open-Meteo・Bedrock・DynamoDB adapterと正規化/TTLテスト | 着手可能。7 ports固定、SDK依存はDへ要求 |
+| C | `feature/c-phase1-console` | 1 | preview専用Consoleの入力編集・地図・認証・実応答表示 | 着手可能。React/Vite足場あり。API接続前は未接続を明示 |
+| D／所有者 | `feature/d-phase1-evaluation-aws` | 1 | API評価service、JWT/CDK、Cognito、private S3/OAC、OIDC・smoke | 着手可能。共通型/portsあり。A/B統合後に縦断smoke。デプロイは所有者 |
+| E | `feature/e-phase1-native-context` | 1 | development buildの認証・権限と前景GPS/カレンダー最小化試作 | 着手可能。Expo足場あり。実機とCognito設定が必要 |
 
-人間の担当者は未割当。プロジェクト所有者がデプロイを担当し、A/B/C/Eのレーンをメンバーへ割り振る。2026-10-01の共通足場の成果と開始手順は[Dの受け渡し資料](https://github.com/xe-pc23/Contextia/blob/feature/phase0-d-platform/docs/hackathon/PHASE0_HANDOFF.md)を参照する。
+人間の氏名は未割当。A/B/C/Eをメンバーへ渡し、Dの統合・AWSを所有者が担当する構成を用意した。各メンバーは別checkout/worktree・自分のAI会話で作業する。ルートlockfile・共通設定はDだけが更新する。各レーンは依存要求を最初にDへ伝え、相手の実装を待つ間は自分のテストdoubleや入力/UIを進める。
 
 ## フェーズゲート
 
 | Phase | 状態 | 次へ進む条件 |
 |---|---|---|
-| 0 | Dの共通足場検証済み、A/B/C/E未完了 | 残り4レーンを取り込み、全レーンの型・build・5コマンド・CDK synth |
-| 1 | 未着手 | dev/prodのstep-goal実経路とpreview再実行 |
+| 0 | 完了・検証済み | 同じ型で全workspace build、5コマンド、dev/prod synthを確認済み |
+| 1 | 全5担当が開始可能 | dev/prodのstep-goal実経路、preview再実行、公開URL・認証済みsmoke |
 | 2 | 未着手 | 5 fixture、Web全ケース、モバイル前景実機 |
 | 3 | 未着手 | ネイティブ・通知・劣化耐性の検証 |
 | 4 | 未着手 | 提出前の全体検証と本番smoke |
 
-「担当Aを実装して」と指示されたら、Aの行と計画の該当Phaseを読み、Aの専有パス内で次タスクを進める。作業が複数コミットに分かれても、検証可能な区切りまで継続する。フェーズの全ゲートが未達なら次のPhaseを始めず、司令塔がこの表に成果・残作業・依存を更新する。
+「担当Aを実装して」はAの行と計画のPhase 1を指す。担当パス内で検証できる区切りまで進め、依存があるsmokeは理由を記録する。Phase 1の統合ゲートが通るまでPhase 2を始めない。
 
-## GitHub共有状況
+## GitHub共有と統合
 
-Phase 0の5ブランチと `feature/coordination-plan` は `origin` にpush済み。各担当者は自分のブランチを取得し、別worktree/checkoutで作業する。`main` はまだ計画を取り込んでいないため、実装PRの依存元は計画ブランチにする。
+共通基点は `feature/phase0-d-platform` と [draft PR #1](https://github.com/xe-pc23/Contextia/pull/1)。Phase 0の既存5ブランチも同じ統合済み基点を参照する。新規作業は上表のPhase 1ブランチを取得して始める。
 
-Dの足場（`58ee2c9`）は`origin/feature/phase0-d-platform`から取り込める。各担当のブランチで`git fetch origin`、`git merge origin/feature/phase0-d-platform`、`pnpm install --frozen-lockfile`を実行してから着手する。ルートlockfileの更新はDへ依頼する。Phase 0の足場だけをmain/prodへ統合しない。
+Phase 1の小さな担当PRは、当面 `feature/phase0-d-platform` をbaseにする。Aの契約/domain → Bのadapters → Dの評価/APIを統合し、C/Eを同じ契約と設定へ接続する。共通ブランチを更新したら各人はfetch/mergeで取り込む。Phase 0だけをmain/prodへ反映しない。Phase 1縦断sliceのdev smoke後にmain向け統合PRを作り、所有者がprod反映を起動する。
 
-AWSの両ローカルprofileは2026-10-01に設定リージョンとSTSのアカウントを読み取り確認済み。dev/prodへのデプロイ、CDK bootstrap、IAM変更は未実施。本番反映は所有者が検証済み`main`から手動起動する。
+AWS targetはaccount `634512763705`、Region `ap-northeast-1`。bootstrap・dev/prod deploy・IAM変更は未実施。実行済みの検証・AWS証跡は [PHASE0_HANDOFF.md](./PHASE0_HANDOFF.md) と [AGENT_LOG.md](./AGENT_LOG.md) を参照する。
