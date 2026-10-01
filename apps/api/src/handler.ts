@@ -1,7 +1,9 @@
 import type { APIGatewayProxyEventV2, APIGatewayProxyEventV2WithJWTAuthorizer } from 'aws-lambda';
 import { z } from 'zod';
 import { ContextEvaluateRequestSchema } from '@contextia/contracts';
-import type { ContextEvaluateRequest, ErrorResponse, HealthResponse } from '@contextia/contracts';
+import type { ContextEvaluateRequest, ContextEvaluateResponse, ErrorResponse, HealthResponse } from '@contextia/contracts';
+import { EvaluationFailure } from './application/evaluateContext.js';
+import type { EvaluateContext } from './application/evaluateContext.js';
 
 export const MAX_BODY_BYTES = 256 * 1024;
 
@@ -25,7 +27,13 @@ export type ApiResponse = {
 /** Cognito app clients allowed to request each evaluation mode. Missing IDs fail closed. */
 export type ClientConfig = { webClientId: string | null; mobileClientId: string | null };
 
-export type HandlerOptions = { version: string; log: (entry: RequestLog) => void; clients?: ClientConfig };
+export type HandlerOptions = {
+  version: string;
+  log: (entry: RequestLog) => void;
+  clients?: ClientConfig;
+  /** Absent until provider adapters are composed; the route then reports 503 instead of fabricating results. */
+  evaluate?: EvaluateContext;
+};
 
 /** Verified access-token claims supplied by the API Gateway JWT authorizer. */
 export type AuthClaims = { sub: string; clientId: string };
@@ -55,7 +63,7 @@ function parseBody(body: string | null | undefined): { ok: true; value: unknown 
   }
 }
 
-function evaluate(request: ApiRequest, clients: ClientConfig): Outcome {
+async function evaluate(request: ApiRequest, clients: ClientConfig, evaluateContext: EvaluateContext | undefined): Promise<Outcome> {
   const { requestId } = request;
   if (!request.claims) return error(401, requestId, 'UNAUTHORIZED', 'A valid access token is required.');
   const body = parseBody(request.body);
@@ -75,7 +83,19 @@ function evaluate(request: ApiRequest, clients: ClientConfig): Outcome {
   if (!allowedClient || request.claims.clientId !== allowedClient) {
     return { ...error(403, requestId, 'FORBIDDEN', 'This client is not allowed to request this evaluation mode.'), mode };
   }
-  return { ...error(503, requestId, 'EVALUATION_UNAVAILABLE', 'Context evaluation is not available yet.'), mode };
+  if (!evaluateContext) return { ...error(503, requestId, 'EVALUATION_UNAVAILABLE', 'Context evaluation is not available yet.'), mode };
+  try {
+    const data = await evaluateContext({ userId: request.claims.sub, context: parsed.data });
+    return { response: json(200, { requestId, data } satisfies ContextEvaluateResponse), mode };
+  } catch (cause) {
+    if (cause instanceof EvaluationFailure) {
+      return cause.code === 'PROFILE_NOT_FOUND'
+        ? { ...error(404, requestId, 'PROFILE_NOT_FOUND', 'No profile exists for this user.'), mode }
+        : { ...error(503, requestId, 'STATE_UNAVAILABLE', 'User state is temporarily unavailable.'), mode };
+    }
+    // Never echo internal error messages; the request ID correlates with the structured log.
+    return { ...error(500, requestId, 'INTERNAL_ERROR', 'Context evaluation failed.'), mode };
+  }
 }
 
 export function createRequestHandler(options: HandlerOptions): (request: ApiRequest) => Promise<ApiResponse> {
@@ -88,7 +108,7 @@ export function createRequestHandler(options: HandlerOptions): (request: ApiRequ
       result = { response: json(200, { status: 'ok', version: options.version } satisfies HealthResponse) };
     } else if (request.method === 'POST' && request.path === '/v1/context/evaluate') {
       route = 'evaluate';
-      result = evaluate(request, clients);
+      result = await evaluate(request, clients, options.evaluate);
     } else {
       result = error(404, request.requestId, 'NOT_FOUND', 'Route not found.');
     }
