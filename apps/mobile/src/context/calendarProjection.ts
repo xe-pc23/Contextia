@@ -16,17 +16,32 @@ const NativeEventSchema = z.object({
 });
 
 export type CalendarEventIdHasher = (nativeEventId: string) => Promise<string>;
+export type CalendarPlatform = 'android' | 'ios';
 
 function toEpochMilliseconds(value: Date | string | number): number | null {
   const milliseconds = value instanceof Date ? value.getTime() : typeof value === 'number' ? value : Date.parse(value);
   return Number.isFinite(milliseconds) ? milliseconds : null;
 }
 
+function toAndroidAllDayBoundaryMilliseconds(value: Date | string | number): number | null {
+  const milliseconds = toEpochMilliseconds(value);
+  if (milliseconds === null) return null;
+
+  // Android stores all-day event boundaries as UTC dates. Rebuild that date at
+  // local midnight so it matches the device's calendar-day window.
+  const utcDate = new Date(milliseconds);
+  const localBoundary = new Date(0);
+  localBoundary.setFullYear(utcDate.getUTCFullYear(), utcDate.getUTCMonth(), utcDate.getUTCDate());
+  localBoundary.setHours(0, 0, 0, 0);
+  return localBoundary.getTime();
+}
+
 /** Projects native event objects to the strict, privacy-minimized API event shape. */
 export async function projectCalendarEvents(
   nativeEvents: readonly unknown[],
   window: CalendarReadWindow,
-  hashEventId: CalendarEventIdHasher
+  hashEventId: CalendarEventIdHasher,
+  platform: CalendarPlatform = 'ios'
 ): Promise<CalendarEventContext[]> {
   const startInclusive = window.startInclusive.getTime();
   const endExclusive = window.endExclusive.getTime();
@@ -34,8 +49,10 @@ export async function projectCalendarEvents(
     const parsed = NativeEventSchema.safeParse(nativeEvent);
     if (!parsed.success) return null;
 
-    const start = toEpochMilliseconds(parsed.data.startDate);
-    const end = toEpochMilliseconds(parsed.data.endDate);
+    const normalizeAndroidAllDay = parsed.data.allDay === true && platform === 'android';
+    const parseEventDate = normalizeAndroidAllDay ? toAndroidAllDayBoundaryMilliseconds : toEpochMilliseconds;
+    const start = parseEventDate(parsed.data.startDate);
+    const end = parseEventDate(parsed.data.endDate);
     const title = parsed.data.title.trim().slice(0, 200);
     if (start === null || end === null || end < start || !title) return null;
     if (start >= endExclusive || end <= startInclusive) return null;

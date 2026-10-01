@@ -101,6 +101,78 @@ describe('Calendar context projection', () => {
     expect(events.map(event => event.id)).toEqual(['hash-starts-before-window', 'hash-ends-after-window']);
   });
 
+  it.each([
+    {
+      timezone: 'Asia/Tokyo',
+      localTodayStartUtc: '2026-04-30T15:00:00.000Z',
+      localTomorrowStartUtc: '2026-05-01T15:00:00.000Z'
+    },
+    {
+      timezone: 'America/Los_Angeles',
+      localTodayStartUtc: '2026-05-01T07:00:00.000Z',
+      localTomorrowStartUtc: '2026-05-02T07:00:00.000Z'
+    }
+  ])('normalizes Android all-day UTC dates to local midnight in $timezone', async ({
+    timezone,
+    localTodayStartUtc,
+    localTomorrowStartUtc
+  }) => {
+    const previousTimezone = process.env.TZ;
+    process.env.TZ = timezone;
+    try {
+      const window = getCalendarReadWindow(new Date('2026-05-01T12:00:00.000Z'));
+      const events = await projectCalendarEvents([
+        {
+          id: 'previous-day',
+          title: 'Previous day all-day event',
+          startDate: '2026-04-30T00:00:00.000Z',
+          endDate: '2026-05-01T00:00:00.000Z',
+          allDay: true
+        },
+        {
+          id: 'today',
+          title: 'Today all-day event',
+          startDate: '2026-05-01T00:00:00.000Z',
+          endDate: '2026-05-02T00:00:00.000Z',
+          allDay: true
+        }
+      ], window, async id => `hash-${id}`, 'android');
+
+      expect(events).toEqual([{
+        id: 'hash-today',
+        title: 'Today all-day event',
+        startAt: localTodayStartUtc,
+        endAt: localTomorrowStartUtc,
+        location: null,
+        allDay: true
+      }]);
+    } finally {
+      if (previousTimezone === undefined) delete process.env.TZ;
+      else process.env.TZ = previousTimezone;
+    }
+  });
+
+  it('does not apply Android all-day normalization to iOS events', async () => {
+    const previousTimezone = process.env.TZ;
+    process.env.TZ = 'Asia/Tokyo';
+    try {
+      const window = getCalendarReadWindow(new Date('2026-05-01T12:00:00.000Z'));
+      const events = await projectCalendarEvents([{
+        id: 'today',
+        title: 'Today all-day event',
+        startDate: '2026-05-01T00:00:00.000Z',
+        endDate: '2026-05-02T00:00:00.000Z',
+        allDay: true
+      }], window, async id => `hash-${id}`, 'ios');
+
+      expect(events[0]?.startAt).toBe('2026-05-01T00:00:00.000Z');
+      expect(events[0]?.endAt).toBe('2026-05-02T00:00:00.000Z');
+    } finally {
+      if (previousTimezone === undefined) delete process.env.TZ;
+      else process.env.TZ = previousTimezone;
+    }
+  });
+
   it('drops malformed and out-of-window events, sorts, and caps at 100', async () => {
     const window = getCalendarReadWindow(new Date(2026, 4, 1, 12));
     const inRangeEvents = Array.from({ length: 102 }, (_, index) => ({

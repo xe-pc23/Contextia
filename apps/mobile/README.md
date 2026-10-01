@@ -57,7 +57,7 @@ EXPO_PUBLIC_COGNITO_CLIENT_ID=<mobile-public-app-client-id>
 EXPO_PUBLIC_COGNITO_REDIRECT_URI=contextia-dev://auth  # use contextia-prod://auth for prod
 ```
 
-Configure a separate public mobile app client per stage with authorization-code grant, PKCE, the `openid` scope, and the matching callback URL. Do not create a client secret for the mobile app. The app stores only its access token, optional refresh token, and expiry in SecureStore; the login UI does not display tokens or user attributes.
+Configure a separate public mobile app client per stage with authorization-code grant, PKCE, the `openid` scope, and the matching callback URL. Add the same URI to that app client's allowed sign-out URLs so Cognito can return from `/logout`. Do not create a client secret for the mobile app. The app stores only its access token, optional refresh token, and expiry in SecureStore; the login UI does not display tokens or user attributes.
 
 ## Development builds
 

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as AuthSession from 'expo-auth-session';
+import * as WebBrowser from 'expo-web-browser';
 import type { CognitoConfiguration } from './cognitoConfig';
+import { performCognitoBrowserLogout } from './cognitoLogout';
 import { clearSecureSession, readSecureSession, writeSecureSession } from './secureSessionStore';
 import { toStoredSession, type StoredSession } from './sessionModel';
 
@@ -151,24 +153,47 @@ export function useCognitoAuth(config: CognitoConfiguration): CognitoAuthState {
   const signOut = useCallback(async () => {
     setBusy(true);
     setMessage(null);
+
+    let browserLogoutCompleted = false;
     try {
-      const stored = session ?? await readSecureSession();
-      if (stored?.refreshToken && discovery?.revocationEndpoint) {
-        await AuthSession.revokeAsync({
-          clientId: config.clientId,
-          token: stored.refreshToken,
-          tokenTypeHint: AuthSession.TokenTypeHint.RefreshToken
-        }, { revocationEndpoint: discovery.revocationEndpoint }).catch(() => false);
+      let stored = session;
+      if (!stored) {
+        try {
+          stored = await readSecureSession();
+        } catch {
+          // Continue with browser logout even if SecureStore cannot be read.
+        }
       }
+      if (stored?.refreshToken && discovery?.revocationEndpoint) {
+        try {
+          await AuthSession.revokeAsync({
+            clientId: config.clientId,
+            token: stored.refreshToken,
+            tokenTypeHint: AuthSession.TokenTypeHint.RefreshToken
+          }, { revocationEndpoint: discovery.revocationEndpoint });
+        } catch {
+          // Browser logout is still required when token revocation fails.
+        }
+      }
+      browserLogoutCompleted = await performCognitoBrowserLogout({
+        authorizationEndpoint: discovery?.authorizationEndpoint,
+        clientId: config.clientId,
+        redirectUri: config.redirectUri
+      }, (url, redirectUri) => WebBrowser.openAuthSessionAsync(url, redirectUri, {
+        preferEphemeralSession: false
+      }));
     } catch {
-      // Local credentials are still cleared when a read or remote revoke fails.
+      // Local credentials are still cleared when remote sign-out fails.
     } finally {
       await clearSecureSession().catch(() => undefined);
       setSession(null);
       setStatus('signed-out');
+      if (!browserLogoutCompleted) {
+        setMessage('Cognito のブラウザーセッションを終了できたか確認できませんでした。ネットワークと sign-out URL の許可設定を確認してください。');
+      }
       setBusy(false);
     }
-  }, [config.clientId, discovery, session]);
+  }, [config.clientId, config.redirectUri, discovery, session]);
 
   return { status, busy, message, signIn, signOut };
 }

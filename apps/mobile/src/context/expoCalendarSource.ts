@@ -1,5 +1,6 @@
 import * as Calendar from 'expo-calendar/legacy';
 import * as Crypto from 'expo-crypto';
+import { Platform } from 'react-native';
 import { getCalendarQueryWindow, getCalendarReadWindow } from './calendarWindow';
 import { projectCalendarEvents } from './calendarProjection';
 import type { CalendarReadResult, CalendarSource } from './types';
@@ -31,7 +32,8 @@ export class ExpoCalendarSource implements CalendarSource {
         queryWindow.startInclusive,
         queryWindow.endExclusive
       );
-      const events = await projectCalendarEvents(nativeEvents, window, hashNativeEventId);
+      const platform = Platform.OS === 'android' ? 'android' : 'ios';
+      const events = await projectCalendarEvents(nativeEvents, window, hashNativeEventId, platform);
       return { status: 'granted', events };
     } catch {
       return { status: 'unavailable' };
