@@ -1,5 +1,7 @@
 # TEST_STRATEGY.md — Test & Quality Plan
 
+Phase 0 contract tests are in `packages/contracts/test`; synthetic input/enrichment integrity tests are in `packages/test-fixtures/test`. Run them through the root Vitest configuration (source aliases work before build). They validate schemas and fixture integrity; they do not prove detector, live provider, authentication, Web or native behavior.
+
 ## 1. Goal
 
 Testing must maximize confidence per minute. The system depends on OS data, external APIs, AWS infrastructure, and an LLM, so the strategy separates:

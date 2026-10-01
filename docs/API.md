@@ -26,6 +26,8 @@ All IDs are opaque strings.
 
 All request bodies are runtime-validated with Zod.
 
+The implementation is `packages/contracts/src`. Object schemas reject unknown fields; clients must project calendar data to the allowed fields before sending it. Timestamp validation requires an offset (`Z` or `±HH:MM`) and rejects invalid calendar dates. URL actions permit only HTTP(S).
+
 ### 1.1 Canonical enums
 
 ```ts
@@ -345,6 +347,8 @@ Request:
 
 `recommendationId` is the stable key used by recommendation-detail and follow-up-chat routes.
 
+`delivery.status` is `preview` in preview mode. In proactive mode it is `ready` when the result is returned for the designated client delivery path, `sent` only after an explicit server notification provider accepts it, `failed` if that server send fails, or `suppressed` for a silent result. `sent` does not claim the OS displayed the notification. This field never authorizes a second delivery path. `wouldSuppress` is true exactly when `guardCodes` is non-empty. A proactive `notify` result must pass the delivery guards; preview can return `notify` with suppression diagnostics.
+
 ### Response — silent
 
 ```json
@@ -429,6 +433,8 @@ Auth: yes
 
 Returns recommendation detail owned by current user.
 
+Response: the standard envelope with the same complete recommendation object used in the history list (`id`, `createdAt`, `triggerType`, `message`, `recommendations`). Detail items include their reasons, place/route and action fields. Persistence keys and raw provider objects are never exposed.
+
 Lookup semantics:
 - authentication supplies `userId`;
 - repository first gets `USER#{userId} / RECOMMENDATION_REF#{recommendationId}`;
@@ -503,6 +509,8 @@ Security:
 - encrypt at rest through AWS defaults
 - replace previous token for same logical device when rotated
 
+Response: HTTP 200 with `{ "requestId": "req_...", "data": { "registered": true } }`. Deleting a device returns HTTP 204 without a body.
+
 ## 12. DELETE /devices/{deviceId}
 
 Auth: yes
@@ -555,6 +563,8 @@ type ProviderStatusMap = {
 Every evaluation response returns all five keys. Providers that were not needed use `not_requested`.
 
 Never return raw upstream secrets/error bodies.
+
+Internally, `ProviderResult<T>` is a discriminated union: `ok`/`degraded` have `data: T`; `unavailable`/`timeout`/`error`/`not_requested` have `data: null`. Optional `latencyMs` is non-negative and `code` is a short sanitized diagnostic label, never an upstream error message/body. Normalized place, geocoding, weather and route schemas live in contracts so test fixtures and ports share their shapes. These enrichments are transient and are not additional public HTTP endpoints.
 
 ## 15. Recommendation structured schema
 

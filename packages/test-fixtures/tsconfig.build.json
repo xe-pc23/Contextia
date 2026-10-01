@@ -5,10 +5,11 @@
     "declaration": true,
     "declarationMap": true,
     "outDir": "dist",
-    "rootDir": "src",
+    "rootDir": ".",
     "paths": {}
   },
   "include": [
-    "src/**/*.ts"
+    "src/**/*.ts",
+    "scenarios/**/*.ts"
   ]
 }
