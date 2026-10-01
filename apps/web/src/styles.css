@@ -1,0 +1,15 @@
+:root { font-family: system-ui, -apple-system, sans-serif; color: #152b3a; background: #f4f7f8; font-synthesis: none; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { max-width: 960px; margin: 0 auto; padding: 32px 24px 64px; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 24px; border-bottom: 1px solid #dce5e9; }
+.brand { font-size: 24px; font-weight: 700; letter-spacing: -0.5px; }
+.badge { background: #e6ecf0; color: #405663; border-radius: 999px; padding: 6px 12px; font-size: 13px; }
+.intro { padding: 64px 0 32px; }
+.eyebrow { color: #287369; font-size: 14px; font-weight: 600; }
+h1 { font-size: clamp(28px, 4vw, 40px); line-height: 1.5; margin: 8px 0 16px; }
+p { color: #4b616e; line-height: 1.8; }
+.notice { background: white; border: 1px solid #dce5e9; border-radius: 16px; padding: 28px; }
+h2 { font-size: 20px; margin: 0 0 12px; }
+button { border: 0; border-radius: 8px; padding: 12px 20px; background: #e6ecf0; color: #6b7c85; font: inherit; }
+@media (max-width: 600px) { .intro { padding-top: 36px; } .notice { padding: 20px; } }
