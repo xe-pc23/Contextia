@@ -15,6 +15,12 @@
     "dev": "node --import tsx src/local.ts"
   },
   "dependencies": {
-    "@contextia/config": "workspace:*"
+    "@contextia/config": "workspace:*",
+    "@contextia/contracts": "workspace:*",
+    "@contextia/domain": "workspace:*",
+    "@contextia/providers": "workspace:*"
+  },
+  "devDependencies": {
+    "@contextia/test-fixtures": "workspace:*"
   }
 }

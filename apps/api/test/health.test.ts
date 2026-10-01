@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { APIGatewayProxyEventV2 } from 'aws-lambda';
+import { ErrorResponseSchema, HealthResponseSchema } from '@contextia/contracts';
 import { createLambdaHandler, createRequestHandler } from '../src/handler.js';
 import type { RequestLog } from '../src/handler.js';
 
@@ -15,14 +16,14 @@ describe('health API', () => {
     expect(response.statusCode).toBe(200);
     expect(response.headers['content-type']).toBe('application/json; charset=utf-8');
     expect(response.headers['cache-control']).toBe('no-store');
-    expect(JSON.parse(response.body)).toEqual({ status: 'ok', version: 'abc123' });
+    expect(HealthResponseSchema.parse(JSON.parse(response.body))).toEqual({ status: 'ok', version: 'abc123' });
   });
 
   it.each([['POST', '/health'], ['GET', '/v1/context/evaluate'], ['GET', '/health/private']])('returns 404 for %s %s', (method, path) => {
     const { options } = setup();
     const response = createRequestHandler(options)({ method, path, requestId: 'req-missing' });
     expect(response.statusCode).toBe(404);
-    expect(JSON.parse(response.body)).toMatchObject({ requestId: 'req-missing', error: { code: 'NOT_FOUND' } });
+    expect(ErrorResponseSchema.parse(JSON.parse(response.body))).toMatchObject({ requestId: 'req-missing', error: { code: 'NOT_FOUND' } });
   });
 
   it('maps an HTTP API event without logging its headers, body, query, or private path', () => {

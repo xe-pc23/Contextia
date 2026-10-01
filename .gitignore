@@ -11,6 +11,8 @@ build/
 coverage/
 .expo/
 .web-build/
+apps/mobile/ios/
+apps/mobile/android/
 
 .env
 .env.*

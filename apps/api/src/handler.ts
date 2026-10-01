@@ -1,4 +1,5 @@
 import type { APIGatewayProxyEventV2 } from 'aws-lambda';
+import type { ErrorResponse, HealthResponse } from '@contextia/contracts';
 
 export type RequestLog = {
   event: 'http_request';
@@ -25,8 +26,8 @@ export function createRequestHandler(options: HandlerOptions): (request: ApiRequ
       statusCode,
       headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
       body: JSON.stringify(isHealth
-        ? { status: 'ok', version: options.version }
-        : { requestId: request.requestId, error: { code: 'NOT_FOUND', message: 'Route not found.' } })
+        ? { status: 'ok', version: options.version } satisfies HealthResponse
+        : { requestId: request.requestId, error: { code: 'NOT_FOUND', message: 'Route not found.' } } satisfies ErrorResponse)
     };
   };
 }

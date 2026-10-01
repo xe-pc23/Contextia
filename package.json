@@ -12,7 +12,9 @@
     "build": "pnpm -r build",
     "cdk:synth": "node --import tsx scripts/cdk.ts synth",
     "cdk:diff:dev": "node --import tsx scripts/cdk.ts diff dev",
-    "dev:api": "pnpm --filter @contextia/api dev"
+    "dev:api": "pnpm --filter @contextia/api dev",
+    "dev:web": "pnpm --filter @contextia/web dev",
+    "dev:mobile": "pnpm --filter @contextia/mobile dev"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

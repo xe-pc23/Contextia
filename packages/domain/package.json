@@ -15,5 +15,8 @@
   },
   "dependencies": {
     "@contextia/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@contextia/test-fixtures": "workspace:*"
   }
 }
