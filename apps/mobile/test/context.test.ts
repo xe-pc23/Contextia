@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { getCalendarQueryWindow, getCalendarReadWindow } from '../src/context/calendarWindow';
 import { projectCalendarEvents } from '../src/context/calendarProjection';
 import { ContextCollector } from '../src/context/contextCollector';
-import type { CalendarReadResult, CalendarSource, ClockSource, LocationReadResult, LocationSource } from '../src/context/types';
+import type { CalendarReadResult, CalendarSource, ClockSource, LocationReadResult, LocationSource, StepSource } from '../src/context/types';
 
 const fixedNow = new Date('2026-05-01T12:00:00.000Z');
 const location: LocationContext = {
@@ -233,7 +233,7 @@ describe('ContextCollector', () => {
     expect(result.status).toBe('ready');
     if (result.status !== 'ready') throw new Error('Expected a ready context');
     expect(result.input.calendar).toEqual([]);
-    expect(result.permissions).toEqual({ location: 'granted', calendar: 'denied' });
+    expect(result.permissions).toEqual({ location: 'granted', calendar: 'denied', steps: 'unavailable' });
     expect(ContextInputSchema.safeParse(result.input).success).toBe(true);
   });
 
@@ -245,7 +245,7 @@ describe('ContextCollector', () => {
     );
 
     const result = await collector.collect();
-    expect(result).toEqual({ status: 'location-unavailable', location: 'denied', calendar: 'denied' });
+    expect(result).toEqual({ status: 'location-unavailable', location: 'denied', calendar: 'denied', steps: 'unavailable' });
   });
 
   it('maps source failures to unavailable states', async () => {
@@ -256,7 +256,7 @@ describe('ContextCollector', () => {
     expect(await collector.collect()).toEqual({
       status: 'location-unavailable',
       location: 'unavailable',
-      calendar: 'unavailable'
+      calendar: 'unavailable', steps: 'unavailable'
     });
   });
 
@@ -270,6 +270,55 @@ describe('ContextCollector', () => {
       new FixedClock()
     );
 
-    expect(await collector.collect()).toEqual({ status: 'invalid-context', location: 'granted', calendar: 'unavailable' });
+    expect(await collector.collect()).toEqual({ status: 'invalid-context', location: 'granted', calendar: 'unavailable', steps: 'unavailable' });
+  });
+
+  it.each([9999, 10000, 10001])('combines numeric step evidence and the saved goal at %i', async steps => {
+    const stepSource: StepSource = { getTodaySteps: async now => {
+      expect(now).toBe(fixedNow);
+      return { status: 'granted', steps, source: 'foreground-sensor', confidence: 'low' };
+    } };
+    const result = await new ContextCollector(
+      new StubLocationSource({ status: 'granted', location }),
+      new StubCalendarSource({ status: 'denied' }), new FixedClock(), stepSource
+    ).collect(10000);
+    if (result.status !== 'ready') throw new Error('Expected context');
+    expect(result.input.activity).toEqual({ stepsToday: steps, stepGoal: 10000, stepGoalReached: steps >= 10000, stepSource: 'foreground-sensor', confidence: 'low' });
+    expect(result.input.preferencesOverride).toBeUndefined();
+    expect(result.input.scenarioTime).toBeUndefined();
+    expect(result.permissions.steps).toBe('granted');
+  });
+
+  it.each(['denied', 'unavailable'] as const)('keeps %s steps unknown without claiming the goal', async status => {
+    const stepSource: StepSource = { getTodaySteps: async () => ({ status }) };
+    const result = await new ContextCollector(
+      new StubLocationSource({ status: 'granted', location }),
+      new StubCalendarSource({ status: 'granted', events: [] }), new FixedClock(), stepSource
+    ).collect(10000);
+    if (result.status !== 'ready') throw new Error('Expected context');
+    expect(result.input.activity).toEqual({ stepsToday: null, stepGoal: 10000 });
+    expect(result.permissions.steps).toBe(status);
+  });
+
+  it('preserves location and calendar when the step source fails', async () => {
+    const stepSource: StepSource = { getTodaySteps: async () => { throw new Error('sensor unavailable'); } };
+    const result = await new ContextCollector(
+      new StubLocationSource({ status: 'granted', location }),
+      new StubCalendarSource({ status: 'granted', events: [] }), new FixedClock(), stepSource
+    ).collect();
+    if (result.status !== 'ready') throw new Error('Expected context');
+    expect(result.input.activity).toEqual({ stepsToday: null });
+    expect(result.permissions.steps).toBe('unavailable');
+  });
+
+  it.each([-1, 200001, 1.5, Number.NaN])('ignores invalid step evidence %s without losing other sources', async steps => {
+    const stepSource: StepSource = { getTodaySteps: async () => ({ status: 'granted', steps, source: 'ios-pedometer', confidence: 'high' }) };
+    const result = await new ContextCollector(
+      new StubLocationSource({ status: 'granted', location }),
+      new StubCalendarSource({ status: 'denied' }), new FixedClock(), stepSource
+    ).collect(10000);
+    if (result.status !== 'ready') throw new Error('Expected context');
+    expect(result.input.activity).toEqual({ stepsToday: null, stepGoal: 10000 });
+    expect(result.permissions.steps).toBe('unavailable');
   });
 });
