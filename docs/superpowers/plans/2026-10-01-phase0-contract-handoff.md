@@ -11,4 +11,4 @@ Phase 0 integration still needs C's real Vite/React scaffold and E's real Expo s
 
 Validation so far: A's initial 69 contract cases and three fixture tests failed before implementation; the added proactive-delivery consistency case also failed before its refinement. A then passed lint, typecheck, all 121 tests, build and both-stage offline CDK synth. Built package self-imports and frozen offline installation also passed. No AWS resources were changed.
 
-B, final review and lane distribution are still pending.
+Read-only review of A (`b59e4d4..2dfe1cf`) found one important omission (daily/feels-like weather facts) and one minor preset omission (preferences). Both now have regression coverage and are repaired. Source weather time and optional provider place facts are retained; public place payloads remain minimal. The revised five-command gate passed with 124 tests. B and final lane distribution are still pending.

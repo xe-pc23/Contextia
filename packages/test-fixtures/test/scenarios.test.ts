@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  ContextInputSchema, GeocodedPlaceSchema, PlaceSchema, RouteSummarySchema,
+  ContextInputSchema, GeocodedPlaceSchema, ProviderPlaceSchema, RouteSummarySchema,
   ScenarioIdSchema, UserPreferencesSchema, WeatherSnapshotSchema, providerResultSchema
 } from '@contextia/contracts';
 import { getScenarioInput, scenarios } from '../src/index.js';
@@ -16,7 +16,7 @@ describe('shared synthetic scenarios', () => {
       expect(ContextInputSchema.safeParse(JSON.parse(JSON.stringify(fixture.context))).success).toBe(true);
       expect(UserPreferencesSchema.safeParse(fixture.preferences).success).toBe(true);
       expect(providerResultSchema(GeocodedPlaceSchema.array()).safeParse(fixture.providers.geocoding).success).toBe(true);
-      expect(providerResultSchema(PlaceSchema.array()).safeParse(fixture.providers.places).success).toBe(true);
+      expect(providerResultSchema(ProviderPlaceSchema.array()).safeParse(fixture.providers.places).success).toBe(true);
       expect(providerResultSchema(WeatherSnapshotSchema).safeParse(fixture.providers.weather).success).toBe(true);
       expect(providerResultSchema(RouteSummarySchema.array()).safeParse(fixture.providers.routes).success).toBe(true);
     }
@@ -29,6 +29,7 @@ describe('shared synthetic scenarios', () => {
     const next = getScenarioInput('step-goal');
     expect(next.location.latitude).not.toBe(0);
     expect(next.calendar).toEqual([]);
+    expect(next.preferencesOverride?.interests).toEqual(['cafe', 'park']);
     expect(Object.keys(next)).not.toContain('providers');
     expect(Object.keys(next)).not.toContain('decision');
   });

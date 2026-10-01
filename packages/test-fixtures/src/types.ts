@@ -1,5 +1,5 @@
 import type {
-  GeocodedPlace, Place, ProviderNeed, ProviderResult, RouteSummary, ScenarioContextInput,
+  GeocodedPlace, ProviderPlace, ProviderNeed, ProviderResult, RouteSummary, ScenarioContextInput,
   ScenarioId, TriggerType, UserPreferences, WeatherSnapshot
 } from '@contextia/contracts';
 
@@ -12,7 +12,7 @@ export interface ScenarioFixture {
   preferences: UserPreferences;
   providers: {
     geocoding: ProviderResult<GeocodedPlace[]>;
-    places: ProviderResult<Place[]>;
+    places: ProviderResult<ProviderPlace[]>;
     weather: ProviderResult<WeatherSnapshot>;
     routes: ProviderResult<RouteSummary[]>;
   };

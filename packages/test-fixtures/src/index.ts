@@ -13,5 +13,5 @@ export const scenarios: readonly ScenarioFixture[] = [upcomingTransit, stepGoal,
 export function getScenarioInput(id: ScenarioId): ScenarioContextInput {
   const fixture = scenarios.find(value => value.id === id);
   if (!fixture) throw new Error('Unknown predefined scenario');
-  return structuredClone(fixture.context);
+  return structuredClone({ ...fixture.context, preferencesOverride: { ...fixture.preferences, ...fixture.context.preferencesOverride } });
 }

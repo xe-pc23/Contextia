@@ -19,16 +19,28 @@ export type ProviderResult<T> = (
   | { status: 'ok' | 'degraded'; data: T }
   | { status: 'unavailable' | 'timeout' | 'error' | 'not_requested'; data: null }
 ) & Pick<z.infer<typeof ProviderStatusSchema>, 'latencyMs' | 'code'>;
-export const GeocodedPlaceSchema = PlaceSchema.extend({ confidence: z.number().min(0).max(1) });
+export const ProviderPlaceSchema = PlaceSchema.extend({
+  isOpen: z.boolean().nullable().optional(), categoryNames: z.array(z.string()).optional(),
+  websiteUrl: z.url({ protocol: /^https?$/ }).optional()
+});
+export const GeocodedPlaceSchema = ProviderPlaceSchema.extend({ confidence: z.number().min(0).max(1) });
 export const WeatherConditionSchema = z.enum(['clear', 'cloudy', 'rain', 'snow', 'storm', 'unknown']);
 const weatherFields = {
-  condition: WeatherConditionSchema, temperatureCelsius: z.number().nullable(),
+  condition: WeatherConditionSchema, temperatureCelsius: z.number().nullable(), feelsLikeCelsius: z.number().nullable().optional(),
   precipitationProbability: z.number().min(0).max(100).nullable(), precipitationMillimeters: z.number().nonnegative().nullable()
 };
 export const WeatherWindowSchema = z.strictObject({ startAt: TimestampSchema, endAt: TimestampSchema, ...weatherFields }).refine(
   value => Date.parse(value.endAt) >= Date.parse(value.startAt), { path: ['endAt'], message: 'endAt must be at or after startAt' }
 );
-export const WeatherSnapshotSchema = z.strictObject({ at: TimestampSchema, timezone: TimezoneSchema, ...weatherFields, forecast: z.array(WeatherWindowSchema) });
+export const DailyWeatherSchema = z.strictObject({
+  date: z.iso.date(), temperatureMinCelsius: z.number().nullable(), temperatureMaxCelsius: z.number().nullable(),
+  sunriseAt: TimestampSchema.optional(), sunsetAt: TimestampSchema.optional()
+}).refine(value => value.temperatureMinCelsius === null || value.temperatureMaxCelsius === null || value.temperatureMaxCelsius >= value.temperatureMinCelsius,
+  { path: ['temperatureMaxCelsius'], message: 'Maximum temperature must be at least the minimum' });
+export const WeatherSnapshotSchema = z.strictObject({
+  at: TimestampSchema, sourceTimestamp: TimestampSchema, timezone: TimezoneSchema, ...weatherFields,
+  daily: DailyWeatherSchema, forecast: z.array(WeatherWindowSchema)
+});
 export const RouteLegSchema = z.strictObject({
   mode: z.enum(['pedestrian', 'bus', 'rail', 'subway', 'tram', 'ferry', 'other']),
   durationMinutes: z.number().nonnegative(), departAt: TimestampSchema.optional(), arriveAt: TimestampSchema.optional(),
@@ -42,5 +54,6 @@ export const RouteSummarySchema = RecommendationRouteSchema.extend({
 export type ProviderStatus = z.infer<typeof ProviderStatusSchema>;
 export type ProviderStatusMap = z.infer<typeof ProviderStatusMapSchema>;
 export type GeocodedPlace = z.infer<typeof GeocodedPlaceSchema>;
+export type ProviderPlace = z.infer<typeof ProviderPlaceSchema>;
 export type WeatherSnapshot = z.infer<typeof WeatherSnapshotSchema>;
 export type RouteSummary = z.infer<typeof RouteSummarySchema>;

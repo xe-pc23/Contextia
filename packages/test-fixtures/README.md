@@ -4,4 +4,6 @@
 
 Tests can import `scenarios` from `@contextia/test-fixtures`. Console presets should use `getScenarioInput(id)`, which returns a detached simulation/preview input without mock enrichments or recommendation text. Never install these mocks in the production provider container. Rain in the weather fixture is test data; a live weather preset cannot promise rain.
 
+The preset helper includes the fixture's preferences as `preferencesOverride`, so interests and the step goal travel with the editable input rather than depending on the signed-in demo profile.
+
 Each scenario can have more than one candidate. A adds detector-specific positive, negative, boundary and dedup fixtures during the relevant implementation phase; these Phase 0 fixtures do not prove a detector exists.
