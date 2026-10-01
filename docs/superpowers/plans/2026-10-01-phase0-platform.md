@@ -44,3 +44,7 @@
 - `tsx` CLIのIPCがsandboxで拒否されたため、`node --import tsx`を使用しsynth成功。scriptの使い方は同じ。
 - ローカルHTTP health 200・未実装ルート404、build済みLambda bundleのhealthを確認。ローカルserverは検証後に停止。
 - 方針: Phase 0の足場のみ実装し、Cognito/DynamoDB/S3/OAC・deploy workflowは計画どおりPhase 1に残す。製品仕様の変更なし。
+- 独立reviewerが`21ce011..9231506`を読み取りレビュー。Critical/Importantなし。MinorのAPI package exportを実際の`dist/handler`へ修正し、package importの失敗→成功を確認。追加の未解決指摘なし。
+- reviewerが範囲外とした本体contracts/detectors/providers/clients、Phase 1のJWT・永続化・Web hosting・CI/deploy、live/native/MCPは計画どおり後続担当へ残す。既存`.DS_Store`は対象外。
+- `git archive`から作ったbuild成果物なしのcheckoutで、Node.js 24とfrozen/offline install→5コマンド→41テスト→両stage synthを成功確認。最終export修正後の作業checkoutでも5コマンドを再実行し成功。
+- 生成した足場の末尾空行を正規化し、差分のwhitespace警告を解消。
