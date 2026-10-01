@@ -411,11 +411,24 @@ The HTTP request/response shape is unchanged.
   profile → client → UTC. Standard `Intl.DateTimeFormat` uses the runtime's
   ICU/IANA timezone database for local dates and DST without a fixed offset.
 - Default policy is low=1 / normal=3 / high=6 per local day, a 300-second context
-  window, and an 1800-second trigger/anchor window. A complete `DeliveryPolicy`
-  may be injected. An age strictly below the configured window suppresses;
-  exactly at the boundary does not. Future persisted times remain suppressed
-  after clock rollback. Invalid clocks, persisted calendar dates, counts, or matching-fingerprint times
+  window, and an 1800-second fallback trigger/anchor window. `DeliveryPolicy`
+  additionally requires `anchorDedupByTrigger`, a
+  `Readonly<Partial<Record<TriggerType, number | "local-day">>>`; its default is
+  `{ STEP_GOAL_REST: "local-day" }`. Other triggers use the fallback unless given
+  an override. Numeric windows use seconds: an age strictly below the window
+  suppresses; exactly at the boundary does not. A complete policy may be
+  injected. Future persisted times remain suppressed after clock rollback.
+  Invalid clocks, persisted calendar dates, counts, or matching-fingerprint times
   fail safely instead of authorizing delivery.
+- Under `"local-day"`, an exactly matching trigger/anchor whose `notifiedAt`
+  falls on the current server `notificationDay` in the resolved timezone produces
+  `RECENT_SAME_TRIGGER`, including more than 30 minutes after delivery. It clears
+  at the next local midnight. Compare calendar dates rather than elapsed 24 hours
+  so 23/25-hour DST days behave correctly. Future matching `notifiedAt` values
+  remain suppressed; malformed matching timestamps fail closed in both modes.
+  Preview uses this server-local notification day even when its simulated
+  candidate anchor names a past or future date; scenario time cannot extend the
+  suppression period of a previously recorded notification.
 - Run guards before detection without `opportunity`, then run them with each
   candidate's `{ type, anchorKey }` before enrichment/Bedrock. Fix the server clock
   to one request-start instant so both checks use the same day and window.
@@ -437,6 +450,14 @@ The HTTP request/response shape is unchanged.
   B/D must map or extend their state DTO/persistence to supply this instant:
   the existing `latestContext.capturedAt` can contain simulated time and is not
   a valid substitute. Read prior state before storing the current evaluation.
+- B/D must pass the resolved timezone and the same per-trigger anchor policy to
+  the repository's atomic proactive-delivery recheck, and retain today's notified
+  step-goal anchor until the next local midnight. The current repository port's
+  `anchorDedupSeconds` alone cannot express `"local-day"`; extend the port and
+  persistence adapter before integrating proactive delivery. Concurrent requests
+  must not bypass the day policy, and bounded-anchor pruning must not evict an
+  active day anchor early. The processing-time state change remains tracked
+  separately in [Issue #5](https://github.com/xe-pc23/Contextia/issues/5).
 - The domain function has no persistence or notification side effects. Returned
   `delivery.status=ready` is a provisional guard result; the application must
   finalize delivery according to the model decision and atomically recheck
@@ -471,9 +492,13 @@ interface and returns `CandidateOpportunity[]`:
   unspecified confidence maps to 0.75. Low confidence does not add a global
   delivery guard. No unagreed calendar-imminence threshold is introduced.
 - Detection has no delivery side effects and retains the same date anchor
-  throughout the evaluation day. Repeated delivery is checked by the configured
-  trigger/anchor guard; this phase does not introduce an additional all-day ban.
-  Preview retains its candidate while reporting any delivery suppression.
+  throughout the evaluation day. The default delivery policy suppresses repeated
+  `STEP_GOAL_REST` delivery for that exact anchor throughout the same server-local
+  notification day, so real-world goal-achievement notifications occur at most
+  once per local day. A new local-day anchor is eligible on the following day,
+  subject to the other guards. Preview retains its candidate and reports
+  `wouldSuppress=true` / `RECENT_SAME_TRIGGER` when this guard applies; it does not
+  increment notification counts or record a notified anchor.
 
 `stepGoal`, `stepGoalBelowGoal`, and `stepGoalStepsUnavailable` are exported
 synthetic test fixtures. They contain inputs/enrichments, not fixed AI output.

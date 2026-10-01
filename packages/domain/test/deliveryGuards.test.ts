@@ -45,7 +45,8 @@ describe('delivery guards', () => {
 
   it('uses configured caps and windows', () => {
     const result = evaluateDeliveryGuards(input({
-      policy: { dailyCaps: { low: 2, normal: 4, high: 8 }, contextDedupSeconds: 60, anchorDedupSeconds: 120 },
+      policy: { dailyCaps: { low: 2, normal: 4, high: 8 }, contextDedupSeconds: 60, anchorDedupSeconds: 1800,
+        anchorDedupByTrigger: { STEP_GOAL_REST: 120 } },
       state: { ...state, notificationsSentToday: 3, latestContextFingerprint: 'sha256:test', latestContextProcessedAt: '2026-10-01T05:08:59Z',
         recentAnchors: [{ triggerType: 'STEP_GOAL_REST', anchorKey: '2026-10-01', notifiedAt: '2026-10-01T05:07:59Z' }] }
     }));
@@ -60,11 +61,41 @@ describe('delivery guards', () => {
     expect(result.guardCodes).toEqual(age < 300_000 ? ['DUPLICATE_CONTEXT'] : []);
   });
 
-  it.each([1_799_999, 1_800_000, 1_800_001])('anchor window at age %i ms', age => {
-    const result = evaluateDeliveryGuards(input({ state: { ...state, recentAnchors: [{
-      triggerType: 'STEP_GOAL_REST', anchorKey: '2026-10-01', notifiedAt: new Date(Date.parse(now) - age).toISOString()
+  it.each([1_799_999, 1_800_000, 1_800_001])('default window for other triggers at age %i ms', age => {
+    const result = evaluateDeliveryGuards(input({ opportunity: { type: 'FREE_TIME_NEARBY', anchorKey: 'gap-1' },
+      state: { ...state, recentAnchors: [{
+      triggerType: 'FREE_TIME_NEARBY', anchorKey: 'gap-1', notifiedAt: new Date(Date.parse(now) - age).toISOString()
     }] } }));
     expect(result.guardCodes).toEqual(age < 1_800_000 ? ['RECENT_SAME_TRIGGER'] : []);
+  });
+
+  it.each(['2026-10-01T05:40:00Z', '2026-10-01T05:40:01Z', '2026-10-01T14:59:59.999Z'])('suppresses the same step-goal anchor throughout the local day at %s', at => {
+    const result = evaluateDeliveryGuards(input({ clock: fixedClock(at), state: { ...state, recentAnchors: [{
+      triggerType: 'STEP_GOAL_REST', anchorKey: '2026-10-01', notifiedAt: now
+    }] } }));
+    expect(result.guardCodes).toEqual(['RECENT_SAME_TRIGGER']);
+    expect(result.shouldEvaluate).toBe(false);
+  });
+
+  it('expires local-day suppression at midnight even if preview keeps the old scenario anchor', () => {
+    const notified = { ...state, recentAnchors: [{
+      triggerType: 'STEP_GOAL_REST' as const, anchorKey: '2026-10-01', notifiedAt: now
+    }] };
+    for (const deliveryMode of ['proactive', 'preview'] as const) {
+      expect(evaluateDeliveryGuards(input({ deliveryMode, state: notified,
+        clock: fixedClock('2026-10-01T15:00:00Z') })).guardCodes).toEqual([]);
+    }
+  });
+
+  it('validates matching local-day anchor timestamps and keeps future days closed after clock rollback', () => {
+    for (const deliveryMode of ['proactive', 'preview'] as const) {
+      expect(() => evaluateDeliveryGuards(input({ deliveryMode, state: { ...state, recentAnchors: [{
+        triggerType: 'STEP_GOAL_REST', anchorKey: '2026-10-01', notifiedAt: 'invalid'
+      }] } }))).toThrow();
+    }
+    expect(evaluateDeliveryGuards(input({ state: { ...state, recentAnchors: [{
+      triggerType: 'STEP_GOAL_REST', anchorKey: '2026-10-01', notifiedAt: '2026-10-02T05:10:00Z'
+    }] } })).guardCodes).toEqual(['RECENT_SAME_TRIGGER']);
   });
 
   it('requires an exact fingerprint and both trigger and anchor; checks every anchor', () => {
@@ -135,6 +166,8 @@ describe('delivery guards', () => {
     expect(() => evaluateDeliveryGuards(input({ state: { ...state, latestContextFingerprint: 'sha256:test', latestContextProcessedAt: 'invalid' } }))).toThrow();
     expect(() => evaluateDeliveryGuards(input({ contextFingerprint: '' }))).toThrow();
     expect(() => evaluateDeliveryGuards(input({ policy: { ...defaultDeliveryPolicy, contextDedupSeconds: 0 } }))).toThrow();
+    expect(() => evaluateDeliveryGuards(input({ policy: { ...defaultDeliveryPolicy,
+      anchorDedupByTrigger: { STEP_GOAL_REST: 0 } } }))).toThrow();
   });
 
   for (const deliveryMode of ['proactive', 'preview'] as const) {
@@ -160,6 +193,38 @@ describe('delivery guards', () => {
 });
 
 describe('user-local date and timezone', () => {
+  it.each([
+    { profileTimezone: 'America/Los_Angeles', clientTimezone: 'Asia/Tokyo' },
+    { profileTimezone: 'invalid', clientTimezone: 'America/Los_Angeles' }
+  ])('keeps step-goal suppression across UTC midnight with resolved timezone $profileTimezone/$clientTimezone', timezones => {
+    const notified = { ...state, recentAnchors: [{
+      triggerType: 'STEP_GOAL_REST' as const, anchorKey: '2026-10-01', notifiedAt: '2026-10-01T23:00:00Z'
+    }] };
+    expect(evaluateDeliveryGuards(input({ ...timezones, state: notified,
+      clock: fixedClock('2026-10-02T00:00:00Z') })).guardCodes).toEqual(['RECENT_SAME_TRIGGER']);
+    expect(evaluateDeliveryGuards(input({ ...timezones, state: notified,
+      clock: fixedClock('2026-10-02T07:00:00Z'), opportunity: { type: 'STEP_GOAL_REST', anchorKey: '2026-10-02' }
+    })).guardCodes).toEqual([]);
+  });
+
+  it.each([
+    ['2026-03-08', '2026-03-08T05:00:00Z', '2026-03-08T06:30:00Z', '2026-03-08T07:30:00Z', '2026-03-09T03:59:59.999Z', '2026-03-09T04:00:00Z'],
+    ['2026-11-01', '2026-11-01T04:00:00Z', '2026-11-01T05:30:00Z', '2026-11-01T06:30:00Z', '2026-11-02T04:59:59.999Z', '2026-11-02T05:00:00Z']
+  ])('suppresses a step-goal for the entire 23/25-hour DST day %s', (day, notifiedAt, beforeTransition, afterTransition, beforeMidnight, midnight) => {
+    const notified = { ...state, notificationDay: day, recentAnchors: [{
+      triggerType: 'STEP_GOAL_REST' as const, anchorKey: day, notifiedAt
+    }] };
+    for (const at of [beforeTransition, afterTransition, beforeMidnight]) {
+      expect(evaluateDeliveryGuards(input({ profileTimezone: 'America/New_York', state: notified,
+        opportunity: { type: 'STEP_GOAL_REST', anchorKey: day }, clock: fixedClock(at)
+      })).guardCodes).toEqual(['RECENT_SAME_TRIGGER']);
+    }
+    // The old anchor also expires: this is a calendar-day policy, not 24 elapsed hours.
+    expect(evaluateDeliveryGuards(input({ profileTimezone: 'America/New_York', state: notified,
+      opportunity: { type: 'STEP_GOAL_REST', anchorKey: day }, clock: fixedClock(midnight)
+    })).guardCodes).toEqual([]);
+  });
+
   it.each([
     ['Asia/Tokyo', 'America/New_York', 'Asia/Tokyo'],
     ['invalid', 'America/New_York', 'America/New_York'],
@@ -209,12 +274,12 @@ describe('user-local date and timezone', () => {
     expect(evaluateDeliveryGuards(input({ profileTimezone: 'America/New_York', state: processed, clock: fixedClock(boundary) })).guardCodes).toEqual([]);
   });
 
-  it('resets the cap at midnight while retaining recent context and trigger guards', () => {
+  it('resets the cap and step-goal guard at midnight while retaining recent context dedup', () => {
     const recent = {
       ...state, notificationsSentToday: 3, latestContextFingerprint: 'sha256:test', latestContextProcessedAt: '2026-10-01T14:59:59Z',
       recentAnchors: [{ triggerType: 'STEP_GOAL_REST' as const, anchorKey: '2026-10-01', notifiedAt: '2026-10-01T14:59:59Z' }]
     };
-    expect(evaluateDeliveryGuards(input({ state: recent, clock: fixedClock('2026-10-01T15:00:00Z') })).guardCodes).toEqual(['DUPLICATE_CONTEXT', 'RECENT_SAME_TRIGGER']);
+    expect(evaluateDeliveryGuards(input({ state: recent, clock: fixedClock('2026-10-01T15:00:00Z') })).guardCodes).toEqual(['DUPLICATE_CONTEXT']);
     expect(evaluateDeliveryGuards(input({ state: recent, contextFingerprint: 'sha256:next', clock: fixedClock('2026-10-01T15:00:00Z'),
       opportunity: { type: 'STEP_GOAL_REST', anchorKey: '2026-10-02' } })).guardCodes).toEqual([]);
   });

@@ -162,7 +162,7 @@ describe('step-goal evaluation time and timezone', () => {
 });
 
 describe('step-goal delivery guard integration', () => {
-  it('detects reached state on repeated input while the guard prevents recent same-day delivery', async () => {
+  it('detects reached state on repeated input while the guard prevents delivery for the entire local day', async () => {
     const candidates = await stepGoalRestDetector.detect(normalized());
     const opportunity = CandidateOpportunitySchema.parse(candidates[0]);
     const state: DeliveryGuardState = {
@@ -172,10 +172,14 @@ describe('step-goal delivery guard integration', () => {
     expect(await stepGoalRestDetector.detect(normalized())).toEqual(candidates);
     expect(guard(opportunity, state, 'proactive').guardCodes).toEqual(['RECENT_SAME_TRIGGER']);
     expect(guard(opportunity, state, 'proactive').shouldEvaluate).toBe(false);
-    expect(guard(opportunity, state, 'proactive', '2026-10-01T05:40:00Z').shouldEvaluate).toBe(true);
+    for (const atTime of ['2026-10-01T05:40:00Z', '2026-10-01T05:40:01Z', '2026-10-01T14:59:59.999Z']) {
+      expect(guard(opportunity, state, 'proactive', atTime)).toMatchObject({
+        shouldEvaluate: false, wouldSuppress: true, guardCodes: ['RECENT_SAME_TRIGGER']
+      });
+    }
   });
 
-  it('allows a new local-day anchor without an added whole-day suppression policy', async () => {
+  it('allows a new local-day anchor immediately at midnight despite a recent previous-day notification', async () => {
     const opportunity = CandidateOpportunitySchema.parse((await stepGoalRestDetector.detect(normalized(at('2026-10-02T00:00:00+09:00'))))[0]);
     const state: DeliveryGuardState = {
       notificationDay: '2026-10-01', notificationsSentToday: 1,
@@ -183,6 +187,24 @@ describe('step-goal delivery guard integration', () => {
     };
     expect(opportunity.anchorKey).toBe('2026-10-02');
     expect(guard(opportunity, state, 'proactive', '2026-10-01T15:00:00Z').guardCodes).toEqual([]);
+  });
+
+  it('keeps the notified same-day candidate available on repeated preview after 30 minutes', async () => {
+    const candidates = await stepGoalRestDetector.detect(normalized());
+    const opportunity = CandidateOpportunitySchema.parse(candidates[0]);
+    const state: DeliveryGuardState = {
+      notificationDay: '2026-10-01', notificationsSentToday: 1,
+      recentAnchors: [{ triggerType: 'STEP_GOAL_REST', anchorKey: opportunity.anchorKey, notifiedAt: now }]
+    };
+    const before = structuredClone(state);
+    for (let run = 0; run < 2; run++) {
+      expect(guard(opportunity, state, 'preview', '2026-10-01T05:40:01Z')).toMatchObject({
+        shouldEvaluate: true, wouldSuppress: true, guardCodes: ['RECENT_SAME_TRIGGER'],
+        delivery: { mode: 'preview', status: 'preview', wouldSuppress: true }
+      });
+      expect(await stepGoalRestDetector.detect(normalized())).toEqual(candidates);
+      expect(state).toEqual(before);
+    }
   });
 
   it('reevaluates repeated preview with diagnostics without consuming or mutating delivery state', async () => {

@@ -8,12 +8,14 @@ export interface DeliveryPolicy {
   readonly dailyCaps: Readonly<Record<UserPreferences['notificationFrequency'], number>>;
   readonly contextDedupSeconds: number;
   readonly anchorDedupSeconds: number;
+  readonly anchorDedupByTrigger: Readonly<Partial<Record<CandidateOpportunity['type'], number | 'local-day'>>>;
 }
 
 export const defaultDeliveryPolicy: DeliveryPolicy = Object.freeze({
   dailyCaps: Object.freeze({ low: 1, normal: 3, high: 6 }),
   contextDedupSeconds: 300,
-  anchorDedupSeconds: 1800
+  anchorDedupSeconds: 1800,
+  anchorDedupByTrigger: Object.freeze({ STEP_GOAL_REST: 'local-day' })
 });
 
 export interface NotifiedAnchor {
@@ -61,10 +63,20 @@ function isRecent(at: string, now: number, windowSeconds: number): boolean {
 }
 
 function validatePolicy(policy: DeliveryPolicy): void {
-  const values = [...Object.values(policy.dailyCaps), policy.contextDedupSeconds, policy.anchorDedupSeconds];
+  const triggerWindows = Object.values(policy.anchorDedupByTrigger);
+  const values = [...Object.values(policy.dailyCaps), policy.contextDedupSeconds, policy.anchorDedupSeconds,
+    ...triggerWindows.filter(value => value !== 'local-day')];
   if (values.some(value => !Number.isSafeInteger(value) || value <= 0)) {
     throw new RangeError('Delivery policy values must be positive safe integers');
   }
+}
+
+function isDuplicateAnchor(anchor: NotifiedAnchor, now: Date, timezone: string, notificationDay: string, policy: DeliveryPolicy): boolean {
+  const window = policy.anchorDedupByTrigger[anchor.triggerType] ?? policy.anchorDedupSeconds;
+  if (window !== 'local-day') return isRecent(anchor.notifiedAt, now.getTime(), window);
+  const notifiedAt = new Date(TimestampSchema.parse(anchor.notifiedAt));
+  // Keep a local-day milestone closed through DST and a backwards-moving clock.
+  return notifiedAt.getTime() > now.getTime() || localDate(notifiedAt, timezone) === notificationDay;
 }
 
 export function evaluateDeliveryGuards(input: DeliveryGuardInput): DeliveryGuardResult {
@@ -95,7 +107,7 @@ export function evaluateDeliveryGuards(input: DeliveryGuardInput): DeliveryGuard
   const opportunity = input.opportunity;
   if (opportunity && state?.recentAnchors.some(anchor =>
     anchor.triggerType === opportunity.type && anchor.anchorKey === opportunity.anchorKey &&
-    isRecent(anchor.notifiedAt, now.getTime(), policy.anchorDedupSeconds)
+    isDuplicateAnchor(anchor, now, timezone, notificationDay, policy)
   )) guardCodes.push('RECENT_SAME_TRIGGER');
   const wouldSuppress = guardCodes.length > 0;
   const delivery: DeliveryDiagnostics = input.deliveryMode === 'preview'
