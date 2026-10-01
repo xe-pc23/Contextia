@@ -17,7 +17,7 @@
 3. `ContextEvaluateRequestSchema`で検証し、違反は400 `VALIDATION_ERROR`と`details[].path`。
 4. `simulation/preview`はWeb（Scenario Console）clientだけ、`real/proactive`はMobile clientだけに許可し、それ以外は403。client IDはCDKがLambda環境変数`WEB_CLIENT_ID`/`MOBILE_CLIENT_ID`に渡し、未設定なら常に403（fail closed）。
 5. `HandlerOptions.evaluate`に評価serviceが注入されていれば実行し、`200 {requestId, data: EvaluationResult}`を返す。`PROFILE_NOT_FOUND`は404、`STATE_UNAVAILABLE`は503、それ以外の例外は内部メッセージを出さず500 `INTERNAL_ERROR`。
-6. 本番の`handler`はまだ評価serviceを注入しない（B の adapter と A の domain が未統合のため）。推薦を作らず503を返す。
+6. 本番の`handler`はまだ評価serviceを注入しない（B の adapter が未実装のため）。推薦を作らず503を返す。
 
 ## 評価service（`src/application/evaluateContext.ts`）
 
@@ -32,7 +32,14 @@
 7. proactive notify は`recordProactiveDelivery`で原子的に再確認してから推薦を保存する。previewは日次枠を消費しない。
 8. 応答のplaceはprovider正規化データ、保存するplaceは`GetPlace(storage)`の結果だけ。推薦は7日TTL。
 
-既知の制約: 重複判定に必要なサーバー処理時刻が`UserState`にない（issue #5）。暫定的に、fingerprintが一致したときだけ`latestContext`のsnapshotを読み、サービスが書いた`createdAt`（サーバー時刻）をガードへ渡す。snapshotが期限切れならfingerprintを古いものとして外し、読めなければ`STATE_UNAVAILABLE`で止める。Bのportに項目が入ったらその値へ切り替える。モデルはtriggerを返さないため、Phase 1では最も確度の高い候補のtriggerを採用する。
+## A の domain との接続（`src/composition/evaluationDomain.ts`）
+
+`createEvaluationDomain()`はA（`@contextia/domain`）の`evaluateDeliveryGuards`・`normalizeDetectorContext`・`stepGoalRestDetector`を`EvaluationDomain`に合わせる。両方のガードに同じリクエスト開始時刻を渡し、timezoneは有効なpreferencesのものを使う。
+
+- `STEP_GOAL_REST`のanchor窓はAの方針どおり「同じローカル日」。Bの`recordProactiveDelivery`は秒数しか受け取らないため、「ローカルの0時からの経過秒」を渡す（DST切替日は切替幅だけずれうる）。
+- fingerprintはサーバー処理時刻とそろったときだけAのガードに渡す（時刻なしで渡すと同一contextの再実行で例外になる）。`UserState`にはまだ時刻がない（issue #5）ため、評価serviceはfingerprintが一致したときだけ`latestContext`のsnapshotを読み、サービスが書いた`createdAt`（サーバー時刻、シミュレーションの`capturedAt`ではない）を補う。これでproactiveの重複はBedrockより前に止まり、previewでも`DUPLICATE_CONTEXT`を診断できる。snapshotが期限切れならfingerprintを古いものとして外し、読めなければ`STATE_UNAVAILABLE`で止める。portに時刻が加われば追加の読み込みはしない。
+
+既知の制約: 重複判定に必要なサーバー処理時刻が`UserState`にない（issue #5）。上記のsnapshot読み込みで補っている。モデルはtriggerを返さないため、Phase 1では最も確度の高い候補のtriggerを採用する。
 
 ローカルserverにはJWT authorizerがないため、評価ルートは401になる。
 

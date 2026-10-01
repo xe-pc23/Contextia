@@ -5,9 +5,9 @@ import type {
 } from '@contextia/contracts';
 import type {
   ContextSnapshot, PlacesProvider, ProviderEnrichment, RecommendationModel, RecommendationSummary,
-  StateRepository, StoragePlace, StorageRecommendationItem, UserState
+  StateRepository, StoragePlace, StorageRecommendationItem
 } from '@contextia/providers';
-import type { EvaluationDomain, GuardCheckInput } from './evaluationDomain.js';
+import type { EvaluationDomain, GuardCheckInput, GuardUserState } from './evaluationDomain.js';
 import { contextFingerprint, hashCalendarId } from './fingerprint.js';
 
 export type EvaluationFailureCode = 'PROFILE_NOT_FOUND' | 'STATE_UNAVAILABLE';
@@ -24,7 +24,6 @@ export interface EvaluationPolicy {
   contextTtlSeconds: number;
   recommendationTtlSeconds: number;
   contextDedupSeconds: number;
-  anchorDedupSeconds: number;
   maxRecentAnchors: number;
   nearbyRadiusMeters: number;
   nearbyMaxResults: number;
@@ -37,7 +36,6 @@ export const defaultEvaluationPolicy: EvaluationPolicy = Object.freeze({
   contextTtlSeconds: 24 * 60 * 60,
   recommendationTtlSeconds: 7 * 24 * 60 * 60,
   contextDedupSeconds: 300,
-  anchorDedupSeconds: 1800,
   maxRecentAnchors: 20,
   nearbyRadiusMeters: 800,
   nearbyMaxResults: 10,
@@ -126,17 +124,15 @@ function delivery(context: ContextInput, guardCodes: GuardCode[], silent: boolea
   return { mode: 'proactive', status: silent ? 'suppressed' : 'ready', wouldSuppress: codes.length > 0, guardCodes: codes };
 }
 
-type GuardState = Pick<GuardCheckInput, 'state' | 'latestContextProcessedAt'>;
-
 /**
  * Issue #5: the guards need the server instant of the last processed fingerprint, which `UserState`
  * does not carry yet. Until the port does, read it from that context snapshot's `createdAt`, which this
  * service writes as server time. Only a matching fingerprint needs it, so other requests pay no extra read.
  */
 async function resolveGuardState(
-  repository: EvaluationStateRepository, userId: string, nowEpochSeconds: number, state: UserState | null, fingerprint: string
-): Promise<GuardState> {
-  if (!state || state.latestContextFingerprint !== fingerprint) return { state };
+  repository: EvaluationStateRepository, userId: string, nowEpochSeconds: number, state: GuardUserState | null, fingerprint: string
+): Promise<GuardUserState | null> {
+  if (!state || state.latestContextFingerprint !== fingerprint || state.latestContextProcessedAt) return state;
   // A fingerprint without its snapshot reference is inconsistent state: fail closed.
   if (!state.latestContext) throw new EvaluationFailure('STATE_UNAVAILABLE');
   const snapshot = await repository.getContextSnapshot({ userId, nowEpochSeconds, reference: state.latestContext });
@@ -145,9 +141,9 @@ async function resolveGuardState(
     // The snapshot outlived the dedup window (TTL is checked at construction), so the fingerprint is stale.
     const { latestContextFingerprint, ...rest } = state;
     void latestContextFingerprint;
-    return { state: rest };
+    return rest;
   }
-  return { state, latestContextProcessedAt: snapshot.data.createdAt };
+  return { ...state, latestContextProcessedAt: snapshot.data.createdAt };
 }
 
 type ValidatedNotify = { decision: NotifyDecision; places: Map<string, ProviderPlace> };
@@ -186,8 +182,8 @@ export function createEvaluateContext(deps: EvaluationDependencies): EvaluateCon
     const stateResult = await deps.state.getState({ userId, nowEpochSeconds });
     if (stateResult.status !== 'ok' && stateResult.status !== 'degraded') throw new EvaluationFailure('STATE_UNAVAILABLE');
     const fingerprint = contextFingerprint(context);
-    const guardState = await resolveGuardState(deps.state, userId, nowEpochSeconds, stateResult.data, fingerprint);
-    const guardBase: GuardCheckInput = { now, deliveryMode: context.deliveryMode, preferences, ...guardState, contextFingerprint: fingerprint };
+    const state = await resolveGuardState(deps.state, userId, nowEpochSeconds, stateResult.data, fingerprint);
+    const guardBase: GuardCheckInput = { now, deliveryMode: context.deliveryMode, preferences, state, contextFingerprint: fingerprint };
     const pre = deps.domain.checkDeliveryGuards(guardBase);
 
     // Prior state was read above; record this context (including preview) before any provider work.
@@ -270,7 +266,7 @@ export function createEvaluateContext(deps: EvaluationDependencies): EvaluateCon
         deliveryMode: 'proactive', evaluationId, recommendationId, notificationDay: chosen.guard.notificationDay,
         notificationsEnabled: preferences.notificationsEnabled, maxDailyNotifications: chosen.guard.maxDailyNotifications,
         contextFingerprint: fingerprint, triggerType: chosen.candidate.type, anchorKey: chosen.candidate.anchorKey,
-        at: now.toISOString(), contextDedupSeconds: policy.contextDedupSeconds, anchorDedupSeconds: policy.anchorDedupSeconds,
+        at: now.toISOString(), contextDedupSeconds: policy.contextDedupSeconds, anchorDedupSeconds: chosen.guard.anchorDedupSeconds,
         maxRecentAnchors: policy.maxRecentAnchors
       } });
       if (recorded.status !== 'ok' && recorded.status !== 'degraded') throw new EvaluationFailure('STATE_UNAVAILABLE');

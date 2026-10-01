@@ -398,6 +398,111 @@ Candidate-level diagnostic codes (not global hard guards) include:
 
 Do not expose internal AI chain-of-thought as guard/reason text.
 
+### Phase 1 delivery-guard integration
+
+`@contextia/domain` exports `evaluateDeliveryGuards`, `defaultDeliveryPolicy`,
+`Clock`, `resolveTimezone`, and `localDate`. Contracts additionally export
+`DeliveryGuardCodeSchema` / `DeliveryGuardCode`, the four delivery-only codes.
+The HTTP request/response shape is unchanged.
+
+- Supply authenticated notification preferences, `profileTimezone`, the validated
+  authenticated `clientTimezone` fallback, a server `Clock`, `contextFingerprint`,
+  and an optional normalized `DeliveryGuardState`. The timezone fallback is
+  profile → client → UTC. Standard `Intl.DateTimeFormat` uses the runtime's
+  ICU/IANA timezone database for local dates and DST without a fixed offset.
+- Default policy is low=1 / normal=3 / high=6 per local day, a 300-second context
+  window, and an 1800-second fallback trigger/anchor window. `DeliveryPolicy`
+  additionally requires `anchorDedupByTrigger`, a
+  `Readonly<Partial<Record<TriggerType, number | "local-day">>>`; its default is
+  `{ STEP_GOAL_REST: "local-day" }`. Other triggers use the fallback unless given
+  an override. Numeric windows use seconds: an age strictly below the window
+  suppresses; exactly at the boundary does not. A complete policy may be
+  injected. Future persisted times remain suppressed after clock rollback.
+  Invalid clocks, persisted calendar dates, counts, or matching-fingerprint times
+  fail safely instead of authorizing delivery.
+- Under `"local-day"`, an exactly matching trigger/anchor whose `notifiedAt`
+  falls on the current server `notificationDay` in the resolved timezone produces
+  `RECENT_SAME_TRIGGER`, including more than 30 minutes after delivery. It clears
+  at the next local midnight. Compare calendar dates rather than elapsed 24 hours
+  so 23/25-hour DST days behave correctly. Future matching `notifiedAt` values
+  remain suppressed; malformed matching timestamps fail closed in both modes.
+  Preview uses this server-local notification day even when its simulated
+  candidate anchor names a past or future date; scenario time cannot extend the
+  suppression period of a previously recorded notification.
+- Run guards before detection without `opportunity`, then run them with each
+  candidate's `{ type, anchorKey }` before enrichment/Bedrock. Fix the server clock
+  to one request-start instant so both checks use the same day and window.
+  Codes are collected in notification-enabled, daily-cap, fingerprint, anchor
+  order. `shouldEvaluate` is false for guarded proactive delivery and always
+  true for valid preview evaluation, even when `wouldSuppress` is true.
+- `notificationDay` is computed from the **server processing instant**, not
+  `scenarioTime` or a client-supplied capture time. A persisted count belonging
+  to a different local date does not consume today's cap. The function returns
+  the resolved timezone/day/cap for the repository's atomic delivery check.
+  Persisted `notificationDay` must be a real calendar date in strict `YYYY-MM-DD`
+  format, validated by `CalendarDateSchema`. Malformed, missing or impossible
+  dates fail closed with an exception in both proactive and preview modes;
+  they cannot be interpreted as a normal rollover.
+- `DeliveryGuardState.latestContextProcessedAt` must be the server instant when
+  `latestContextFingerprint` was processed. Preview may record this minimal
+  processing metadata so its next run diagnoses `DUPLICATE_CONTEXT`; it must not
+  increment `notificationsSentToday` or append to notified `recentAnchors`.
+  B/D must map or extend their state DTO/persistence to supply this instant:
+  the existing `latestContext.capturedAt` can contain simulated time and is not
+  a valid substitute. Read prior state before storing the current evaluation.
+- B/D must pass the resolved timezone and the same per-trigger anchor policy to
+  the repository's atomic proactive-delivery recheck, and retain today's notified
+  step-goal anchor until the next local midnight. The current repository port's
+  `anchorDedupSeconds` alone cannot express `"local-day"`; extend the port and
+  persistence adapter before integrating proactive delivery. Concurrent requests
+  must not bypass the day policy, and bounded-anchor pruning must not evict an
+  active day anchor early. The processing-time state change remains tracked
+  separately in [Issue #5](https://github.com/xe-pc23/Contextia/issues/5).
+- The domain function has no persistence or notification side effects. Returned
+  `delivery.status=ready` is a provisional guard result; the application must
+  finalize delivery according to the model decision and atomically recheck
+  guards before proactive delivery. Preview authorization stays in the API.
+
+The Phase 1 domain tests verify these decisions without live provider calls.
+Actual notification exclusivity, atomic updates and dev smoke belong to B/D
+integration; domain guard success alone does not prove deployed delivery.
+
+### Phase 1 STEP_GOAL_REST integration
+
+`normalizeDetectorContext` accepts a schema-validated `ContextInput`,
+application-normalized preferences, an injected `Clock`, and the profile/client
+timezone inputs. Real evaluations use the injected clock; simulations use
+`scenarioTime`, falling back to `capturedAt`. The same resolved IANA timezone
+produces the candidate's local-date `anchorKey` (`YYYY-MM-DD`). The delivery
+guards still use server processing time independently of this scenario time.
+
+`stepGoalRestDetector.detect` implements the exported `TriggerDetector`
+interface and returns `CandidateOpportunity[]`:
+
+- A numeric `stepsToday >= stepGoal` produces one `STEP_GOAL_REST` candidate.
+  Activity's numeric goal takes precedence; a missing/null goal falls back to
+  the normalized preference goal. This rule is identical in both modes.
+- Missing/null steps or steps below the goal produce no candidate. The client
+  `stepGoalReached` flag cannot override numeric evidence.
+- Required signals are `steps`, `location`, `time`; provider needs contain only
+  `places-near-current`. Facts contain numeric steps/goal and available step
+  source/confidence. Location/calendar/preferences remain in normalized context
+  for the subsequent relevance evaluation.
+- High/medium/low step confidence maps to candidate confidence 1/0.75/0.5;
+  unspecified confidence maps to 0.75. Low confidence does not add a global
+  delivery guard. No unagreed calendar-imminence threshold is introduced.
+- Detection has no delivery side effects and retains the same date anchor
+  throughout the evaluation day. The default delivery policy suppresses repeated
+  `STEP_GOAL_REST` delivery for that exact anchor throughout the same server-local
+  notification day, so real-world goal-achievement notifications occur at most
+  once per local day. A new local-day anchor is eligible on the following day,
+  subject to the other guards. Preview retains its candidate and reports
+  `wouldSuppress=true` / `RECENT_SAME_TRIGGER` when this guard applies; it does not
+  increment notification counts or record a notified anchor.
+
+`stepGoal`, `stepGoalBelowGoal`, and `stepGoalStepsUnavailable` are exported
+synthetic test fixtures. They contain inputs/enrichments, not fixed AI output.
+
 ## 8. GET /recommendations
 
 Auth: yes

@@ -7,6 +7,7 @@ import type { ScenarioContextInput, ScenarioId } from '@contextia/contracts';
 import type { ScenarioFixture } from './types.js';
 
 export type { ScenarioFixture } from './types.js';
+export { stepGoal, stepGoalBelowGoal, stepGoalStepsUnavailable } from '../scenarios/step-goal.js';
 export const scenarios: readonly ScenarioFixture[] = [upcomingTransit, stepGoal, freeTime, weatherAdaptation, earlyArrival];
 
 // Console presets supply inputs only. Mock enrichments are exclusively test data.

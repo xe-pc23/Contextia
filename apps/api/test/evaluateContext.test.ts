@@ -7,6 +7,7 @@ import { EvaluationFailure, createEvaluateContext, defaultEvaluationPolicy } fro
 import type { EvaluationDependencies, EvaluationStateRepository } from '../src/application/evaluateContext.js';
 import type { EvaluationDomain, GuardCheckInput } from '../src/application/evaluationDomain.js';
 import { contextFingerprint } from '../src/application/fingerprint.js';
+import { createEvaluationDomain } from '../src/composition/evaluationDomain.js';
 
 const NOW = new Date('2026-10-01T05:10:00.000Z');
 const fixture = scenarios.find(value => value.id === 'step-goal');
@@ -43,6 +44,7 @@ type Options = {
   // Back getState/getContextSnapshot with what writeContextSnapshot stored, like the real repository.
   memory?: boolean;
   clock?: () => Date;
+  domain?: EvaluationDomain;
 };
 
 const baseState: UserState = { notificationDay: '2026-10-01', notificationsSentToday: 0, recentAnchors: [] };
@@ -54,7 +56,7 @@ function setup(options: Options = {}) {
     checkDeliveryGuards(input) {
       guardCalls.push(input);
       const guardCodes = [...(options.guardCodes ?? []), ...(input.opportunity ? options.candidateGuardCodes ?? [] : [])];
-      return { shouldEvaluate: input.deliveryMode === 'preview' || guardCodes.length === 0, guardCodes, notificationDay: '2026-10-01', maxDailyNotifications: 3 };
+      return { shouldEvaluate: input.deliveryMode === 'preview' || guardCodes.length === 0, guardCodes, notificationDay: '2026-10-01', maxDailyNotifications: 3, anchorDedupSeconds: 1800 };
     },
     detectCandidates: () => Promise.resolve(options.candidates ?? [candidate])
   };
@@ -88,7 +90,7 @@ function setup(options: Options = {}) {
   });
   let sequence = 0;
   const deps: EvaluationDependencies = {
-    domain, state, places: places as unknown as PlacesProvider, model: { decide },
+    domain: options.domain ?? domain, state, places: places as unknown as PlacesProvider, model: { decide },
     clock: options.clock ?? (() => NOW), newId: prefix => `${prefix}-${++sequence}`
   };
   return { evaluate: createEvaluateContext(deps), state, places, decide, guardCalls };
@@ -252,7 +254,7 @@ describe('server processing time for duplicate-context guards (Issue #5)', () =>
     const { evaluate, state, guardCalls } = setup({ userState: matching, snapshot: { status: 'ok', data: snapshotAt('2026-10-01T05:08:00.000Z') } });
     await evaluate({ userId: 'user-1', context: preview });
     expect(state.getContextSnapshot).toHaveBeenCalledWith({ userId: 'user-1', nowEpochSeconds: NOW.getTime() / 1000, reference });
-    expect(guardCalls.map(call => call.latestContextProcessedAt)).toEqual(['2026-10-01T05:08:00.000Z', '2026-10-01T05:08:00.000Z']);
+    expect(guardCalls.map(call => call.state?.latestContextProcessedAt)).toEqual(['2026-10-01T05:08:00.000Z', '2026-10-01T05:08:00.000Z']);
     expect(guardCalls[0]?.state?.latestContextFingerprint).toBe(fingerprint);
   });
 
@@ -261,15 +263,21 @@ describe('server processing time for duplicate-context guards (Issue #5)', () =>
       const { evaluate, state, guardCalls } = setup({ userState });
       await evaluate({ userId: 'user-1', context: preview });
       expect(state.getContextSnapshot).not.toHaveBeenCalled();
-      expect(guardCalls[0]).not.toHaveProperty('latestContextProcessedAt');
+      expect(guardCalls[0]?.state).toEqual(userState);
     }
+  });
+
+  it('uses a processing time the repository already returns without reading the snapshot', async () => {
+    const { evaluate, state, guardCalls } = setup({ userState: { ...matching, latestContextProcessedAt: '2026-10-01T05:09:00.000Z' } as UserState });
+    await evaluate({ userId: 'user-1', context: preview });
+    expect(state.getContextSnapshot).not.toHaveBeenCalled();
+    expect(guardCalls[0]?.state?.latestContextProcessedAt).toBe('2026-10-01T05:09:00.000Z');
   });
 
   it('drops a fingerprint whose snapshot has expired, since the TTL outlasts the dedup window', async () => {
     const { evaluate, guardCalls } = setup({ userState: matching, snapshot: { status: 'ok', data: null } });
     await evaluate({ userId: 'user-1', context: preview });
     expect(guardCalls[0]?.state).toEqual({ ...baseState, latestContext: reference });
-    expect(guardCalls[0]).not.toHaveProperty('latestContextProcessedAt');
   });
 
   it('fails closed before writing when the processing time cannot be read', async () => {
@@ -291,12 +299,59 @@ describe('server processing time for duplicate-context guards (Issue #5)', () =>
     now = new Date(NOW.getTime() + 60_000);
     await evaluate({ userId: 'user-1', context: past });
     const second = guardCalls.find(call => call.now === now);
-    expect(second?.latestContextProcessedAt).toBe(NOW.toISOString());
+    expect(second?.state?.latestContextProcessedAt).toBe(NOW.toISOString());
     expect(second?.state?.latestContextFingerprint).toBe(contextFingerprint(past));
   });
 
   it('rejects a policy whose snapshot TTL does not outlast the dedup window', () => {
     const deps = { policy: { ...defaultEvaluationPolicy, contextTtlSeconds: 300 } } as unknown as EvaluationDependencies;
     expect(() => createEvaluateContext(deps)).toThrow(RangeError);
+  });
+});
+
+describe('createEvaluateContext with the lane A domain', () => {
+  it('shows the same preview result on a re-run without consuming delivery quota', async () => {
+    const { evaluate, state } = setup({ domain: createEvaluationDomain() });
+    const first = await evaluate({ userId: 'user-1', context: preview });
+    const second = await evaluate({ userId: 'user-1', context: preview });
+    for (const result of [first, second]) {
+      expect(result).toMatchObject({ decision: 'notify', triggerType: 'STEP_GOAL_REST', delivery: { mode: 'preview', status: 'preview' } });
+    }
+    expect(state.recordProactiveDelivery).not.toHaveBeenCalled();
+  });
+
+  it('records proactive step-goal delivery with the local-day anchor window', async () => {
+    const { evaluate, state } = setup({ domain: createEvaluationDomain() });
+    expect(await evaluate({ userId: 'user-1', context: proactive })).toMatchObject({ decision: 'notify', delivery: { status: 'ready' } });
+    expect(state.recordProactiveDelivery.mock.calls[0]?.[0].delivery).toMatchObject({ anchorKey: '2026-10-01', anchorDedupSeconds: 14 * 3600 + 10 * 60 });
+  });
+
+  it('stays silent below the step goal', async () => {
+    const { evaluate, decide } = setup({ domain: createEvaluationDomain() });
+    const result = await evaluate({ userId: 'user-1', context: { ...proactive, activity: { ...proactive.activity, stepsToday: 100 } } });
+    expect(result).toMatchObject({ decision: 'silent', delivery: { guardCodes: ['NO_CANDIDATE'] } });
+    expect(decide).not.toHaveBeenCalled();
+  });
+
+  it('diagnoses DUPLICATE_CONTEXT on a preview re-run within the dedup window (issue #5)', async () => {
+    let now = NOW;
+    const { evaluate } = setup({ domain: createEvaluationDomain(), memory: true, clock: () => now });
+    await evaluate({ userId: 'user-1', context: preview });
+    now = new Date(NOW.getTime() + 60_000);
+    expect(await evaluate({ userId: 'user-1', context: preview })).toMatchObject({
+      decision: 'notify', delivery: { mode: 'preview', wouldSuppress: true, guardCodes: ['DUPLICATE_CONTEXT'] }
+    });
+  });
+
+  it('suppresses a duplicate proactive context before Places or Bedrock (issue #5)', async () => {
+    let now = NOW;
+    const { evaluate, places, decide } = setup({ domain: createEvaluationDomain(), memory: true, clock: () => now });
+    await evaluate({ userId: 'user-1', context: proactive });
+    now = new Date(NOW.getTime() + 60_000);
+    expect(await evaluate({ userId: 'user-1', context: proactive })).toMatchObject({
+      decision: 'silent', delivery: { mode: 'proactive', status: 'suppressed', guardCodes: ['DUPLICATE_CONTEXT'] }
+    });
+    expect(places.searchNearby).toHaveBeenCalledOnce();
+    expect(decide).toHaveBeenCalledOnce();
   });
 });
