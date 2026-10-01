@@ -1,2 +1,4 @@
-// Empty Phase 0 workspace; the assigned lane owns the implementation.
-export {};
+import { registerRootComponent } from 'expo';
+import { App } from './App';
+
+registerRootComponent(App);
