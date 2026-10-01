@@ -13,10 +13,16 @@
   },
   "dependencies": {
     "@contextia/contracts": "workspace:*",
+    "expo-auth-session": "~57.0.13",
+    "expo-calendar": "~57.0.5",
+    "expo-crypto": "~57.0.3",
     "expo": "57.0.26",
     "expo-dev-client": "57.0.19",
+    "expo-location": "~57.0.20",
+    "expo-secure-store": "~57.0.4",
     "react": "19.2.3",
-    "react-native": "0.86.3"
+    "react-native": "0.86.3",
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@types/react": "19.2.2"
