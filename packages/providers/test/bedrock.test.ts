@@ -124,6 +124,13 @@ function collectKeys(value: unknown): string[] {
   return Object.entries(value).flatMap(([key, child]) => [key, ...collectKeys(child)]);
 }
 
+function hasFalseItems(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(hasFalseItems);
+  if (typeof value !== 'object' || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return record.items === false || Object.values(record).some(hasFalseItems);
+}
+
 describe('BedrockRecommendationModel', () => {
   it('does not call Bedrock when deterministic evaluation found no candidates', async () => {
     const fake = fakeClient([]);
@@ -151,8 +158,9 @@ describe('BedrockRecommendationModel', () => {
     expect(schema).toBeDefined();
     expect(JSON.parse(schema ?? '{}')).toHaveProperty('anyOf');
     expect(collectKeys(JSON.parse(schema ?? '{}'))).not.toEqual(expect.arrayContaining([
-      'oneOf', 'maxItems', 'minLength', 'maxLength', 'minimum', 'maximum', 'multipleOf'
+      'oneOf', 'maxItems', 'minLength', 'maxLength', 'minimum', 'maximum', 'multipleOf', 'pattern', 'prefixItems'
     ]));
+    expect(hasFalseItems(JSON.parse(schema ?? '{}'))).toBe(false);
     expect(fake.requests[0]!.system?.map(block => block.text).join(' ')).not.toMatch(/chain.of.thought|hidden reasoning/i);
     expect(result).toMatchObject({ status: 'ok', data: notifyDecision });
 

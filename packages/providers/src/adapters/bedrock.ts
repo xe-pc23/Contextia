@@ -37,7 +37,7 @@ const SYSTEM_PROMPT = [
 ].join(' ');
 
 const UNSUPPORTED_SCHEMA_KEYS = new Set([
-  'maximum', 'maxItems', 'maxLength', 'minimum', 'minLength', 'multipleOf'
+  'maximum', 'maxItems', 'maxLength', 'minimum', 'minLength', 'multipleOf', 'pattern', 'prefixItems'
 ]);
 
 export interface BedrockConverseClient {
@@ -93,6 +93,11 @@ function outputSchema(): string {
 function toBedrockSchema(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(toBedrockSchema);
   if (typeof value !== 'object' || value === null) return value;
+  const record = value as Record<string, unknown>;
+  if (record.type === 'array' && record.items === false
+    && Array.isArray(record.prefixItems) && record.prefixItems.length === 0) {
+    return { const: [] };
+  }
   const normalized: Record<string, unknown> = {};
   for (const [key, child] of Object.entries(value)) {
     if (UNSUPPORTED_SCHEMA_KEYS.has(key)) continue;
