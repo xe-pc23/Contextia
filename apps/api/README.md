@@ -37,9 +37,9 @@
 `createEvaluationDomain()`はA（`@contextia/domain`）の`evaluateDeliveryGuards`・`normalizeDetectorContext`・`stepGoalRestDetector`を`EvaluationDomain`に合わせる。両方のガードに同じリクエスト開始時刻を渡し、timezoneは有効なpreferencesのものを使う。
 
 - `STEP_GOAL_REST`のanchor窓はAの方針どおり「同じローカル日」。Bの`recordProactiveDelivery`は秒数しか受け取らないため、「ローカルの0時からの経過秒」を渡す（DST切替日は切替幅だけずれうる）。
-- `UserState`にサーバー処理時刻がない間は、fingerprintをAのガードに渡さない（渡すと同一contextの再実行で例外になる）。そのためpreviewの`DUPLICATE_CONTEXT`診断は出ない。proactiveの重複はBの原子的再確認で防ぐ。portに時刻が加われば自動で使われる。
+- fingerprintはサーバー処理時刻とそろったときだけAのガードに渡す（時刻なしで渡すと同一contextの再実行で例外になる）。`UserState`にはまだ時刻がない（issue #5）ため、評価serviceはfingerprintが一致したときだけ`latestContext`のsnapshotを読み、サービスが書いた`createdAt`（サーバー時刻、シミュレーションの`capturedAt`ではない）を補う。これでproactiveの重複はBedrockより前に止まり、previewでも`DUPLICATE_CONTEXT`を診断できる。snapshotが期限切れならfingerprintを古いものとして外し、読めなければ`STATE_UNAVAILABLE`で止める。portに時刻が加われば追加の読み込みはしない。
 
-既知の制約: 重複判定に必要なサーバー処理時刻が`UserState`にない（issue #5）。モデルはtriggerを返さないため、Phase 1では最も確度の高い候補のtriggerを採用する。
+既知の制約: 重複判定に必要なサーバー処理時刻が`UserState`にない（issue #5）。上記のsnapshot読み込みで補っている。モデルはtriggerを返さないため、Phase 1では最も確度の高い候補のtriggerを採用する。
 
 ローカルserverにはJWT authorizerがないため、評価ルートは401になる。
 

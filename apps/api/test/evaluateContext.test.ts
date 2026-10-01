@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { EvaluationResultSchema } from '@contextia/contracts';
 import type { CandidateOpportunity, ContextInput, NotifyDecision, ProviderPlace, ProviderResult, RecommendationDecision } from '@contextia/contracts';
-import type { DeliveryGuardCode, PlacesProvider, RecommendationModelInput } from '@contextia/providers';
+import type { ContextSnapshot, DeliveryGuardCode, PlacesProvider, RecommendationModelInput, UserState } from '@contextia/providers';
 import { getScenarioInput, scenarios } from '@contextia/test-fixtures';
-import { EvaluationFailure, createEvaluateContext } from '../src/application/evaluateContext.js';
+import { EvaluationFailure, createEvaluateContext, defaultEvaluationPolicy } from '../src/application/evaluateContext.js';
 import type { EvaluationDependencies, EvaluationStateRepository } from '../src/application/evaluateContext.js';
 import type { EvaluationDomain, GuardCheckInput } from '../src/application/evaluationDomain.js';
+import { contextFingerprint } from '../src/application/fingerprint.js';
 import { createEvaluationDomain } from '../src/composition/evaluationDomain.js';
 
 const NOW = new Date('2026-10-01T05:10:00.000Z');
@@ -38,11 +39,19 @@ type Options = {
   decision?: () => Promise<ProviderResult<RecommendationDecision>>;
   recorded?: boolean;
   profile?: 'missing' | 'error';
+  userState?: UserState | null;
+  snapshot?: ProviderResult<ContextSnapshot | null>;
+  // Back getState/getContextSnapshot with what writeContextSnapshot stored, like the real repository.
+  memory?: boolean;
+  clock?: () => Date;
   domain?: EvaluationDomain;
 };
 
+const baseState: UserState = { notificationDay: '2026-10-01', notificationsSentToday: 0, recentAnchors: [] };
+
 function setup(options: Options = {}) {
   const guardCalls: GuardCheckInput[] = [];
+  let stored: Parameters<EvaluationStateRepository['writeContextSnapshot']>[0] | undefined;
   const domain: EvaluationDomain = {
     checkDeliveryGuards(input) {
       guardCalls.push(input);
@@ -55,8 +64,15 @@ function setup(options: Options = {}) {
     getProfile: vi.fn<EvaluationStateRepository['getProfile']>(() => Promise.resolve(
       options.profile === 'error' ? { status: 'error', data: null }
         : { status: 'ok', data: options.profile === 'missing' ? null : { userId: 'user-1', preferences } })),
-    getState: vi.fn<EvaluationStateRepository['getState']>(() => Promise.resolve({ status: 'ok', data: null })),
-    writeContextSnapshot: vi.fn<EvaluationStateRepository['writeContextSnapshot']>(() => Promise.resolve({ status: 'ok', data: null })),
+    getState: vi.fn<EvaluationStateRepository['getState']>(() => Promise.resolve({ status: 'ok', data: stored ? {
+      ...baseState, latestContext: { evaluationId: stored.snapshot.evaluationId, capturedAt: stored.snapshot.capturedAt }, latestContextFingerprint: stored.fingerprint
+    } : options.userState ?? null })),
+    writeContextSnapshot: vi.fn<EvaluationStateRepository['writeContextSnapshot']>(input => {
+      if (options.memory) stored = input;
+      return Promise.resolve({ status: 'ok', data: null });
+    }),
+    getContextSnapshot: vi.fn<EvaluationStateRepository['getContextSnapshot']>(() => Promise.resolve(
+      stored ? { status: 'ok', data: stored.snapshot } : options.snapshot ?? { status: 'ok', data: null })),
     listRecommendations: vi.fn<EvaluationStateRepository['listRecommendations']>(() => Promise.resolve({ status: 'ok', data: { items: [], nextCursor: null } })),
     writeRecommendation: vi.fn<EvaluationStateRepository['writeRecommendation']>(() => Promise.resolve({ status: 'ok', data: null })),
     recordProactiveDelivery: vi.fn<EvaluationStateRepository['recordProactiveDelivery']>(() => Promise.resolve(
@@ -75,7 +91,7 @@ function setup(options: Options = {}) {
   let sequence = 0;
   const deps: EvaluationDependencies = {
     domain: options.domain ?? domain, state, places: places as unknown as PlacesProvider, model: { decide },
-    clock: () => NOW, newId: prefix => `${prefix}-${++sequence}`
+    clock: options.clock ?? (() => NOW), newId: prefix => `${prefix}-${++sequence}`
   };
   return { evaluate: createEvaluateContext(deps), state, places, decide, guardCalls };
 }
@@ -225,6 +241,74 @@ describe('createEvaluateContext', () => {
   });
 });
 
+describe('server processing time for duplicate-context guards (Issue #5)', () => {
+  const fingerprint = contextFingerprint(preview);
+  const reference = { evaluationId: 'eval-earlier', capturedAt: preview.capturedAt };
+  const matching: UserState = { ...baseState, latestContext: reference, latestContextFingerprint: fingerprint };
+  const snapshotAt = (createdAt: string): ContextSnapshot => ({
+    ...reference, mode: preview.mode, location: { latitude: preview.location.latitude, longitude: preview.location.longitude },
+    calendar: [], createdAt, expiresAt: NOW.getTime() / 1000 + 3600
+  });
+
+  it('passes the stored snapshot server time, not capturedAt, when the fingerprint matches', async () => {
+    const { evaluate, state, guardCalls } = setup({ userState: matching, snapshot: { status: 'ok', data: snapshotAt('2026-10-01T05:08:00.000Z') } });
+    await evaluate({ userId: 'user-1', context: preview });
+    expect(state.getContextSnapshot).toHaveBeenCalledWith({ userId: 'user-1', nowEpochSeconds: NOW.getTime() / 1000, reference });
+    expect(guardCalls.map(call => call.state?.latestContextProcessedAt)).toEqual(['2026-10-01T05:08:00.000Z', '2026-10-01T05:08:00.000Z']);
+    expect(guardCalls[0]?.state?.latestContextFingerprint).toBe(fingerprint);
+  });
+
+  it('skips the snapshot read when the fingerprint differs or there is no state', async () => {
+    for (const userState of [{ ...matching, latestContextFingerprint: 'other' }, null]) {
+      const { evaluate, state, guardCalls } = setup({ userState });
+      await evaluate({ userId: 'user-1', context: preview });
+      expect(state.getContextSnapshot).not.toHaveBeenCalled();
+      expect(guardCalls[0]?.state).toEqual(userState);
+    }
+  });
+
+  it('uses a processing time the repository already returns without reading the snapshot', async () => {
+    const { evaluate, state, guardCalls } = setup({ userState: { ...matching, latestContextProcessedAt: '2026-10-01T05:09:00.000Z' } as UserState });
+    await evaluate({ userId: 'user-1', context: preview });
+    expect(state.getContextSnapshot).not.toHaveBeenCalled();
+    expect(guardCalls[0]?.state?.latestContextProcessedAt).toBe('2026-10-01T05:09:00.000Z');
+  });
+
+  it('drops a fingerprint whose snapshot has expired, since the TTL outlasts the dedup window', async () => {
+    const { evaluate, guardCalls } = setup({ userState: matching, snapshot: { status: 'ok', data: null } });
+    await evaluate({ userId: 'user-1', context: preview });
+    expect(guardCalls[0]?.state).toEqual({ ...baseState, latestContext: reference });
+  });
+
+  it('fails closed before writing when the processing time cannot be read', async () => {
+    for (const options of [
+      { userState: matching, snapshot: { status: 'error', data: null } },
+      { userState: { ...baseState, latestContextFingerprint: fingerprint } }
+    ] satisfies Options[]) {
+      const { evaluate, state } = setup(options);
+      await expect(evaluate({ userId: 'user-1', context: preview })).rejects.toEqual(new EvaluationFailure('STATE_UNAVAILABLE'));
+      expect(state.writeContextSnapshot).not.toHaveBeenCalled();
+    }
+  });
+
+  it('re-running a preview with a past scenario time sees the first run\'s server time', async () => {
+    let now = NOW;
+    const past = { ...preview, capturedAt: '2026-09-30T23:00:00.000Z', scenarioTime: '2026-09-30T23:00:00.000Z' };
+    const { evaluate, guardCalls } = setup({ memory: true, clock: () => now });
+    await evaluate({ userId: 'user-1', context: past });
+    now = new Date(NOW.getTime() + 60_000);
+    await evaluate({ userId: 'user-1', context: past });
+    const second = guardCalls.find(call => call.now === now);
+    expect(second?.state?.latestContextProcessedAt).toBe(NOW.toISOString());
+    expect(second?.state?.latestContextFingerprint).toBe(contextFingerprint(past));
+  });
+
+  it('rejects a policy whose snapshot TTL does not outlast the dedup window', () => {
+    const deps = { policy: { ...defaultEvaluationPolicy, contextTtlSeconds: 300 } } as unknown as EvaluationDependencies;
+    expect(() => createEvaluateContext(deps)).toThrow(RangeError);
+  });
+});
+
 describe('createEvaluateContext with the lane A domain', () => {
   it('shows the same preview result on a re-run without consuming delivery quota', async () => {
     const { evaluate, state } = setup({ domain: createEvaluationDomain() });
@@ -247,5 +331,27 @@ describe('createEvaluateContext with the lane A domain', () => {
     const result = await evaluate({ userId: 'user-1', context: { ...proactive, activity: { ...proactive.activity, stepsToday: 100 } } });
     expect(result).toMatchObject({ decision: 'silent', delivery: { guardCodes: ['NO_CANDIDATE'] } });
     expect(decide).not.toHaveBeenCalled();
+  });
+
+  it('diagnoses DUPLICATE_CONTEXT on a preview re-run within the dedup window (issue #5)', async () => {
+    let now = NOW;
+    const { evaluate } = setup({ domain: createEvaluationDomain(), memory: true, clock: () => now });
+    await evaluate({ userId: 'user-1', context: preview });
+    now = new Date(NOW.getTime() + 60_000);
+    expect(await evaluate({ userId: 'user-1', context: preview })).toMatchObject({
+      decision: 'notify', delivery: { mode: 'preview', wouldSuppress: true, guardCodes: ['DUPLICATE_CONTEXT'] }
+    });
+  });
+
+  it('suppresses a duplicate proactive context before Places or Bedrock (issue #5)', async () => {
+    let now = NOW;
+    const { evaluate, places, decide } = setup({ domain: createEvaluationDomain(), memory: true, clock: () => now });
+    await evaluate({ userId: 'user-1', context: proactive });
+    now = new Date(NOW.getTime() + 60_000);
+    expect(await evaluate({ userId: 'user-1', context: proactive })).toMatchObject({
+      decision: 'silent', delivery: { mode: 'proactive', status: 'suppressed', guardCodes: ['DUPLICATE_CONTEXT'] }
+    });
+    expect(places.searchNearby).toHaveBeenCalledOnce();
+    expect(decide).toHaveBeenCalledOnce();
   });
 });

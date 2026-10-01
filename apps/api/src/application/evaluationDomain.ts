@@ -2,6 +2,12 @@ import type { CandidateOpportunity, ContextInput, DeliveryMode, UserPreferences 
 import type { DeliveryGuardCode, UserState } from '@contextia/providers';
 
 /**
+ * Repository state plus the server instant at which `latestContextFingerprint` was processed (issue #5):
+ * never the client or scenario `capturedAt`. Set whenever that fingerprint matches the current context.
+ */
+export type GuardUserState = UserState & { latestContextProcessedAt?: string };
+
+/**
  * What the evaluation service needs from `@contextia/domain`. Lane A owns the guard and
  * detector implementations; `composition/evaluationDomain.ts` adapts them to this shape.
  */
@@ -9,7 +15,7 @@ export interface GuardCheckInput {
   now: Date;
   deliveryMode: DeliveryMode;
   preferences: UserPreferences;
-  state: UserState | null;
+  state: GuardUserState | null;
   contextFingerprint: string;
   opportunity?: Pick<CandidateOpportunity, 'type' | 'anchorKey'>;
 }

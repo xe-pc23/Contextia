@@ -1,17 +1,19 @@
 import { defaultDeliveryPolicy, evaluateDeliveryGuards, normalizeDetectorContext, stepGoalRestDetector } from '@contextia/domain';
 import type { DeliveryGuardState, DeliveryPolicy, TriggerDetector } from '@contextia/domain';
-import type { UserState } from '@contextia/providers';
-import type { EvaluationDomain } from '../application/evaluationDomain.js';
+import type { EvaluationDomain, GuardUserState } from '../application/evaluationDomain.js';
 
 export const phase1Detectors: readonly TriggerDetector[] = [stepGoalRestDetector];
 
-/** `latestContextProcessedAt` flows through as soon as the repository port carries it (issue #5). */
-export type PersistedUserState = UserState & { latestContextProcessedAt?: string };
+/**
+ * `latestContextProcessedAt` comes from the port once it carries it (issue #5); until then the evaluation
+ * service fills it from the matching context snapshot.
+ */
+export type PersistedUserState = GuardUserState;
 
 /**
  * Maps repository state to the domain guard state. Without the server processing time the
  * fingerprint is withheld: the domain guard would otherwise throw on every repeated context,
- * including preview. Proactive duplicates are still rejected by the repository's atomic recheck.
+ * including preview. The service supplies the time whenever the fingerprint matches.
  */
 export function toGuardState(state: PersistedUserState | null): DeliveryGuardState | null {
   if (!state) return null;
