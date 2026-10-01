@@ -1,6 +1,6 @@
 import { CandidateEvidenceSchema, CandidateOpportunitySchema, SignalNameSchema } from '@contextia/contracts';
 import type {
-  CandidateDiagnosticCode, CandidateEvidence, CandidateOpportunity, DetectorPolicy, GeoPoint, ProviderPlace, SignalName
+  CandidateDiagnosticCode, CandidateEvidence, CandidateOpportunity, DetectorPolicy, GeoPoint, ProviderPlace, RouteSummary, SignalName
 } from '@contextia/contracts';
 import { calendarWindow, distanceMeters, evaluationMillis, hasEventLocation, MINUTE_MS } from './calendar.js';
 import {
@@ -101,6 +101,38 @@ function activityBudgets(
   return budgets;
 }
 
+function hasJourneyTiming(route: RouteSummary): boolean {
+  return route.mode === 'pedestrian' || Boolean(route.departAt && route.arriveAt);
+}
+
+// Optional routing must not erase the gap opportunity. Keep unresolved place discovery separate
+// from verified time-fit options, and never fill a missing journey with an invented duration.
+function unverifiedActivityPlaceIds(
+  context: DetectorContext, places: ProviderPlace[], target: GeoPoint | undefined, deadline: number,
+  evidence: CandidateEvidence, policy: Readonly<DetectorPolicy>
+): string[] {
+  const now = evaluationMillis(context);
+  const activityMillis = policy.minimumActivityMinutes * MINUTE_MS;
+  return places.filter(place => {
+    const outward = matchingRoutes(evidence, 'route-to-place-candidates', place.placeId, context.location, place, policy)
+      .filter(hasJourneyTiming);
+    const returning = target ? matchingRoutes(evidence, 'route-to-place-candidates', place.placeId, place, target, policy)
+      .filter(hasJourneyTiming) : [];
+    // A complete pair is either verified by activityBudgets or known not to fit; neither is unknown.
+    if (outward.some(route => returning.some(back => back.routeId !== route.routeId))) return false;
+    const outwardCanFit = !outward.length || outward.some(route => {
+      const arrival = journeyArrival(route, now);
+      return arrival !== null && arrival + activityMillis <= deadline;
+    });
+    const returnCanFit = !returning.length || returning.some(route => {
+      // Even with zero outward travel, an impossible return cannot fit any activity here.
+      const arrival = journeyArrival(route, now + activityMillis);
+      return arrival !== null && arrival <= deadline;
+    });
+    return outwardCanFit && returnCanFit;
+  }).map(place => place.placeId);
+}
+
 type Assessment = EvidenceResult<CandidateOpportunity | null>;
 
 function assessUpcoming(
@@ -140,25 +172,33 @@ function assessActivity(
   const early = seed.type === 'EARLY_ARRIVAL_DETOUR';
   const window = calendarWindow(context);
   const event = early ? window.nextTimedEvent : window.nextEvent;
-  let target: GeoPoint = context.location;
+  let target: GeoPoint | undefined = context.location;
   let destinationPlaceId: string | undefined;
   if (event && hasEventLocation(event)) {
     const destination = destinationFor(event.id, evidence, policy);
-    if (!destination.ok) return destination;
-    target = destination.value;
-    destinationPlaceId = destination.value.placeId;
+    if (!destination.ok) {
+      if (early) return destination;
+      // The event still constrains the gap. Its unconfirmed coordinates must not be replaced by current location.
+      target = undefined;
+    } else {
+      target = destination.value;
+      destinationPlaceId = destination.value.placeId;
+    }
   }
-  const distance = distanceMeters(context.location, target);
-  if (early && distance + (context.location.accuracyMeters ?? 0) > policy.earlyArrivalRadiusMeters) return { ok: true, value: null };
+  const distance = target ? distanceMeters(context.location, target) : null;
+  if (early && (distance === null || distance + (context.location.accuracyMeters ?? 0) > policy.earlyArrivalRadiusMeters)) return { ok: true, value: null };
   const now = evaluationMillis(context);
   const end = Math.min(now + policy.maximumFreeTimeMinutes * MINUTE_MS, event ? Date.parse(event.startAt) : Number.POSITIVE_INFINITY);
   const deadline = end - (event ? policy.arrivalBufferMinutes : 0) * MINUTE_MS;
+  if (!early && deadline - now < policy.minimumActivityMinutes * MINUTE_MS) return { ok: true, value: null };
   const nearby = placesFor(evidence, early ? 'places-near-destination' : 'places-near-current', early && event ? event.id : 'current');
   if (!nearby.ok) return nearby;
   if (!nearby.value.length) return { ok: true, value: null };
-  const budgets = activityBudgets(context, nearby.value, target, deadline, evidence, policy);
-  if (!budgets.length) {
-    const hasRoutes = nearby.value.some(place => {
+  const budgets = target ? activityBudgets(context, nearby.value, target, deadline, evidence, policy) : [];
+  const unverifiedPlaceIds = early ? [] : unverifiedActivityPlaceIds(context, nearby.value, target, deadline, evidence, policy);
+  if (!budgets.length && !unverifiedPlaceIds.length) {
+    if (!early) return { ok: true, value: null };
+    const hasRoutes = target && nearby.value.some(place => {
       const outward = matchingRoutes(evidence, 'route-to-place-candidates', place.placeId, context.location, place, policy);
       const returning = matchingRoutes(evidence, 'route-to-place-candidates', place.placeId, place, target, policy);
       return outward.some(route => returning.some(back => back.routeId !== route.routeId));
@@ -171,6 +211,7 @@ function assessActivity(
     facts: {
       ...seed.facts, eligiblePlaceIds: budgets.map(budget => budget.placeId), placeTimeBudgets: budgets,
       returnDeadlineAt: new Date(deadline).toISOString(),
+      ...(!early ? { unverifiedPlaceIds, minimumActivityMinutes: policy.minimumActivityMinutes } : {}),
       ...(destinationPlaceId ? { destinationPlaceId } : {}),
       ...(early ? { destinationDistanceMeters: distance, accuracyMeters: context.location.accuracyMeters ?? null } : {})
     }

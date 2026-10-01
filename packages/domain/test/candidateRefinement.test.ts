@@ -57,6 +57,18 @@ describe('Phase 2 candidate orchestration', () => {
     expect({ candidates, evidence }).toEqual(before);
   });
 
+  it('preserves free-time and step-goal opportunities when routing-dependent candidates fail', async () => {
+    const context = normalized(freeTime, { activity: ActivityContextSchema.parse(stepGoal.context.activity) });
+    const candidates = await detectCandidates(context);
+    const evidence = getScenarioEvidence(freeTime);
+    evidence.routes = evidence.routes.map(entry => ({ ...entry, result: { status: 'timeout', data: null } }));
+    const result = refineCandidates({ context, candidates, evidence });
+    expect(result.candidates.map(candidate => candidate.type)).toEqual(['STEP_GOAL_REST', 'FREE_TIME_NEARBY']);
+    for (const type of ['UPCOMING_EVENT_TRANSIT', 'EARLY_ARRIVAL_DETOUR']) {
+      expect(result.exclusions.find(candidate => candidate.type === type)?.code).toBe('PROVIDER_UNAVAILABLE');
+    }
+  });
+
   it('filters missing signals per candidate rather than applying a global delivery guard', async () => {
     const context = normalized(upcomingTransit, { activity: ActivityContextSchema.parse(stepGoal.context.activity) });
     const seeds = await detectCandidates(context);

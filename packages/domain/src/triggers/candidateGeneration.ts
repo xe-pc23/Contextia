@@ -27,6 +27,7 @@ export function generateFreeTimeNearbyCandidates(input: DetectorContext, policy:
   const availableMinutes = (end - now) / MINUTE_MS;
   if (availableMinutes < policy.minimumGapMinutes) return [];
   const day = localDate(input.evaluationAt, input.timezone);
+  // Request optional weather/routing to improve assessment; missing results do not erase the gap.
   const providerNeeds: CandidateOpportunity['providerNeeds'] = ['places-near-current', 'weather-current', 'route-to-place-candidates'];
   if (window.nextEvent && hasEventLocation(window.nextEvent)) providerNeeds.push('geocode-event-location');
   return [CandidateOpportunitySchema.parse({

@@ -18,7 +18,7 @@ export function getScenarioInput(id: ScenarioId): ScenarioContextInput {
 }
 
 export { upcomingTransit, upcomingTransitNoLocation, upcomingTransitUnavailable } from '../scenarios/upcoming-transit.js';
-export { freeTime, freeTimeShortGap } from '../scenarios/free-time.js';
+export { freeTime, freeTimeWithoutRoutes, freeTimeShortGap } from '../scenarios/free-time.js';
 export { weatherAdaptation, weatherAdaptationClear, weatherAdaptationUnavailable } from '../scenarios/weather-adaptation.js';
 export { earlyArrival, earlyArrivalFarAway } from '../scenarios/early-arrival.js';
 export { getScenarioEvidence } from './candidateEvidence.js';

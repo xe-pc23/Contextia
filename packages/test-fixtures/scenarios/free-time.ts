@@ -12,6 +12,11 @@ export const freeTime: ScenarioFixture = {
   }
 };
 
+export const freeTimeWithoutRoutes: ScenarioFixture = {
+  ...freeTime, label: 'ルート未対応でも空き時間を評価',
+  providers: { ...freeTime.providers, routes: { status: 'unavailable', data: null } }
+};
+
 export const freeTimeShortGap: ScenarioFixture = {
   ...freeTime, label: '短すぎる空き時間',
   context: { ...freeTime.context, scenarioTime: '2026-10-01T15:45:00+09:00' }
