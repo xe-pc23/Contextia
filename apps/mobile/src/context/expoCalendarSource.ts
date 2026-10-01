@@ -1,6 +1,6 @@
 import * as Calendar from 'expo-calendar/legacy';
 import * as Crypto from 'expo-crypto';
-import { getCalendarReadWindow } from './calendarWindow';
+import { getCalendarQueryWindow, getCalendarReadWindow } from './calendarWindow';
 import { projectCalendarEvents } from './calendarProjection';
 import type { CalendarReadResult, CalendarSource } from './types';
 
@@ -25,10 +25,11 @@ export class ExpoCalendarSource implements CalendarSource {
       if (calendarIds.length === 0) return { status: 'granted', events: [] };
 
       const window = getCalendarReadWindow(now);
+      const queryWindow = getCalendarQueryWindow(window);
       const nativeEvents: unknown[] = await Calendar.getEventsAsync(
         calendarIds,
-        window.startInclusive,
-        window.endExclusive
+        queryWindow.startInclusive,
+        queryWindow.endExclusive
       );
       const events = await projectCalendarEvents(nativeEvents, window, hashNativeEventId);
       return { status: 'granted', events };

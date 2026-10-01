@@ -1,6 +1,6 @@
 import { CalendarEventContextSchema, ContextInputSchema, type LocationContext } from '@contextia/contracts';
 import { describe, expect, it } from 'vitest';
-import { getCalendarReadWindow } from '../src/context/calendarWindow';
+import { getCalendarQueryWindow, getCalendarReadWindow } from '../src/context/calendarWindow';
 import { projectCalendarEvents } from '../src/context/calendarProjection';
 import { ContextCollector } from '../src/context/contextCollector';
 import type { CalendarReadResult, CalendarSource, ClockSource, LocationReadResult, LocationSource } from '../src/context/types';
@@ -70,6 +70,35 @@ describe('Calendar context projection', () => {
     const window = getCalendarReadWindow(new Date(2026, 4, 1, 12, 45));
     expect(window.startInclusive).toEqual(new Date(2026, 4, 1, 0, 0));
     expect(window.endExclusive).toEqual(new Date(2026, 4, 5, 0, 0));
+  });
+
+  it('pads the native query by the maximum non-all-day event duration', () => {
+    const window = getCalendarReadWindow(new Date(2026, 4, 1, 12));
+    const queryWindow = getCalendarQueryWindow(window);
+    const maxEventDurationMs = 31 * 24 * 60 * 60 * 1000;
+
+    expect(queryWindow.startInclusive.getTime()).toBe(window.startInclusive.getTime() - maxEventDurationMs);
+    expect(queryWindow.endExclusive.getTime()).toBe(window.endExclusive.getTime() + maxEventDurationMs);
+  });
+
+  it('keeps events that overlap either side of the requested window', async () => {
+    const window = getCalendarReadWindow(new Date(2026, 4, 1, 12));
+    const events = await projectCalendarEvents([
+      {
+        id: 'starts-before-window',
+        title: 'Overnight event',
+        startDate: new Date(window.startInclusive.getTime() - 60 * 60 * 1000),
+        endDate: new Date(window.startInclusive.getTime() + 60 * 60 * 1000)
+      },
+      {
+        id: 'ends-after-window',
+        title: 'Late event',
+        startDate: new Date(window.endExclusive.getTime() - 60 * 60 * 1000),
+        endDate: new Date(window.endExclusive.getTime() + 60 * 60 * 1000)
+      }
+    ], window, async id => `hash-${id}`);
+
+    expect(events.map(event => event.id)).toEqual(['hash-starts-before-window', 'hash-ends-after-window']);
   });
 
   it('drops malformed and out-of-window events, sorts, and caps at 100', async () => {

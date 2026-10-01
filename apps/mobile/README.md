@@ -6,7 +6,7 @@ Expo/React Native/strict TypeScript app using `expo-dev-client`. The Phase 1 E s
 
 Versions follow the repository's Expo SDK 57 baseline: Expo 57.0.26, React 19.2.3 and React Native 0.86.3. Use Node 24 and pnpm 10 from the repository configuration.
 
-The E lane requested these SDK-compatible modules for D to add to the root lockfile:
+The E lane adds these SDK-compatible modules to the mobile importer and root lockfile:
 
 | Package | Version range | Purpose |
 |---|---:|---|
@@ -17,7 +17,7 @@ The E lane requested these SDK-compatible modules for D to add to the root lockf
 | `expo-secure-store` | `~57.0.4` | Store Cognito access/refresh tokens on device |
 | `zod` | `4.6.5` | Validate public Cognito configuration and stored token sessions |
 
-The root lockfile is owned by D. Run a fresh frozen install after D has incorporated these dependencies and updated `pnpm-lock.yaml`.
+The lockfile contains matching importer entries for these dependencies. Use a frozen install to verify the workspace dependency graph.
 
 From the repository root:
 
@@ -38,6 +38,7 @@ Tap **端末の位置と予定を読み取る** to request permissions and colle
 
 - Foreground location uses `expo-location`. No background permission or periodic schedule is requested.
 - Calendar reads use the device-local day through the end of the next three days.
+- The native query includes a 31-day margin around that window, and projection keeps only events that overlap the requested window.
 - Calendar event IDs are SHA-256 hashed before projection. Only `id`, `title`, `startAt`, `endAt`, `location`, and optional `allDay` enter `ContextInput`; attendee data, email, description, notes, meeting URL, organizer, and calendar IDs are discarded.
 - The shared `ContextInputSchema` validates the composed real/proactive input before the app displays it.
 - If location permission is denied or a fix is unavailable, the app shows that state and creates no evaluation input. If calendar permission is denied, it keeps an empty calendar and can still produce a valid input when location is available.
