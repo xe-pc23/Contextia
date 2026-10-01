@@ -67,29 +67,69 @@ export function matchingRoutes(
   });
 }
 
-export type WeatherReading = Pick<WeatherSnapshot,
-  'condition' | 'temperatureCelsius' | 'feelsLikeCelsius' | 'precipitationProbability' | 'precipitationMillimeters'> & {
-    source: 'current' | 'forecast'; sourceTimestamp: string;
-  };
+type WeatherValues = Pick<WeatherSnapshot,
+  'condition' | 'temperatureCelsius' | 'feelsLikeCelsius' | 'precipitationProbability' | 'precipitationMillimeters'>;
+export type WeatherReading = WeatherValues & { sourceTimestamp: string } & (
+  { source: 'current' } | { source: 'forecast'; startAt: string; endAt: string }
+);
 
-export function weatherAt(evidence: CandidateEvidence, at: number, policy: Readonly<DetectorPolicy>): WeatherReading | null {
-  const snapshots = evidence.weather.flatMap(entry =>
+function weatherSnapshots(evidence: CandidateEvidence): WeatherSnapshot[] {
+  return evidence.weather.flatMap(entry =>
     entry.result.status === 'ok' || entry.result.status === 'degraded' ? [entry.result.data] : [])
     .sort((a, b) => Date.parse(b.sourceTimestamp) - Date.parse(a.sourceTimestamp));
-  for (const snapshot of snapshots) {
+}
+
+function weatherValues(values: WeatherValues): WeatherValues {
+  return {
+    condition: values.condition, temperatureCelsius: values.temperatureCelsius,
+    ...(values.feelsLikeCelsius === undefined ? {} : { feelsLikeCelsius: values.feelsLikeCelsius }),
+    precipitationProbability: values.precipitationProbability, precipitationMillimeters: values.precipitationMillimeters
+  };
+}
+
+function forecastReading(snapshot: WeatherSnapshot, window: WeatherSnapshot['forecast'][number]): WeatherReading {
+  return {
+    ...weatherValues(window), source: 'forecast', sourceTimestamp: snapshot.sourceTimestamp,
+    startAt: window.startAt, endAt: window.endAt
+  };
+}
+
+export function weatherAt(evidence: CandidateEvidence, at: number, policy: Readonly<DetectorPolicy>): WeatherReading | null {
+  for (const snapshot of weatherSnapshots(evidence)) {
     const sourceAt = Date.parse(snapshot.sourceTimestamp);
-    const current = sourceAt <= at && at < sourceAt + policy.currentWeatherMaxAgeMinutes * MINUTE_MS;
-    const window = snapshot.forecast.find(value => Date.parse(value.startAt) <= at && at < Date.parse(value.endAt));
-    const values = current ? snapshot : window;
-    if (!values) continue;
-    return {
-      source: current ? 'current' : 'forecast', sourceTimestamp: snapshot.sourceTimestamp,
-      condition: values.condition, temperatureCelsius: values.temperatureCelsius,
-      ...(values.feelsLikeCelsius === undefined ? {} : { feelsLikeCelsius: values.feelsLikeCelsius }),
-      precipitationProbability: values.precipitationProbability, precipitationMillimeters: values.precipitationMillimeters
+    if (sourceAt <= at && at < sourceAt + policy.currentWeatherMaxAgeMinutes * MINUTE_MS) return {
+      ...weatherValues(snapshot), source: 'current', sourceTimestamp: snapshot.sourceTimestamp
     };
+    const window = snapshot.forecast.find(value => Date.parse(value.startAt) <= at && at < Date.parse(value.endAt));
+    if (window) return forecastReading(snapshot, window);
   }
   return null;
+}
+
+// Inspect actual forecast coverage up to arrival, independently of current-observation freshness.
+// Coverage changes at window starts/ends; at each instant the newest covering forecast wins.
+export function forecastWeatherBetween(
+  evidence: CandidateEvidence, from: number, through: number
+): { at: number; weather: WeatherReading }[] {
+  const snapshots = weatherSnapshots(evidence);
+  const instants = new Set([from]);
+  for (const snapshot of snapshots) for (const window of snapshot.forecast) {
+    const start = Date.parse(window.startAt);
+    const end = Date.parse(window.endAt);
+    if (start >= end || end <= from || start > through) continue;
+    if (start > from) instants.add(start);
+    if (end <= through) instants.add(end);
+  }
+  const readings: { at: number; weather: WeatherReading }[] = [];
+  for (const at of [...instants].sort((a, b) => a - b)) {
+    for (const snapshot of snapshots) {
+      const window = snapshot.forecast.find(value => Date.parse(value.startAt) <= at && at < Date.parse(value.endAt));
+      if (!window) continue;
+      readings.push({ at, weather: forecastReading(snapshot, window) });
+      break;
+    }
+  }
+  return readings;
 }
 
 // Scheduled transit must supply both timestamps. Timeless pedestrian duration is provider evidence,

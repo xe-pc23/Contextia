@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { freeTime, freeTimeWithoutRoutes, freeTimeShortGap, getScenarioEvidence } from '@contextia/test-fixtures';
 import { ProviderPlaceSchema, RouteSummarySchema } from '@contextia/contracts';
+import type { CalendarEventContext } from '@contextia/contracts';
 import { defaultDetectorPolicy } from '../src/index.js';
 import { primaryCandidates, refined, changeRoutes } from './detectorHarness.js';
 
@@ -59,6 +60,20 @@ describe('FREE_TIME_NEARBY', () => {
     }
   });
 
+  it.each([null, '', '   ', undefined])('keeps next-event travel unverified when the location is %s', async location => {
+    const next: CalendarEventContext = { ...event };
+    if (location === undefined) delete next.location;
+    else next.location = location;
+    // The old enrichment contains a complete return to the current position, not a confirmed next-event destination.
+    const result = await refined(freeTime, { calendar: [next] }, getScenarioEvidence(freeTime));
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0]?.facts).toMatchObject({
+      nextEventId: event.id, eligiblePlaceIds: [], unverifiedPlaceIds: ['synthetic-cafe-1'], placeTimeBudgets: [],
+      availableMinutes: 110, returnDeadlineAt: '2026-10-01T06:50:00.000Z'
+    });
+    expect(result.candidates[0]?.facts).not.toHaveProperty('destinationPlaceId');
+  });
+
   it('still reserves the minimum activity and event margin without route durations', async () => {
     const evidence = { ...getScenarioEvidence(freeTime), routes: [] };
     const policy = { ...defaultDetectorPolicy, arrivalBufferMinutes: 16 };
@@ -107,7 +122,10 @@ describe('FREE_TIME_NEARBY', () => {
 
   it('bounds an open-ended gap and requires a return to the current position', async () => {
     const result = await refined(freeTime, { calendar: [] });
-    expect(result.candidates[0]?.facts).toMatchObject({ availableMinutes: 120, nextEventId: null });
+    expect(result.candidates[0]?.facts).toMatchObject({
+      availableMinutes: 120, nextEventId: null, eligiblePlaceIds: ['synthetic-cafe-1'], unverifiedPlaceIds: [],
+      placeTimeBudgets: [{ placeId: 'synthetic-cafe-1', activityMinutes: 112 }]
+    });
     expect(result.candidates[0]?.providerNeeds).not.toContain('geocode-event-location');
   });
 

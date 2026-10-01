@@ -9,8 +9,8 @@ import {
 } from './candidateGeneration.js';
 import type { DetectorContext } from './detectorContext.js';
 import { detectorPolicy } from './detectorPolicy.js';
-import { destinationFor, journeyArrival, matchingRoutes, placesFor, weatherAt } from './evidence.js';
-import type { EvidenceResult } from './evidence.js';
+import { destinationFor, forecastWeatherBetween, journeyArrival, matchingRoutes, placesFor, weatherAt } from './evidence.js';
+import type { EvidenceResult, WeatherReading } from './evidence.js';
 import { generateStepGoalRestCandidates } from './stepGoalRest.js';
 
 export interface CandidateExclusion {
@@ -172,7 +172,9 @@ function assessActivity(
   const early = seed.type === 'EARLY_ARRIVAL_DETOUR';
   const window = calendarWindow(context);
   const event = early ? window.nextTimedEvent : window.nextEvent;
-  let target: GeoPoint | undefined = context.location;
+  // With a next event, only its confirmed destination can prove the onward journey.
+  // A return to current position is valid only for an open-ended gap without a next event.
+  let target: GeoPoint | undefined = event ? undefined : context.location;
   let destinationPlaceId: string | undefined;
   if (event && hasEventLocation(event)) {
     const destination = destinationFor(event.id, evidence, policy);
@@ -218,22 +220,40 @@ function assessActivity(
   } };
 }
 
-function assessWeather(
-  seed: CandidateOpportunity, context: DetectorContext, evidence: CandidateEvidence, policy: Readonly<DetectorPolicy>
-): Assessment {
-  const weather = weatherAt(evidence, evaluationMillis(context), policy);
-  if (!weather) return { ok: false, code: 'PROVIDER_UNAVAILABLE' };
+function weatherIssues(weather: WeatherReading, policy: Readonly<DetectorPolicy>): string[] {
   const wet = ['rain', 'snow', 'storm'].includes(weather.condition) ||
     (weather.precipitationMillimeters ?? 0) >= policy.precipitationThresholdMillimeters ||
     (weather.precipitationProbability ?? 0) >= policy.precipitationProbabilityThreshold;
   const temperature = weather.feelsLikeCelsius ?? weather.temperatureCelsius;
   const hot = temperature !== null && temperature >= policy.heatThresholdCelsius;
-  if (!wet && !hot) return { ok: true, value: null };
+  return [...(wet ? ['precipitation'] : []), ...(hot ? ['heat'] : [])];
+}
+
+function assessWeather(
+  seed: CandidateOpportunity, context: DetectorContext, evidence: CandidateEvidence, policy: Readonly<DetectorPolicy>,
+  calendarAvailable: boolean
+): Assessment {
+  const now = evaluationMillis(context);
+  const current = weatherAt(evidence, now, policy);
+  const window = calendarWindow(context);
+  const event = window.nextTimedEvent;
+  const forecasts = (!current || !weatherIssues(current, policy).length) && calendarAvailable && event &&
+    !window.ambiguousIds.has(event.id) && Date.parse(event.startAt) <= now + policy.upcomingEventHorizonMinutes * MINUTE_MS
+    ? forecastWeatherBetween(evidence, now, Date.parse(event.startAt)) : [];
+  const worsening = forecasts.find(reading => weatherIssues(reading.weather, policy).length > 0);
+  const weather = worsening?.weather ?? current ?? forecasts[0]?.weather;
+  if (!weather) return { ok: false, code: 'PROVIDER_UNAVAILABLE' };
+  const issues = weatherIssues(weather, policy);
+  if (!issues.length) return { ok: true, value: null };
   const places = placesFor(evidence, 'places-near-current', 'current');
-  return { ok: true, value: { ...seed, facts: {
-    ...seed.facts, weather, weatherIssues: [...(wet ? ['precipitation'] : []), ...(hot ? ['heat'] : [])],
-    eligiblePlaceIds: places.ok ? places.value.map(place => place.placeId) : []
-  } } };
+  return { ok: true, value: {
+    ...seed, requiredSignals: worsening ? [...seed.requiredSignals, 'calendar'] : seed.requiredSignals,
+    facts: {
+      ...seed.facts, weather, weatherIssues: issues,
+      weatherAssessmentAt: new Date(worsening?.at ?? now).toISOString(),
+      eligiblePlaceIds: places.ok ? places.value.map(place => place.placeId) : []
+    }
+  } };
 }
 
 // Run once all required needs have been attempted. Missing/not_requested required evidence is not
@@ -266,7 +286,7 @@ export function refineCandidates(input: RefineCandidatesInput): CandidateRefinem
         case 'UPCOMING_EVENT_TRANSIT': return assessUpcoming(seed, input.context, evidence, policy);
         case 'FREE_TIME_NEARBY':
         case 'EARLY_ARRIVAL_DETOUR': return assessActivity(seed, input.context, evidence, policy);
-        case 'WEATHER_ADAPTATION': return assessWeather(seed, input.context, evidence, policy);
+        case 'WEATHER_ADAPTATION': return assessWeather(seed, input.context, evidence, policy, explicitSignals?.has('calendar') ?? true);
         case 'STEP_GOAL_REST': {
           const places = placesFor(evidence, 'places-near-current', 'current');
           if (!places.ok) return places;
