@@ -7,3 +7,15 @@ export const stepGoal: ScenarioFixture = {
   context: { ...input, activity: { ...input.activity, stepsToday: 10_432, stepGoalReached: true } }, preferences,
   providers: { geocoding: unrequested(), places: { status: 'ok', data: [cafe] }, weather: unrequested(), routes: unrequested() }
 };
+
+export const stepGoalBelowGoal: ScenarioFixture = {
+  ...stepGoal,
+  label: '歩数目標未達',
+  context: { ...stepGoal.context, activity: { ...stepGoal.context.activity, stepsToday: 9_999, stepGoalReached: false } }
+};
+
+export const stepGoalStepsUnavailable: ScenarioFixture = {
+  ...stepGoal,
+  label: '歩数取得不可',
+  context: { ...stepGoal.context, activity: { ...stepGoal.context.activity, stepsToday: null, stepGoalReached: false } }
+};
