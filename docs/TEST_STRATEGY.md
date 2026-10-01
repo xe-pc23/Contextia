@@ -2,6 +2,46 @@
 
 Phase 0 contract tests are in `packages/contracts/test`; synthetic input/enrichment integrity tests are in `packages/test-fixtures/test`. Run them through the root Vitest configuration (source aliases work before build). They validate schemas and fixture integrity; they do not prove detector, live provider, authentication, Web or native behavior.
 
+Phase 1 delivery guards are tested in `packages/domain/test/deliveryGuards.test.ts`.
+Coverage includes all three daily-cap boundaries, disabled notifications, exact
+fingerprint/trigger/anchor matching, configurable policy, 5/30-minute windows at
+±1 ms, clock rollback, invalid state failure, complete preview diagnostics and
+input-state immutability. Timezone cases include profile/client/UTC fallback,
+Tokyo midnight independent of UTC midnight, year rollover, a non-hour offset,
+and New York's 23/25-hour DST days through the next local midnight.
+
+Guard tests use an injected server clock and a separately recorded
+`latestContextProcessedAt`. A repeated preview updates only processed-fingerprint
+metadata in the test harness; both evaluations remain eligible, the second
+reports `DUPLICATE_CONTEXT`, and notified counts/anchors remain unchanged.
+This verifies domain policy. B/D integration must additionally prove persisted
+processing metadata, atomic proactive rechecks, preview authorization and no
+actual notification/counter update in a deployed request.
+
+For native Windows validation, use Node 24.13.1 and pnpm 10.29.3 with a concise
+process-local PATH. `npm_config_shell_emulator=true` lets pnpm execute existing
+POSIX-style Mobile build commands without changing scripts or the lockfile.
+Ensure a native pnpm executable/shim on PATH for CDK's `spawnSync('pnpm')`.
+The emulator is a validation-environment setting, not a new project dependency.
+
+`packages/domain/test/stepGoalRest.test.ts` verifies the positive and two negative
+fixtures, goal-1 / goal / goal+1, contract goal limits, conflicting reached flags,
+missing activity/steps, nullable-goal fallback, low-confidence evidence and
+consistent goal precedence in real/simulation modes. Normalization tests keep
+simulation time separate from the server clock, use real clock injection, and
+check date anchors at timezone/DST boundaries. Combined detector/guard tests
+confirm same-day trigger suppression and repeated preview candidate evaluation
+without consuming notified counts or anchors. No external providers are called.
+
+Phase 1 A validation (2026-10-01, native Windows, Node 24.13.1 / pnpm 10.29.3):
+`pnpm lint`, `pnpm typecheck`, `pnpm test` (190 tests in 10 files), `pnpm build`
+(including both Mobile JS exports), and `pnpm cdk:synth` (dev/prod offline)
+passed. The built domain/fixture exports were also imported and exercised.
+The final esbuild/CDK checks ran outside the filesystem sandbox after its
+ancestor-directory read restriction prevented bundling. No dependency or
+lockfile changes were needed. Deployed dev smoke, live providers, actual
+notification delivery and native-device behavior remain unverified here.
+
 ## 1. Goal
 
 Testing must maximize confidence per minute. The system depends on OS data, external APIs, AWS infrastructure, and an LLM, so the strategy separates:
