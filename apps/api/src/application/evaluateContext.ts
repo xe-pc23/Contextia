@@ -24,7 +24,6 @@ export interface EvaluationPolicy {
   contextTtlSeconds: number;
   recommendationTtlSeconds: number;
   contextDedupSeconds: number;
-  anchorDedupSeconds: number;
   maxRecentAnchors: number;
   nearbyRadiusMeters: number;
   nearbyMaxResults: number;
@@ -37,7 +36,6 @@ export const defaultEvaluationPolicy: EvaluationPolicy = Object.freeze({
   contextTtlSeconds: 24 * 60 * 60,
   recommendationTtlSeconds: 7 * 24 * 60 * 60,
   contextDedupSeconds: 300,
-  anchorDedupSeconds: 1800,
   maxRecentAnchors: 20,
   nearbyRadiusMeters: 800,
   nearbyMaxResults: 10,
@@ -244,7 +242,7 @@ export function createEvaluateContext(deps: EvaluationDependencies): EvaluateCon
         deliveryMode: 'proactive', evaluationId, recommendationId, notificationDay: chosen.guard.notificationDay,
         notificationsEnabled: preferences.notificationsEnabled, maxDailyNotifications: chosen.guard.maxDailyNotifications,
         contextFingerprint: fingerprint, triggerType: chosen.candidate.type, anchorKey: chosen.candidate.anchorKey,
-        at: now.toISOString(), contextDedupSeconds: policy.contextDedupSeconds, anchorDedupSeconds: policy.anchorDedupSeconds,
+        at: now.toISOString(), contextDedupSeconds: policy.contextDedupSeconds, anchorDedupSeconds: chosen.guard.anchorDedupSeconds,
         maxRecentAnchors: policy.maxRecentAnchors
       } });
       if (recorded.status !== 'ok' && recorded.status !== 'degraded') throw new EvaluationFailure('STATE_UNAVAILABLE');

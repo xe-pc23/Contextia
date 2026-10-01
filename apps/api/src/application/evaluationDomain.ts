@@ -3,7 +3,7 @@ import type { DeliveryGuardCode, UserState } from '@contextia/providers';
 
 /**
  * What the evaluation service needs from `@contextia/domain`. Lane A owns the guard and
- * detector implementations; the composition root adapts them to this shape once they land.
+ * detector implementations; `composition/evaluationDomain.ts` adapts them to this shape.
  */
 export interface GuardCheckInput {
   now: Date;
@@ -20,6 +20,8 @@ export interface GuardCheck {
   guardCodes: DeliveryGuardCode[];
   notificationDay: string;
   maxDailyNotifications: number;
+  /** Trigger/anchor window for the repository's atomic delivery recheck, matching the domain policy. */
+  anchorDedupSeconds: number;
 }
 
 export interface DetectInput {
