@@ -68,6 +68,17 @@ describe('AmazonLocationPlacesProvider', () => {
     })).resolves.toMatchObject({ status: 'degraded', data: [{ placeId: 'place-1' }], code: 'INVALID_ITEMS' });
   });
 
+  it('removes duplicate place IDs before returning candidates for Bedrock', async () => {
+    const { provider } = testProvider({
+      searchNearby: vi.fn().mockResolvedValue({ ResultItems: [locationResponse(), locationResponse({ Title: 'Duplicate name' })] })
+    });
+
+    await expect(provider.searchNearby({
+      position: { latitude: 35.6, longitude: 139.7 }, radiusMeters: 500,
+      persistenceIntent: 'single-use'
+    })).resolves.toMatchObject({ status: 'ok', data: [{ placeId: 'place-1', name: 'Cafe North' }] });
+  });
+
   it('uses GetPlace with Storage intent and rejects a mismatched returned ID', async () => {
     const { provider, getPlace } = testProvider();
 

@@ -149,11 +149,15 @@ export class AmazonLocationPlacesProvider implements PlacesProvider {
       const parsedResponse = NearbyResponseSchema.safeParse(response);
       if (!parsedResponse.success) return unavailable('error', elapsedSince(startedAt), 'INVALID_RESPONSE');
       const places: ProviderPlace[] = [];
+      const seenPlaceIds = new Set<string>();
       let invalidCount = 0;
       for (const item of parsedResponse.data.ResultItems) {
         const place = normalizePlace(item);
         if (place === null) invalidCount += 1;
-        else places.push(place);
+        else if (!seenPlaceIds.has(place.placeId)) {
+          seenPlaceIds.add(place.placeId);
+          places.push(place);
+        }
       }
       if (invalidCount > 0 && places.length === 0) return unavailable('error', elapsedSince(startedAt), 'INVALID_RESPONSE');
       return invalidCount > 0
