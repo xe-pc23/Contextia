@@ -141,6 +141,7 @@ describe('createEvaluateContext', () => {
     expect(write?.snapshot.calendar[0]?.id).not.toBe('device-event-1');
     expect(write?.snapshot.expiresAt).toBe(NOW.getTime() / 1000 + 24 * 60 * 60);
     expect(write?.fingerprint).toMatch(/^[0-9a-f]{64}$/);
+    expect(write?.processedAt).toBe(NOW.toISOString());
   });
 
   it('keeps preview results visible while reporting what proactive delivery would suppress', async () => {

@@ -125,9 +125,8 @@ function delivery(context: ContextInput, guardCodes: GuardCode[], silent: boolea
 }
 
 /**
- * Issue #5: the guards need the server instant of the last processed fingerprint, which `UserState`
- * does not carry yet. Until the port does, read it from that context snapshot's `createdAt`, which this
- * service writes as server time. Only a matching fingerprint needs it, so other requests pay no extra read.
+ * Legacy-row fallback for Issue #5: older state items may have a fingerprint but no processed time.
+ * New snapshots persist that time on `UserState`; only matching legacy fingerprints need this read.
  */
 async function resolveGuardState(
   repository: EvaluationStateRepository, userId: string, nowEpochSeconds: number, state: GuardUserState | null, fingerprint: string
@@ -187,7 +186,9 @@ export function createEvaluateContext(deps: EvaluationDependencies): EvaluateCon
     const pre = deps.domain.checkDeliveryGuards(guardBase);
 
     // Prior state was read above; record this context (including preview) before any provider work.
-    const written = await deps.state.writeContextSnapshot({ userId, snapshot: snapshotOf(context, evaluationId, now, contextExpiresAt), fingerprint });
+    const written = await deps.state.writeContextSnapshot({
+      userId, snapshot: snapshotOf(context, evaluationId, now, contextExpiresAt), fingerprint, processedAt: now.toISOString()
+    });
     if (written.status !== 'ok' && written.status !== 'degraded') throw new EvaluationFailure('STATE_UNAVAILABLE');
 
     const providerStatus: ProviderStatusMap = {
