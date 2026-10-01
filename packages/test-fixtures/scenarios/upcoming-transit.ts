@@ -13,3 +13,12 @@ export const upcomingTransit: ScenarioFixture = {
     routes: { status: 'ok', data: [route(origin, '2026-10-01T15:10:00+09:00', '2026-10-01T15:44:00+09:00', 34)] }
   }
 };
+
+export const upcomingTransitNoLocation: ScenarioFixture = {
+  ...upcomingTransit, label: '予定の場所が未取得',
+  context: { ...upcomingTransit.context, calendar: [{ ...event, location: null }] }
+};
+export const upcomingTransitUnavailable: ScenarioFixture = {
+  ...upcomingTransit, label: '公共交通の未対応',
+  providers: { ...upcomingTransit.providers, routes: { status: 'unavailable', data: null } }
+};
