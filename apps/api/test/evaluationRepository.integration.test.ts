@@ -49,7 +49,7 @@ class MemoryDynamoDb implements DynamoDbClient {
     return [...this.items.values()].filter(item => item.entityType === 'RecommendationRef');
   }
 
-  async send(request: DynamoDbRequest, _signal: AbortSignal): Promise<unknown> {
+  async send(request: DynamoDbRequest): Promise<unknown> {
     if (request.operation === 'get') {
       const item = this.items.get(key(request.input.Key.PK, request.input.Key.SK));
       return item === undefined ? {} : { Item: structuredClone(item) };
