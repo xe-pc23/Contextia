@@ -14,7 +14,12 @@
     "build": "tsc --project tsconfig.build.json"
   },
   "dependencies": {
-    "@contextia/contracts": "workspace:*"
+    "@aws-sdk/client-bedrock-runtime": "3.1144.0",
+    "@aws-sdk/client-dynamodb": "3.1144.0",
+    "@aws-sdk/client-geo-places": "3.1144.0",
+    "@aws-sdk/lib-dynamodb": "3.1144.0",
+    "@contextia/contracts": "workspace:*",
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@contextia/test-fixtures": "workspace:*"
