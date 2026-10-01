@@ -18,7 +18,8 @@
     "@contextia/config": "workspace:*",
     "@contextia/contracts": "workspace:*",
     "@contextia/domain": "workspace:*",
-    "@contextia/providers": "workspace:*"
+    "@contextia/providers": "workspace:*",
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@contextia/test-fixtures": "workspace:*"

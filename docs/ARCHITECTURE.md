@@ -581,10 +581,12 @@ Do not assume the selected model exists in the application region. Bedrock model
 Stack names:
 ```text
 contextia-dev-core
-contextia-dev-web
 contextia-prod-core
-contextia-prod-web
 ```
+
+Phase 1 keeps the web hosting (private S3, CloudFront OAC, BucketDeployment) in the same `contextia-{stage}-core` stack as Cognito, the HTTP API and DynamoDB. A separate `-web` stack would create a cycle: the web client's callback URL needs the CloudFront domain, and `config.json` needs the API URL and the client ID.
+
+The Scenario Console reads its runtime configuration from `/config.json`. CDK generates it from the stack's own values, so one web build serves both stages. It contains `stage`, `apiBaseUrl` (without `/v1`), `auth.cognitoDomain`, `auth.clientId`, `auth.redirectUri`, `auth.scopes`, and `map` (currently `null`, until the restricted map key is added). The hashed assets are deployed with an immutable cache. `index.html` and `config.json` are deployed with `no-cache`, and CloudFront invalidates them on each deploy.
 
 ## 14. CI/CD architecture
 
