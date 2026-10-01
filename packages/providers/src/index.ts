@@ -7,3 +7,5 @@ export type * from './ports/StateRepository.js';
 export type * from './ports/NotificationProvider.js';
 export { AmazonLocationPlacesProvider, createAmazonLocationPlacesProvider } from './adapters/places.js';
 export type { AmazonLocationPlacesAdapterOptions, AmazonLocationPlacesClient, AmazonLocationPlacesConfig } from './adapters/places.js';
+export { OpenMeteoWeatherProvider, createOpenMeteoWeatherProvider } from './adapters/weather.js';
+export type { OpenMeteoWeatherAdapterOptions, OpenMeteoWeatherConfig, ProviderClock, WeatherHttpClient, WeatherHttpResponse } from './adapters/weather.js';
