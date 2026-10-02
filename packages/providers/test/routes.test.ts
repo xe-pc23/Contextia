@@ -235,12 +235,163 @@ describe('AmazonLocationRouteProvider normalization', () => {
     });
   });
 
-  it('retains leg overview duration including before/after steps even when the travel timestamps differ', async () => {
+  it('rejects an unexplained difference between the full leg duration and travel timestamps', async () => {
     const { provider } = testProvider({ Routes: [{ Summary: { Duration: 600 }, Legs: [
       leg('Vehicle', 'Car', 900, '2026-10-02T05:00:00Z', '2026-10-02T05:10:00Z')
     ] }] });
     await expect(provider.getRoute({ ...input, mode: 'intermodal' })).resolves.toMatchObject({
-      status: 'ok', data: { durationMinutes: 10, legs: [{ durationMinutes: 15 }] }
+      status: 'unavailable', data: null, code: 'DURATION_UNRESOLVED'
+    });
+  });
+
+  it('uses the full unscheduled pedestrian leg duration when the route summary contains only travel time', async () => {
+    const { provider } = testProvider({ Routes: [{ Summary: { Duration: 600 }, Legs: [{
+      Type: 'Pedestrian', TravelMode: 'Pedestrian', PedestrianLegDetails: {
+        Summary: { Overview: { Duration: 900 }, TravelOnly: { Duration: 600 } },
+        BeforeTravelSteps: [{ Duration: 120 }], AfterTravelSteps: [{ Duration: 180 }]
+      }
+    }] }] });
+    const result = await provider.getRoute({ ...input, mode: 'pedestrian' });
+    expect(result).toMatchObject({ status: 'degraded', code: 'DURATION_MISMATCH', data: {
+      durationMinutes: 15, legs: [{ durationMinutes: 15 }], warnings: ['DURATION_MISMATCH']
+    } });
+    expect(result.data).not.toHaveProperty('departAt');
+    expect(result.data).not.toHaveProperty('arriveAt');
+  });
+
+  it('preserves the reviewer\'s unscheduled 900-second overview instead of returning the 600-second route summary', async () => {
+    const { provider } = testProvider({ Routes: [{ Summary: { Duration: 600 }, Legs: [{
+      Type: 'Pedestrian', TravelMode: 'Pedestrian', PedestrianLegDetails: {
+        Summary: { Overview: { Duration: 900 } }
+      }
+    }] }] });
+    await expect(provider.getRoute({ ...input, mode: 'pedestrian' })).resolves.toMatchObject({
+      status: 'degraded', code: 'DURATION_MISMATCH', data: { durationMinutes: 15, legs: [{ durationMinutes: 15 }] }
+    });
+  });
+
+  it('sums multiple unscheduled pedestrian overviews without adding their before/after steps twice', async () => {
+    const { provider } = testProvider({ Routes: [{ Summary: { Duration: 900 }, Legs: [
+      { Type: 'Pedestrian', TravelMode: 'Pedestrian', PedestrianLegDetails: {
+        Summary: { Overview: { Duration: 900 }, TravelOnly: { Duration: 600 } },
+        BeforeTravelSteps: [{ Duration: 120 }], AfterTravelSteps: [{ Duration: 180 }]
+      } },
+      { Type: 'Pedestrian', TravelMode: 'Pedestrian', PedestrianLegDetails: {
+        Summary: { Overview: { Duration: 300 }, TravelOnly: { Duration: 300 } }
+      } }
+    ] }] });
+    await expect(provider.getRoute({ ...input, mode: 'pedestrian' })).resolves.toMatchObject({
+      status: 'degraded', code: 'DURATION_MISMATCH', data: { durationMinutes: 20,
+        legs: [{ durationMinutes: 15 }, { durationMinutes: 5 }] }
+    });
+  });
+
+  it('includes transfer waiting once even when the route summary omits it', async () => {
+    const { provider } = testProvider({ Routes: [{ Summary: { Duration: 1_200 }, Legs: [
+      leg('Transit', 'Bus', 600, '2026-10-02T05:00:00Z', '2026-10-02T05:10:00Z'),
+      leg('Transit', 'CityTrain', 600, '2026-10-02T05:15:00Z', '2026-10-02T05:25:00Z')
+    ] }] });
+    await expect(provider.getRoute(input)).resolves.toMatchObject({ status: 'degraded', data: {
+      durationMinutes: 25, transfers: 1, legs: [{ durationMinutes: 10 }, { durationMinutes: 10 }]
+    } });
+  });
+
+  function routeWithTravelSteps(afterSeconds = 300, beforeSeconds = 120): unknown {
+    return { Routes: [{ Summary: { Duration: 2_040 }, Legs: [
+      { Type: 'Vehicle', TravelMode: 'Car', VehicleLegDetails: {
+        Departure: { Time: '2026-10-02T05:00:00Z' }, Arrival: { Time: '2026-10-02T05:10:00Z' },
+        Summary: { Overview: { Duration: 600 + afterSeconds }, TravelOnly: { Duration: 600 } },
+        AfterTravelSteps: [{ Duration: afterSeconds }]
+      } },
+      leg('Pedestrian', 'Pedestrian', 300, '2026-10-02T05:15:00Z', '2026-10-02T05:20:00Z'),
+      { Type: 'Transit', TravelMode: 'Subway', TransitLegDetails: {
+        Departure: { Time: '2026-10-02T05:25:00Z' }, Arrival: { Time: '2026-10-02T05:35:00Z' },
+        Summary: { Overview: { Duration: 660 + beforeSeconds }, TravelOnly: { Duration: 600 } },
+        BeforeTravelSteps: [{ Duration: beforeSeconds }], AfterTravelSteps: [{ Duration: 60 }]
+      } },
+      leg('Pedestrian', 'Pedestrian', 300, '2026-10-02T05:37:00Z', '2026-10-02T05:42:00Z')
+    ] }] };
+  }
+
+  it('reconciles before/after steps with scheduled gaps without double counting parking or boarding time', async () => {
+    const { provider } = testProvider(routeWithTravelSteps());
+    await expect(provider.getRoute({ ...input, mode: 'intermodal' })).resolves.toMatchObject({
+      status: 'degraded', code: 'DURATION_MISMATCH', data: {
+        durationMinutes: 42, departAt: '2026-10-02T05:00:00Z', arriveAt: '2026-10-02T05:42:00Z',
+        legs: [{ durationMinutes: 15 }, { durationMinutes: 5 }, { durationMinutes: 13 }, { durationMinutes: 5 }]
+      }
+    });
+  });
+
+  it.each([[301, 120], [300, 301]])('rejects travel steps that cannot fit between scheduled legs', async (after, before) => {
+    const { provider } = testProvider(routeWithTravelSteps(after, before));
+    await expect(provider.getRoute({ ...input, mode: 'intermodal' })).resolves.toMatchObject({
+      status: 'unavailable', data: null, code: 'DURATION_UNRESOLVED'
+    });
+  });
+
+  it('rejects a gap where individually plausible after/before steps overlap each other', async () => {
+    const { provider } = testProvider({ Routes: [{ Summary: { Duration: 1_200 }, Legs: [
+      { Type: 'Transit', TravelMode: 'Bus', TransitLegDetails: {
+        Departure: { Time: '2026-10-02T05:00:00Z' }, Arrival: { Time: '2026-10-02T05:10:00Z' },
+        Summary: { Overview: { Duration: 780 }, TravelOnly: { Duration: 600 } }, AfterTravelSteps: [{ Duration: 180 }]
+      } },
+      { Type: 'Transit', TravelMode: 'CityTrain', TransitLegDetails: {
+        Departure: { Time: '2026-10-02T05:15:00Z' }, Arrival: { Time: '2026-10-02T05:25:00Z' },
+        Summary: { Overview: { Duration: 780 }, TravelOnly: { Duration: 600 } }, BeforeTravelSteps: [{ Duration: 180 }]
+      } }
+    ] }] });
+    await expect(provider.getRoute(input)).resolves.toMatchObject({ status: 'unavailable', data: null, code: 'DURATION_UNRESOLVED' });
+  });
+
+  it.each(['before', 'after'] as const)('does not invent a route boundary timestamp for an outer %s-travel step', async side => {
+    const { provider } = testProvider({ Routes: [{ Summary: { Duration: 600 }, Legs: [{
+      Type: 'Transit', TravelMode: 'Bus', TransitLegDetails: {
+        Departure: { Time: '2026-10-02T05:00:00Z' }, Arrival: { Time: '2026-10-02T05:10:00Z' },
+        Summary: { Overview: { Duration: 900 }, TravelOnly: { Duration: 600 } },
+        ...(side === 'before' ? { BeforeTravelSteps: [{ Duration: 300 }] } : { AfterTravelSteps: [{ Duration: 300 }] })
+      }
+    }] }] });
+    await expect(provider.getRoute(input)).resolves.toMatchObject({ status: 'unavailable', data: null, code: 'DURATION_UNRESOLVED' });
+  });
+
+  it.each([
+    { Overview: { Duration: 599 }, TravelOnly: { Duration: 600 } },
+    { Overview: { Duration: 600 }, TravelOnly: { Duration: 599 } }
+  ])('rejects inconsistent overview, travel-only duration and scheduled travel', async summary => {
+    const { provider } = testProvider({ Routes: [{ Summary: { Duration: 600 }, Legs: [{
+      Type: 'Transit', TravelMode: 'Bus', TransitLegDetails: {
+        Departure: { Time: '2026-10-02T05:00:00Z' }, Arrival: { Time: '2026-10-02T05:10:00Z' }, Summary: summary
+      }
+    }] }] });
+    await expect(provider.getRoute(input)).resolves.toMatchObject({ status: 'unavailable', data: null, code: 'DURATION_UNRESOLVED' });
+  });
+
+  it('rejects an unexplained route summary longer than all confirmed elapsed time', async () => {
+    const { provider } = testProvider({ Routes: [{ Summary: { Duration: 601 }, Legs: [
+      leg('Transit', 'Subway', 600, '2026-10-02T05:00:00Z', '2026-10-02T05:10:00Z')
+    ] }] });
+    await expect(provider.getRoute(input)).resolves.toMatchObject({ status: 'unavailable', data: null, code: 'DURATION_UNRESOLVED' });
+  });
+
+  it('rejects partially timed pedestrian legs rather than guessing the missing wait', async () => {
+    const { provider } = testProvider({ Routes: [{ Summary: { Duration: 900 }, Legs: [
+      leg('Pedestrian', 'Pedestrian', 600, '2026-10-02T05:00:00Z', '2026-10-02T05:10:00Z'),
+      { Type: 'Pedestrian', TravelMode: 'Pedestrian', PedestrianLegDetails: { Summary: { Overview: { Duration: 300 } } } }
+    ] }] });
+    await expect(provider.getRoute({ ...input, mode: 'pedestrian' })).resolves.toMatchObject({
+      status: 'unavailable', data: null, code: 'DURATION_UNRESOLVED'
+    });
+  });
+
+  it.each([{ Duration: -1 }, {}])('rejects malformed before/after durations instead of ignoring required time', async step => {
+    const { provider } = testProvider({ Routes: [{ Summary: { Duration: 600 }, Legs: [{
+      Type: 'Pedestrian', TravelMode: 'Pedestrian', PedestrianLegDetails: {
+        Summary: { Overview: { Duration: 600 } }, AfterTravelSteps: [step]
+      }
+    }] }] });
+    await expect(provider.getRoute({ ...input, mode: 'pedestrian' })).resolves.toMatchObject({
+      status: 'error', data: null, code: 'INVALID_RESPONSE'
     });
   });
 

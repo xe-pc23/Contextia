@@ -17,11 +17,15 @@ const NoticeSchema = z.object({ Code: z.string().regex(/^[A-Za-z0-9_:-]{1,128}$/
 const TimedPointSchema = z.object({
   Time: TimestampSchema.optional(), Status: z.enum(['Added', 'Cancelled', 'Replaced', 'Scheduled']).optional()
 }).passthrough();
+const TravelStepSchema = z.object({ Duration: z.number().nonnegative() }).passthrough();
 const LegDetailsSchema = z.object({
   Departure: TimedPointSchema.optional(),
   Arrival: TimedPointSchema.optional(),
+  BeforeTravelSteps: z.array(TravelStepSchema).optional(),
+  AfterTravelSteps: z.array(TravelStepSchema).optional(),
   Summary: z.object({
-    Overview: z.object({ Duration: z.number().nonnegative().optional() }).passthrough().optional()
+    Overview: z.object({ Duration: z.number().nonnegative().optional() }).passthrough().optional(),
+    TravelOnly: z.object({ Duration: z.number().nonnegative().optional() }).passthrough().optional()
   }).passthrough().optional(),
   Transport: z.object({
     RouteName: z.string().optional(), ShortRouteName: z.string().optional(), LongRouteName: z.string().optional()
@@ -79,6 +83,13 @@ export interface AmazonLocationRoutesAdapterOptions extends AmazonLocationRoutes
 
 type RawLeg = z.infer<typeof RawLegSchema>;
 type LegDetails = z.infer<typeof LegDetailsSchema>;
+interface LegTiming {
+  durationSeconds: number;
+  beforeSeconds: number;
+  afterSeconds: number;
+  departure: number | undefined;
+  arrival: number | undefined;
+}
 type NormalizedRoute =
   | { status: 'ok' | 'degraded'; data: RouteSummary; code?: string }
   | { status: 'unavailable' | 'error'; data: null; code: string };
@@ -117,6 +128,7 @@ function normalizeRoute(raw: unknown, input: z.infer<typeof RouteInputSchema>, n
   const route = parsed.data;
   const warnings = notices.map(notice => notice.Code);
   const legs: RouteSummary['legs'] = [];
+  const timings: LegTiming[] = [];
   let transitLegCount = 0;
   let previousArrival: number | undefined;
   for (const rawLeg of route.Legs) {
@@ -147,10 +159,21 @@ function normalizeRoute(raw: unknown, input: z.infer<typeof RouteInputSchema>, n
       return failedRoute('error', 'INVALID_RESPONSE');
     }
     previousArrival = arrival;
-    // Use a provider duration or the two returned timestamps; request time is never a schedule substitute.
+    const scheduleSeconds = departure !== undefined && arrival !== undefined ? (arrival - departure) / 1_000 : undefined;
+    const beforeSeconds = (details.BeforeTravelSteps ?? []).reduce((total, step) => total + step.Duration, 0);
+    const afterSeconds = (details.AfterTravelSteps ?? []).reduce((total, step) => total + step.Duration, 0);
+    const travelSeconds = details.Summary?.TravelOnly?.Duration ?? scheduleSeconds;
+    // Overview includes before/after steps; departure/arrival describe the travel portion.
     const durationSeconds = details.Summary?.Overview?.Duration
-      ?? (departure !== undefined && arrival !== undefined ? (arrival - departure) / 1_000 : undefined);
+      ?? (travelSeconds === undefined ? undefined : beforeSeconds + travelSeconds + afterSeconds);
     if (durationSeconds === undefined) return failedRoute('error', 'INVALID_RESPONSE');
+    if ((departure === undefined) !== (arrival === undefined)
+      || (scheduleSeconds !== undefined && travelSeconds !== scheduleSeconds)
+      || (travelSeconds !== undefined && durationSeconds !== beforeSeconds + travelSeconds + afterSeconds)
+      || durationSeconds < beforeSeconds + afterSeconds) {
+      return failedRoute('unavailable', 'DURATION_UNRESOLVED');
+    }
+    timings.push({ durationSeconds, beforeSeconds, afterSeconds, departure, arrival });
     const lineName = details.Transport?.RouteName?.trim()
       || details.Transport?.ShortRouteName?.trim()
       || details.Transport?.LongRouteName?.trim();
@@ -170,14 +193,31 @@ function normalizeRoute(raw: unknown, input: z.infer<typeof RouteInputSchema>, n
     || (input.arriveBy !== undefined && arriveAt !== undefined && Date.parse(arriveAt) > Date.parse(input.arriveBy))) {
     return failedRoute('unavailable', 'PLANNING_TIME_UNSATISFIED');
   }
-  const scheduleDurationSeconds = departAt !== undefined && arriveAt !== undefined
-    ? (Date.parse(arriveAt) - Date.parse(departAt)) / 1_000 : undefined;
-  // The public API's route summary may omit waiting/before/after time. Use returned endpoint times for elapsed duration.
-  const durationSeconds = scheduleDurationSeconds ?? route.Summary?.Duration;
-  if (durationSeconds === undefined) return failedRoute('error', 'INVALID_RESPONSE');
-  if (scheduleDurationSeconds !== undefined && route.Summary?.Duration !== undefined
-    && Math.abs(scheduleDurationSeconds - route.Summary.Duration) > 1) {
-    warnings.push('DURATION_MISMATCH');
+  let durationSeconds = timings.reduce((total, timing) => total + timing.durationSeconds, 0);
+  const scheduled = timings.every(timing => timing.departure !== undefined && timing.arrival !== undefined);
+  if (scheduled) {
+    // Outer before/after steps require route boundary times that the provider has not returned.
+    // Do not shift a travel timestamp and claim it is a supplied route departure/arrival.
+    if (timings[0]!.beforeSeconds > 0 || timings.at(-1)!.afterSeconds > 0) {
+      return failedRoute('unavailable', 'DURATION_UNRESOLVED');
+    }
+    for (let index = 1; index < timings.length; index += 1) {
+      const previous = timings[index - 1]!;
+      const current = timings[index]!;
+      const gapSeconds = (current.departure! - previous.arrival!) / 1_000;
+      const accountedSeconds = previous.afterSeconds + current.beforeSeconds;
+      if (gapSeconds < accountedSeconds) return failedRoute('unavailable', 'DURATION_UNRESOLVED');
+      // Parking/boarding steps are already in the overviews; add only the remaining wait.
+      durationSeconds += gapSeconds - accountedSeconds;
+    }
+  } else if (timings.some(timing => timing.departure !== undefined || timing.arrival !== undefined)) {
+    return failedRoute('unavailable', 'DURATION_UNRESOLVED');
+  }
+  // A shorter travel-only route summary is safe to replace with fully reconciled leg/wait evidence.
+  // A longer, unexplained summary could hide required time: do not return a shorter usable route.
+  if (route.Summary?.Duration !== undefined) {
+    if (route.Summary.Duration > durationSeconds) return failedRoute('unavailable', 'DURATION_UNRESOLVED');
+    if (route.Summary.Duration < durationSeconds) warnings.push('DURATION_MISMATCH');
   }
   const normalizedFacts = {
     mode: input.mode, origin: input.origin, destination: input.destination,
