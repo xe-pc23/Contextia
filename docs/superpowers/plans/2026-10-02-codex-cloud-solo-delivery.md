@@ -29,9 +29,11 @@ This is a **2026-10-02 local Git snapshot**, not a claim about current GitHub PR
 - `origin/feature/c-phase2-console` and `origin/feature/e-phase2-foreground-app` are separate from that integration branch. Merge and verify them before claiming a unified Phase 2 app.
 - No AWS deploy, public production URL, native device validation, or live provider smoke is established by this snapshot. Codex-to-AWS MCP STS inspection is logged; the requested proof screenshot remains outstanding.
 
-## Task 1: Publish a usable Codex Cloud environment
+## Task 1 (owner): Publish a usable Codex Cloud environment
 
 **Deliverable:** A published Cloud environment attached to `xe-pc23/Contextia`, and one Cloud task whose setup report shows the five required checks on the intended source branch.
+
+The owner creates and publishes the Cloud environment. The remaining tasks are repository work that Codex can prepare and execute from that environment.
 
 - [ ] Connect the GitHub repository in **Work in → Cloud → Create environment**. Do not use `main` as the implementation baseline while it remains specification-only; select or explicitly start from the latest integration branch and record its SHA.
 - [ ] Configure Node.js `24.13.1` and pnpm `10.29.3`, matching `.node-version`, `.mise.toml`, and `package.json`. The Cloud setup should run `pnpm install --frozen-lockfile` and use package-manager network access for dependencies.
