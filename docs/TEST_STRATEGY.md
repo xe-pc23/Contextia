@@ -385,6 +385,16 @@ Run against dev after deployment.
 
 Use a dedicated test user and avoid excessive paid calls.
 
+The dev OIDC smoke additionally sends two owned chat probes with synthetic markers, requiring a
+validated 200 response and a 400 `VALIDATION_ERROR` with distinct application request IDs. It reads
+the exact dev API log group in an unfiltered, immutable start/end window with bounded complete
+pagination, checks strict structured request fields, correlates both chat records and scans all raw
+messages in memory for the two markers and three transient access tokens. Missing/cyclic/truncated
+pages or evidence fail closed. Only fixed results are printed. Passing proves these specific needles
+were absent from the fetched window; it is not proof that every possible private field is absent,
+that CloudWatch metrics were materialized, or that an OS notification arrived.
+
+
 ## 15. CI gates
 
 ### PR gate
