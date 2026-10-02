@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
 import type { CognitoConfiguration } from './cognitoConfig';
 import { performCognitoBrowserLogout } from './cognitoLogout';
-import { clearSecureSession, readSecureSession, writeSecureSession } from './secureSessionStore';
+import { createSecureSessionStore } from './secureSessionStore';
+import { SessionManager } from './sessionManager';
 import { toStoredSession, type StoredSession } from './sessionModel';
+import { withTimeout } from '../async/withTimeout';
 
 export type CognitoAuthState = {
   status: 'loading' | 'signed-out' | 'signed-in' | 'error';
@@ -12,188 +14,150 @@ export type CognitoAuthState = {
   message: string | null;
   signIn: () => Promise<void>;
   signOut: () => Promise<void>;
+  getAccessToken: () => Promise<string | null>;
+  getSessionSignal: () => AbortSignal;
+  rejectAccessToken: (accessToken: string, sessionSignal: AbortSignal | undefined) => Promise<void>;
 };
 
-function toSession(tokenResponse: AuthSession.TokenResponse, previousRefreshToken?: string): StoredSession | null {
+function toSession(token: AuthSession.TokenResponse, previousRefreshToken?: string): StoredSession | null {
+  const refreshToken = token.refreshToken ?? previousRefreshToken;
   return toStoredSession({
-    accessToken: tokenResponse.accessToken,
-    expiresIn: tokenResponse.expiresIn,
-    ...((tokenResponse.refreshToken ?? previousRefreshToken) === undefined
-      ? {}
-      : { refreshToken: tokenResponse.refreshToken ?? previousRefreshToken })
+    accessToken: token.accessToken, expiresIn: token.expiresIn,
+    ...(refreshToken === undefined ? {} : { refreshToken })
   }, Math.floor(Date.now() / 1000));
 }
 
 export function useCognitoAuth(config: CognitoConfiguration): CognitoAuthState {
   const discovery = AuthSession.useAutoDiscovery(config.issuer);
+  const discoveryRef = useRef(discovery);
+  const lifecycle = useRef(0);
+  const working = useRef(false);
+  const [status, setStatus] = useState<CognitoAuthState['status']>('loading');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
   const requestConfiguration = useMemo<AuthSession.AuthRequestConfig>(() => ({
-    clientId: config.clientId,
-    redirectUri: config.redirectUri,
-    scopes: ['openid'],
-    responseType: AuthSession.ResponseType.Code,
-    usePKCE: true,
+    clientId: config.clientId, redirectUri: config.redirectUri, scopes: ['openid'],
+    responseType: AuthSession.ResponseType.Code, usePKCE: true,
     codeChallengeMethod: AuthSession.CodeChallengeMethod.S256
   }), [config.clientId, config.redirectUri]);
   const [request, , promptAsync] = AuthSession.useAuthRequest(requestConfiguration, discovery);
-  const [status, setStatus] = useState<CognitoAuthState['status']>('loading');
-  const [session, setSession] = useState<StoredSession | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const manager = useMemo(() => new SessionManager({
+    store: createSecureSessionStore(config),
+    now: () => Date.now() / 1000,
+    onSessionChange: signedIn => setStatus(signedIn ? 'signed-in' : 'signed-out'),
+    refresh: async stored => {
+      const tokenEndpoint = discoveryRef.current?.tokenEndpoint;
+      if (!tokenEndpoint || !stored.refreshToken) return { kind: 'unavailable' };
+      try {
+        const token = await AuthSession.refreshAsync({ clientId: config.clientId, refreshToken: stored.refreshToken }, { tokenEndpoint });
+        const session = toSession(token, stored.refreshToken);
+        return session ? { kind: 'success', session } : { kind: 'unavailable' };
+      } catch (error) {
+        return { kind: error instanceof AuthSession.TokenError && error.code === 'invalid_grant' ? 'rejected' : 'unavailable' };
+      }
+    }
+  }), [config.stage, config.clientId]);
+
+  useEffect(() => { discoveryRef.current = discovery; }, [discovery]);
+  useEffect(() => () => {
+    lifecycle.current++;
+    manager.deactivate();
+  }, [manager]);
 
   useEffect(() => {
     if (discovery?.authorizationEndpoint && discovery.tokenEndpoint) return;
-    const timeout = setTimeout(() => {
+    const timer = setTimeout(() => {
       setStatus('error');
-      setMessage('Cognito issuer の discovery 情報を取得できません。Issuer とネットワークを確認してください。');
+      setMessage('認証サービスに接続できません。ネットワークを確認してください。');
     }, 12_000);
-    return () => clearTimeout(timeout);
+    return () => clearTimeout(timer);
   }, [discovery?.authorizationEndpoint, discovery?.tokenEndpoint]);
 
   useEffect(() => {
-    const tokenEndpoint = discovery?.tokenEndpoint;
-    if (!tokenEndpoint) return;
-    let active = true;
-
-    void (async () => {
-      try {
-        const stored = await readSecureSession();
-        if (!active) return;
-        if (stored === null) {
-          setSession(null);
-          setStatus('signed-out');
-          return;
-        }
-
-        const now = Math.floor(Date.now() / 1000);
-        if (stored.expiresAtEpochSeconds > now + 30) {
-          setSession(stored);
-          setStatus('signed-in');
-          return;
-        }
-        if (!stored.refreshToken) {
-          await clearSecureSession();
-          if (active) {
-            setSession(null);
-            setStatus('signed-out');
-          }
-          return;
-        }
-
-        const refreshed = await AuthSession.refreshAsync({
-          clientId: config.clientId,
-          refreshToken: stored.refreshToken
-        }, { tokenEndpoint });
-        const nextSession = toSession(refreshed, stored.refreshToken);
-        if (nextSession === null) throw new Error('Invalid token response');
-        await writeSecureSession(nextSession);
-        if (active) {
-          setSession(nextSession);
-          setStatus('signed-in');
-        }
-      } catch {
-        await clearSecureSession().catch(() => undefined);
-        if (active) {
-          setSession(null);
-          setStatus('signed-out');
-          setMessage('保存済みの認証を復元できませんでした。もう一度サインインしてください。');
-        }
-      }
-    })();
-
-    return () => {
-      active = false;
-    };
-  }, [config.clientId, discovery?.tokenEndpoint]);
+    if (!discovery?.tokenEndpoint) return;
+    const generation = lifecycle.current;
+    void manager.restore().catch(async () => {
+      if (generation !== lifecycle.current) return;
+      await manager.clear().catch(() => undefined);
+      if (generation === lifecycle.current) setMessage('保存済みの認証を復元できませんでした。もう一度サインインしてください。');
+    });
+  }, [manager, discovery?.tokenEndpoint]);
 
   const signIn = useCallback(async () => {
+    if (working.current) return;
     if (!request || !discovery?.tokenEndpoint) {
-      setMessage('認証設定を読み込めません。Issuer と Cognito app client を確認してください。');
-      setStatus('error');
+      setMessage('認証サービスへの接続を確認してから、もう一度サインインしてください。');
       return;
     }
-
+    working.current = true;
+    const generation = ++lifecycle.current;
     setBusy(true);
     setMessage(null);
     try {
       const result = await promptAsync();
+      if (generation !== lifecycle.current) return;
       if (result.type !== 'success') {
-        if (result.type === 'error') {
-          setMessage('サインインに失敗しました。Cognito の callback URL と app client 設定を確認してください。');
-          setStatus('error');
-        } else {
-          setStatus('signed-out');
-        }
+        setStatus(result.type === 'error' ? 'error' : 'signed-out');
+        if (result.type === 'error') setMessage('サインインできませんでした。認証設定を確認してください。');
         return;
       }
-
       const code = result.params['code'];
-      const tokens = result.authentication ?? (code && request.codeVerifier
-        ? await AuthSession.exchangeCodeAsync({
-            clientId: config.clientId,
-            code,
-            redirectUri: config.redirectUri,
+      const token = result.authentication ?? (code && request.codeVerifier
+        ? await withTimeout(AuthSession.exchangeCodeAsync({
+            clientId: config.clientId, code, redirectUri: config.redirectUri,
             extraParams: { code_verifier: request.codeVerifier }
-          }, { tokenEndpoint: discovery.tokenEndpoint })
+          }, { tokenEndpoint: discovery.tokenEndpoint }), 12_000)
         : null);
-      if (!tokens) throw new Error('Token exchange did not return an access token');
-
-      const nextSession = toSession(tokens);
-      if (!nextSession) throw new Error('Token response was invalid');
-      await writeSecureSession(nextSession);
-      setSession(nextSession);
-      setStatus('signed-in');
+      if (generation !== lifecycle.current) return;
+      const session = token ? toSession(token) : null;
+      if (!session) throw new Error('Invalid token response');
+      await manager.accept(session);
     } catch {
-      setMessage('サインインできませんでした。Issuer、client ID、callback URL を確認してください。');
-      setStatus('error');
+      if (generation === lifecycle.current) {
+        setStatus('error');
+        setMessage('サインインできませんでした。ネットワークと認証設定を確認してください。');
+      }
     } finally {
-      setBusy(false);
+      if (generation === lifecycle.current) { working.current = false; setBusy(false); }
     }
-  }, [config.clientId, config.redirectUri, discovery, promptAsync, request]);
+  }, [config.clientId, config.redirectUri, discovery, manager, promptAsync, request]);
 
   const signOut = useCallback(async () => {
+    if (working.current) return;
+    working.current = true;
+    const generation = ++lifecycle.current;
+    const stored = manager.sessionForRevocation();
     setBusy(true);
     setMessage(null);
-
-    let browserLogoutCompleted = false;
+    let cleared = true;
+    let browserCompleted = false;
     try {
-      let stored = session;
-      if (!stored) {
-        try {
-          stored = await readSecureSession();
-        } catch {
-          // Continue with browser logout even if SecureStore cannot be read.
-        }
-      }
+      // Hide private screens and invalidate refresh before any remote logout.
+      await manager.clear().catch(() => { cleared = false; });
       if (stored?.refreshToken && discovery?.revocationEndpoint) {
-        try {
-          await AuthSession.revokeAsync({
-            clientId: config.clientId,
-            token: stored.refreshToken,
-            tokenTypeHint: AuthSession.TokenTypeHint.RefreshToken
-          }, { revocationEndpoint: discovery.revocationEndpoint });
-        } catch {
-          // Browser logout is still required when token revocation fails.
-        }
+        await withTimeout(AuthSession.revokeAsync({
+          clientId: config.clientId, token: stored.refreshToken,
+          tokenTypeHint: AuthSession.TokenTypeHint.RefreshToken
+        }, { revocationEndpoint: discovery.revocationEndpoint }), 12_000).catch(() => undefined);
       }
-      browserLogoutCompleted = await performCognitoBrowserLogout({
+      browserCompleted = await performCognitoBrowserLogout({
         authorizationEndpoint: discovery?.authorizationEndpoint,
-        clientId: config.clientId,
-        redirectUri: config.redirectUri
-      }, (url, redirectUri) => WebBrowser.openAuthSessionAsync(url, redirectUri, {
-        preferEphemeralSession: false
-      }));
+        clientId: config.clientId, redirectUri: config.redirectUri
+      }, (url, redirectUri) => WebBrowser.openAuthSessionAsync(url, redirectUri, { preferEphemeralSession: false }));
     } catch {
-      // Local credentials are still cleared when remote sign-out fails.
+      // The local session was already invalidated; never expose upstream errors.
     } finally {
-      await clearSecureSession().catch(() => undefined);
-      setSession(null);
-      setStatus('signed-out');
-      if (!browserLogoutCompleted) {
-        setMessage('Cognito のブラウザーセッションを終了できたか確認できませんでした。ネットワークと sign-out URL の許可設定を確認してください。');
+      if (generation === lifecycle.current) {
+        if (!cleared) setMessage('端末に保存した認証を削除できませんでした。端末の設定を確認してください。');
+        else if (!browserCompleted) setMessage('認証サービスからのサインアウトを確認できませんでした。ネットワークを確認してください。');
+        working.current = false;
+        setBusy(false);
       }
-      setBusy(false);
     }
-  }, [config.clientId, config.redirectUri, discovery, session]);
+  }, [config.clientId, config.redirectUri, discovery, manager]);
 
-  return { status, busy, message, signIn, signOut };
+  return {
+    status, busy, message, signIn, signOut, getAccessToken: manager.getAccessToken,
+    getSessionSignal: manager.getSessionSignal, rejectAccessToken: manager.rejectAccessToken
+  };
 }
