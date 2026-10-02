@@ -28,6 +28,7 @@ This is a **2026-10-02 local Git snapshot**, not a claim about current GitHub PR
 - `origin/codex/d-phase2-integration` at `6a588cb` includes the Phase 2 A/B/D integration and Phase 1 Web/Mobile baseline. In a fresh isolated checkout on 2026-10-02, frozen installation plus lint, typecheck, 879 tests, build, and offline CDK synth passed on this SHA. Remote CI and live smoke still need verification.
 - `origin/feature/c-phase2-console` and `origin/feature/e-phase2-foreground-app` are separate from that integration branch. Merge and verify them before claiming a unified Phase 2 app.
 - No AWS deploy, public production URL, native device validation, or live provider smoke is established by this snapshot. Codex-to-AWS MCP STS inspection is logged; the requested proof screenshot remains outstanding.
+- GitHub's repository environments API reported `total_count: 0` on 2026-10-02. The workflow references `dev` and `prod`, so create and configure both GitHub environments and verify their variables/protection rules before a deployment run. This is separate from publishing the Codex Cloud environment.
 
 ## Task 1 (owner): Publish a usable Codex Cloud environment
 
@@ -60,7 +61,7 @@ The owner creates and publishes the Cloud environment. The remaining tasks are r
 
 **Deliverable:** A real dev evaluation for `STEP_GOAL_REST`, then five scenarios, plus a public production path and at least one verified foreground device path.
 
-- [ ] Confirm AWS account/Region and the dev-only CDK diff. Have the owner provision or verify bootstrap, `GitHubDevDeployRole`, `GitHubProdDeployRole`, GitHub `dev`/`prod` environments, Bedrock model access, and the non-secret workflow variables. Check that prod trust is narrower than dev.
+- [ ] Confirm AWS account/Region and the dev-only CDK diff. Have the owner provision or verify bootstrap, `GitHubDevDeployRole`, `GitHubProdDeployRole`, GitHub `dev`/`prod` environments (absent in the 2026-10-02 GitHub API snapshot), Bedrock model access, and the non-secret workflow variables. Check that prod trust is narrower than dev.
 - [ ] Let the validated GitHub Actions workflow deploy `dev` with OIDC. Run `/health`, Cognito login, real Places + Bedrock step-goal preview, and the same preview twice; verify the second result remains visible, reports dedup in `wouldSuppress`, and does not consume notification quota.
 - [ ] Exercise all five cases through the same API with their required live providers, including a provider failure. Confirm no fabricated weather or transit times and no cross-user access to recommendation detail/chat.
 - [ ] Integrate the Phase 2 Web and Mobile runtime configuration generated from CDK outputs. On an available iOS or Android development build, verify foreground GPS and calendar → API → result. Record device, OS, build, stage, and backend SHA; mark the other OS unverified if unavailable.
