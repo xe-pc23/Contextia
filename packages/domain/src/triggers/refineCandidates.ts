@@ -1,8 +1,8 @@
 import { CandidateEvidenceSchema, CandidateOpportunitySchema, SignalNameSchema } from '@contextia/contracts';
 import type {
-  CandidateDiagnosticCode, CandidateEvidence, CandidateOpportunity, DetectorPolicy, GeoPoint, ProviderPlace, RouteSummary, SignalName
+  CandidateDiagnosticCode, CandidateEvidence, CandidateExclusionReason, CandidateOpportunity, DetectorPolicy, GeoPoint, ProviderPlace, RouteSummary, SignalName
 } from '@contextia/contracts';
-import { calendarWindow, distanceMeters, evaluationMillis, hasEventLocation, MINUTE_MS } from './calendar.js';
+import { activityDeadlines, calendarWindow, distanceMeters, evaluationMillis, hasEventLocation, MINUTE_MS } from './calendar.js';
 import {
   generateEarlyArrivalDetourCandidates, generateFreeTimeNearbyCandidates,
   generateUpcomingEventTransitCandidates, generateWeatherAdaptationCandidates
@@ -19,6 +19,7 @@ export interface CandidateExclusion {
   // null: supplied facts do not justify this opportunity. Other codes are candidate diagnostics,
   // never global delivery guards and never appended to delivery.wouldSuppress.
   readonly code: CandidateDiagnosticCode | null;
+  readonly reason?: CandidateExclusionReason;
 }
 export interface CandidateRefinementResult {
   readonly candidates: CandidateOpportunity[];
@@ -33,8 +34,10 @@ export interface RefineCandidatesInput {
   readonly availableSignals?: readonly SignalName[];
 }
 
-function excluded(candidate: CandidateOpportunity, code: CandidateDiagnosticCode | null): CandidateExclusion {
-  return { type: candidate.type, anchorKey: candidate.anchorKey, code };
+function excluded(
+  candidate: CandidateOpportunity, code: CandidateDiagnosticCode | null, reason?: CandidateExclusionReason
+): CandidateExclusion {
+  return { type: candidate.type, anchorKey: candidate.anchorKey, code, ...(reason ? { reason } : {}) };
 }
 
 export function filterCandidatesBySignals(
@@ -71,7 +74,7 @@ interface PlaceTimeBudget {
 }
 
 function activityBudgets(
-  context: DetectorContext, places: ProviderPlace[], target: GeoPoint, deadline: number,
+  context: DetectorContext, places: ProviderPlace[], target: GeoPoint, deadline: number, activityDeadline: number,
   evidence: CandidateEvidence, policy: Readonly<DetectorPolicy>
 ): PlaceTimeBudget[] {
   const now = evaluationMillis(context);
@@ -88,8 +91,9 @@ function activityBudgets(
         if (back.routeId === route.routeId) continue;
         const returnedAt = journeyArrival(back, arrival + policy.minimumActivityMinutes * MINUTE_MS);
         if (returnedAt === null || returnedAt > deadline) continue;
-        const latestDeparture = back.departAt ? Date.parse(back.departAt)
+        const returnDeparture = back.departAt ? Date.parse(back.departAt)
           : Math.min(deadline, back.arriveAt ? Date.parse(back.arriveAt) : deadline) - back.durationMinutes * MINUTE_MS;
+        const latestDeparture = Math.min(activityDeadline, returnDeparture);
         const activityMinutes = (latestDeparture - arrival) / MINUTE_MS;
         if (activityMinutes < policy.minimumActivityMinutes) continue;
         const budget = { placeId: place.placeId, outboundRouteId: route.routeId, returnRouteId: back.routeId, activityMinutes };
@@ -108,7 +112,7 @@ function hasJourneyTiming(route: RouteSummary): boolean {
 // Optional routing must not erase the gap opportunity. Keep unresolved place discovery separate
 // from verified time-fit options, and never fill a missing journey with an invented duration.
 function unverifiedActivityPlaceIds(
-  context: DetectorContext, places: ProviderPlace[], target: GeoPoint | undefined, deadline: number,
+  context: DetectorContext, places: ProviderPlace[], target: GeoPoint | undefined, deadline: number, activityDeadline: number,
   evidence: CandidateEvidence, policy: Readonly<DetectorPolicy>
 ): string[] {
   const now = evaluationMillis(context);
@@ -122,7 +126,7 @@ function unverifiedActivityPlaceIds(
     if (outward.some(route => returning.some(back => back.routeId !== route.routeId))) return false;
     const outwardCanFit = !outward.length || outward.some(route => {
       const arrival = journeyArrival(route, now);
-      return arrival !== null && arrival + activityMillis <= deadline;
+      return arrival !== null && arrival + activityMillis <= activityDeadline;
     });
     const returnCanFit = !returning.length || returning.some(route => {
       // Even with zero outward travel, an impossible return cannot fit any activity here.
@@ -133,7 +137,7 @@ function unverifiedActivityPlaceIds(
   }).map(place => place.placeId);
 }
 
-type Assessment = EvidenceResult<CandidateOpportunity | null>;
+type Assessment = EvidenceResult<CandidateOpportunity | null> & { readonly reason?: CandidateExclusionReason };
 
 function assessUpcoming(
   seed: CandidateOpportunity, context: DetectorContext, evidence: CandidateEvidence, policy: Readonly<DetectorPolicy>
@@ -142,32 +146,31 @@ function assessUpcoming(
   if (!event) return { ok: false, code: 'MISSING_REQUIRED_SIGNAL' };
   const destination = destinationFor(event.id, evidence, policy);
   if (!destination.ok) return destination;
-  const routes = matchingRoutes(evidence, 'route-to-next-event', event.id, context.location, destination.value, policy)
-    .filter(route => route.mode === 'transit' || route.mode === 'intermodal');
-  if (!routes.length) return { ok: false, code: 'PROVIDER_UNAVAILABLE' };
   const now = evaluationMillis(context);
   const deadline = Date.parse(event.startAt) - policy.arrivalBufferMinutes * MINUTE_MS;
-  const feasible = routes.map(route => {
-    const departure = route.departAt ? Date.parse(route.departAt)
-      : (route.arriveAt ? Date.parse(route.arriveAt) : deadline) - route.durationMinutes * MINUTE_MS;
-    const arrival = route.arriveAt ? Date.parse(route.arriveAt) : departure + route.durationMinutes * MINUTE_MS;
-    return { route, departure, arrival };
-  }).filter(journey => journey.departure >= now && journey.arrival <= deadline)
+  const planned = { ...evidence, routes: evidence.routes.filter(entry =>
+    entry.arriveBy !== undefined && Date.parse(entry.arriveBy) === deadline) };
+  const routes = matchingRoutes(planned, 'route-to-next-event', event.id, context.location, destination.value, policy)
+    .filter((route): route is RouteSummary & { departAt: string; arriveAt: string } =>
+      (route.mode === 'transit' || route.mode === 'intermodal') && route.departAt !== undefined && route.arriveAt !== undefined);
+  if (!routes.length) return { ok: false, code: 'PROVIDER_UNAVAILABLE' };
+  const journeys = routes.map(route => ({ route, departure: Date.parse(route.departAt), arrival: Date.parse(route.arriveAt) }));
+  const feasible = journeys.filter(journey => journey.departure >= now && journey.arrival <= deadline)
     .sort((a, b) => b.departure - a.departure || a.arrival - b.arrival ||
       a.route.durationMinutes - b.route.durationMinutes ||
       (a.route.routeId < b.route.routeId ? -1 : a.route.routeId > b.route.routeId ? 1 : 0));
-  // First choose the latest feasible departure; an earlier route cannot create urgency while a later one fits.
+  // Missing the planned journey is a timing diagnostic, never permission to invent a replacement timetable.
   const latest = feasible[0];
-  if (!latest || latest.departure > now + policy.departureLeadMinutes * MINUTE_MS) return { ok: true, value: null };
+  if (!latest) return { ok: true, value: null,
+    reason: journeys.every(journey => journey.departure < now) ? 'DEPARTURE_PASSED' : 'ARRIVAL_BUFFER_MISSED' };
+  if (latest.departure > now + policy.departureLeadMinutes * MINUTE_MS) return { ok: true, value: null };
   const { route, departure } = latest;
   return { ok: true, value: {
     ...seed, confidence: Math.min(seed.confidence, destination.value.confidence),
     facts: {
       ...seed.facts, destinationPlaceId: destination.value.placeId, routeId: route.routeId,
       routeDurationMinutes: route.durationMinutes, latestDepartureAt: new Date(departure).toISOString(),
-      departureSource: route.departAt ? 'provider' : 'duration-budget',
-      ...(route.departAt ? { providerDepartAt: route.departAt } : {}),
-      ...(route.arriveAt ? { providerArriveAt: route.arriveAt } : {})
+      departureSource: 'provider', providerDepartAt: route.departAt, providerArriveAt: route.arriveAt
     }
   } };
 }
@@ -196,14 +199,13 @@ function assessActivity(
   const distance = target ? distanceMeters(context.location, target) : null;
   if (early && (distance === null || distance + (context.location.accuracyMeters ?? 0) > policy.earlyArrivalRadiusMeters)) return { ok: true, value: null };
   const now = evaluationMillis(context);
-  const end = Math.min(now + policy.maximumFreeTimeMinutes * MINUTE_MS, event ? Date.parse(event.startAt) : Number.POSITIVE_INFINITY);
-  const deadline = end - (event ? policy.arrivalBufferMinutes : 0) * MINUTE_MS;
-  if (!early && deadline - now < policy.minimumActivityMinutes * MINUTE_MS) return { ok: true, value: null };
+  const { activityDeadlineAt: activityDeadline, returnDeadlineAt: deadline } = activityDeadlines(context, policy, event, early);
+  if (!early && activityDeadline - now < policy.minimumActivityMinutes * MINUTE_MS) return { ok: true, value: null };
   const nearby = placesFor(evidence, early ? 'places-near-destination' : 'places-near-current', early && event ? event.id : 'current');
   if (!nearby.ok) return nearby;
   if (!nearby.value.length) return { ok: true, value: null };
-  const budgets = target ? activityBudgets(context, nearby.value, target, deadline, evidence, policy) : [];
-  const unverifiedPlaceIds = early ? [] : unverifiedActivityPlaceIds(context, nearby.value, target, deadline, evidence, policy);
+  const budgets = target ? activityBudgets(context, nearby.value, target, deadline, activityDeadline, evidence, policy) : [];
+  const unverifiedPlaceIds = early ? [] : unverifiedActivityPlaceIds(context, nearby.value, target, deadline, activityDeadline, evidence, policy);
   if (!budgets.length && !unverifiedPlaceIds.length) {
     if (!early) return { ok: true, value: null };
     const hasRoutes = target && nearby.value.some(place => {
@@ -219,7 +221,8 @@ function assessActivity(
     facts: {
       ...seed.facts, eligiblePlaceIds: budgets.map(budget => budget.placeId), placeTimeBudgets: budgets,
       returnDeadlineAt: new Date(deadline).toISOString(),
-      ...(!early ? { unverifiedPlaceIds, minimumActivityMinutes: policy.minimumActivityMinutes } : {}),
+      ...(!early ? { unverifiedPlaceIds, minimumActivityMinutes: policy.minimumActivityMinutes,
+        activityDeadlineAt: new Date(activityDeadline).toISOString() } : {}),
       ...(destinationPlaceId ? { destinationPlaceId } : {}),
       ...(early ? { destinationDistanceMeters: distance, accuracyMeters: context.location.accuracyMeters ?? null } : {})
     }
@@ -303,7 +306,7 @@ export function refineCandidates(input: RefineCandidatesInput): CandidateRefinem
       }
     })();
     if (result.ok && result.value) kept.push(CandidateOpportunitySchema.parse(result.value));
-    else exclusions.push(excluded(seed, result.ok ? null : result.code));
+    else exclusions.push(excluded(seed, result.ok ? null : result.code, result.reason));
   }
   return { candidates: kept, exclusions };
 }

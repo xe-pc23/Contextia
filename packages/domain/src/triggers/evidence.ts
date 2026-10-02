@@ -7,14 +7,14 @@ import { distanceMeters, MINUTE_MS } from './calendar.js';
 export type EvidenceResult<T> = { ok: true; value: T } | { ok: false; code: CandidateDiagnosticCode };
 
 export function destinationFor(eventId: string, evidence: CandidateEvidence, policy: Readonly<DetectorPolicy>): EvidenceResult<GeocodedPlace> {
-  const entries = evidence.geocoding.filter(entry => entry.eventId === eventId);
-  if (entries.length !== 1) return { ok: false, code: entries.length ? 'GEOCODE_AMBIGUOUS' : 'PROVIDER_UNAVAILABLE' };
-  const result = entries[0]?.result;
-  if (!result || (result.status !== 'ok' && result.status !== 'degraded')) return {
-    ok: false, code: result?.code === 'GEOCODE_AMBIGUOUS' || result?.code === 'AMBIGUOUS' ? 'GEOCODE_AMBIGUOUS' : 'PROVIDER_UNAVAILABLE'
+  const results = evidence.geocoding.filter(entry => entry.eventId === eventId).map(entry => entry.result);
+  const usable = results.flatMap(result => result.status === 'ok' || result.status === 'degraded' ? [result.data] : []);
+  if (!usable.length) return {
+    ok: false, code: results.some(result => result.code === 'GEOCODE_AMBIGUOUS' || result.code === 'AMBIGUOUS')
+      ? 'GEOCODE_AMBIGUOUS' : 'PROVIDER_UNAVAILABLE'
   };
   const unique = new Map<string, GeocodedPlace>();
-  for (const place of result.data) {
+  for (const place of usable.flat()) {
     if (place.confidence < policy.minimumGeocodeConfidence) continue;
     const previous = unique.get(place.placeId);
     if (previous && distanceMeters(previous, place) > 1) return { ok: false, code: 'GEOCODE_AMBIGUOUS' };

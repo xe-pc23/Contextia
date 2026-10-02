@@ -1,4 +1,4 @@
-import type { CalendarEventContext, GeoPoint } from '@contextia/contracts';
+import type { CalendarEventContext, DetectorPolicy, GeoPoint } from '@contextia/contracts';
 import type { DetectorContext } from './detectorContext.js';
 
 export const MINUTE_MS = 60_000;
@@ -11,13 +11,14 @@ export function evaluationMillis(input: DetectorContext): number {
 
 export interface CalendarWindow {
   readonly busy: boolean;
+  readonly timedBusy: boolean;
   readonly nextEvent: CalendarEventContext | undefined;
   readonly nextTimedEvent: CalendarEventContext | undefined;
   readonly previousEventId: string | undefined;
   readonly ambiguousIds: ReadonlySet<string>;
 }
 
-// All-day intervals block free time conservatively, but cannot anchor a timed departure/detour.
+// All-day intervals conservatively occupy free-time gaps; timed detours use timedBusy and a timed destination.
 export function calendarWindow(input: DetectorContext): CalendarWindow {
   const now = evaluationMillis(input);
   const events = [...input.calendar].sort((a, b) =>
@@ -35,11 +36,21 @@ export function calendarWindow(input: DetectorContext): CalendarWindow {
     .sort((a, b) => Date.parse(b.endAt) - Date.parse(a.endAt) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   return {
     busy: events.some(event => Date.parse(event.startAt) <= now && now < Date.parse(event.endAt)),
+    timedBusy: events.some(event => !event.allDay && Date.parse(event.startAt) <= now && now < Date.parse(event.endAt)),
     nextEvent: future[0],
     nextTimedEvent: future.find(event => !event.allDay),
     previousEventId: past[0]?.id,
     ambiguousIds
   };
+}
+
+// The activity horizon is a local recommendation bound, not an earlier arrival deadline for a distant event.
+export function activityDeadlines(
+  input: DetectorContext, policy: Readonly<DetectorPolicy>, event: CalendarEventContext | undefined, early = false
+): { activityDeadlineAt: number; returnDeadlineAt: number } {
+  const horizon = evaluationMillis(input) + policy.maximumFreeTimeMinutes * MINUTE_MS;
+  const returnDeadlineAt = event ? Date.parse(event.startAt) - policy.arrivalBufferMinutes * MINUTE_MS : horizon;
+  return { activityDeadlineAt: early ? returnDeadlineAt : Math.min(horizon, returnDeadlineAt), returnDeadlineAt };
 }
 
 export function hasEventLocation(event: CalendarEventContext): boolean {

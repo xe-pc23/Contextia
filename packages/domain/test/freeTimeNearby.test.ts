@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { freeTime, freeTimeWithoutRoutes, freeTimeShortGap, getScenarioEvidence } from '@contextia/test-fixtures';
-import { ProviderPlaceSchema, RouteSummarySchema } from '@contextia/contracts';
+import { GeocodedPlaceSchema, ProviderPlaceSchema, RouteSummarySchema } from '@contextia/contracts';
 import type { CalendarEventContext } from '@contextia/contracts';
 import { defaultDetectorPolicy } from '../src/index.js';
 import { primaryCandidates, refined, changeRoutes } from './detectorHarness.js';
@@ -127,6 +127,25 @@ describe('FREE_TIME_NEARBY', () => {
       placeTimeBudgets: [{ placeId: 'synthetic-cafe-1', activityMinutes: 112 }]
     });
     expect(result.candidates[0]?.providerNeeds).not.toContain('geocode-event-location');
+  });
+
+  it('caps the activity horizon without moving a distant next-event arrival deadline forward', async () => {
+    const next = { ...event, startAt: '2026-10-01T18:00:00+09:00', endAt: '2026-10-01T19:00:00+09:00', location: 'Yokohama' };
+    const evidence = getScenarioEvidence(freeTime);
+    const destination = GeocodedPlaceSchema.parse(evidence.geocoding[0]?.result.data?.[0]);
+    const target = { latitude: 35.4437, longitude: 139.638 };
+    evidence.geocoding = [{ eventId: next.id, result: { status: 'ok', data: [{ ...destination, ...target }] } }];
+    const routes = changeRoutes(evidence, route => route.routeId === 'free-return'
+      ? { ...route, destination: target, durationMinutes: 100 } : route);
+    const result = await refined(freeTime, { calendar: [next], scenarioTime: '2026-10-01T10:00:00+09:00' }, routes);
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0]?.facts).toMatchObject({
+      availableMinutes: 120, gapEndsAt: '2026-10-01T03:00:00.000Z', activityDeadlineAt: '2026-10-01T03:00:00.000Z',
+      returnDeadlineAt: '2026-10-01T08:50:00.000Z', eligiblePlaceIds: ['synthetic-cafe-1'],
+      placeTimeBudgets: [{ placeId: 'synthetic-cafe-1', activityMinutes: 116 }]
+    });
+    // A nearer actual event still constrains the trip; the activity cap must not replace that constraint.
+    expect((await refined(freeTime, { calendar: [{ ...next, startAt: '2026-10-01T12:01:00+09:00' }], scenarioTime: '2026-10-01T10:00:00+09:00' }, routes)).candidates).toEqual([]);
   });
 
   it('does not reverse an outward route or assume an unknown return duration', async () => {

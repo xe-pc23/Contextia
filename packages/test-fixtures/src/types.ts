@@ -8,6 +8,8 @@ export interface ScenarioFixture {
   label: string;
   primaryTrigger: TriggerType;
   providerNeeds: ProviderNeed[];
+  // Recorded test request provenance, never a field sent by Scenario Console.
+  eventRouteArriveBy?: string;
   context: ScenarioContextInput;
   preferences: UserPreferences;
   providers: {
