@@ -5,11 +5,20 @@ const input = context('2026-10-01T15:10:00+09:00');
 const origin = { latitude: 35.658581, longitude: 139.745433 };
 export const upcomingTransit: ScenarioFixture = {
   id: 'upcoming-transit', label: '予定前の移動', primaryTrigger: 'UPCOMING_EVENT_TRANSIT',
-  providerNeeds: ['geocode-event-location', 'route-to-next-event'],
+  providerNeeds: ['geocode-event-location', 'route-to-next-event'], eventRouteArriveBy: '2026-10-01T15:50:00+09:00',
   context: { ...input, location: { ...input.location, ...origin }, calendar: [event] }, preferences,
   providers: {
     geocoding: { status: 'ok', data: [{ ...position, provider: 'amazon-location', placeId: 'synthetic-station-1', name: 'Synthetic station', confidence: 0.98 }] },
     places: unrequested(), weather: unrequested(),
     routes: { status: 'ok', data: [route(origin, '2026-10-01T15:10:00+09:00', '2026-10-01T15:44:00+09:00', 34)] }
   }
+};
+
+export const upcomingTransitNoLocation: ScenarioFixture = {
+  ...upcomingTransit, label: '予定の場所が未取得',
+  context: { ...upcomingTransit.context, calendar: [{ ...event, location: null }] }
+};
+export const upcomingTransitUnavailable: ScenarioFixture = {
+  ...upcomingTransit, label: '公共交通の未対応',
+  providers: { ...upcomingTransit.providers, routes: { status: 'unavailable', data: null } }
 };
