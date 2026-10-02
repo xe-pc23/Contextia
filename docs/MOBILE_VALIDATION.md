@@ -115,6 +115,56 @@ bundle. It needs reachable Metro and is not a standalone, universally compatible
 artifact. No emulator or Android device was installed/launched for this check. Health Connect runtime,
 permission UI, background grant, native auth, sensors and OS notification delivery are still unverified.
 
+## Android emulator preparation — 2026-10-03 08:23 JST
+
+The stable official Emulator 37.2.12 and API 36 default `arm64-v8a` system image revision 2
+were installed under the already accepted Android SDK license; no new license prompt was accepted.
+The dedicated `contextia-dev-api36` AVD uses the built-in Pixel 8 profile, 2 GiB RAM and four cores.
+Hypervisor.Framework acceleration passed. The emulator reported `sys.boot_completed=1`, SDK 36
+and `arm64-v8a`. The APK above installed successfully, and package lookup found `com.contextia.dev`.
+Metro returned `packager-status:running`; `adb reverse` listed the local port 8081 mapping.
+
+The observed preparation commands, from the repository root, are:
+
+```bash
+CONTEXTIA_ANDROID_SDK="$HOME/Library/Android/sdk"
+"$CONTEXTIA_ANDROID_SDK/emulator/emulator" -avd contextia-dev-api36 \
+  -no-snapshot-load -no-snapshot-save -no-boot-anim
+```
+
+In another terminal, start Metro as described above, then install and connect the development build:
+
+```bash
+CONTEXTIA_ANDROID_SDK="$HOME/Library/Android/sdk"
+"$CONTEXTIA_ANDROID_SDK/platform-tools/adb" -s emulator-5554 install \
+  apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
+"$CONTEXTIA_ANDROID_SDK/platform-tools/adb" -s emulator-5554 reverse tcp:8081 tcp:8081
+```
+
+Choose the actual emulator serial from `adb devices` if it differs. These results prove emulator
+boot, installation and host Metro preparation. The owner's
+[08:23 development-client screenshot](hackathon/evidence/android-devclient-6c5b165.png) shows
+the native Expo launcher for the installed `Contextia dev` build. After the owner entered
+`http://127.0.0.1:8081`, Metro bundled 971 modules and the owner's
+[08:25 startup screenshot](hackathon/evidence/android-startup-6c5b165.png) showed Contextia's
+Japanese signed-out screen behind the Expo menu. Metro served `fc58de4` (app source unchanged
+from `6ecc2e7`); the APK is the `6c5b165` artifact above. A read-only bounded app-process log check
+found `Running "main"`, zero ReactNativeJS error lines and zero `FATAL EXCEPTION` lines in 298
+retrieved lines; raw logs were not printed or saved. This is startup evidence, not a complete
+runtime error audit or authenticated backend proof.
+
+The native screen-control tool could not bind this emulator's unbundled Qt executable; the owner
+performed these UI actions and no substitute tool controlled the UI. Permission UI, PKCE,
+Health Connect reads, notification and background rows remain open. The image contains
+`com.android.healthconnect.controller`; package presence alone is not a permission/read result.
+The owner was asked to close the Expo menu with its `×` and open sign-in. An empty Health Connect
+store stays unavailable; it is not zero-step proof.
+
+The owner then paused Android work to prioritize iPhone hardware testing under the deadline.
+The emulator was stopped; its AVD/APK and startup evidence were preserved. No Android sign-in
+success is claimed. The owner subsequently requested an iPhone/Mac update interruption; Metro
+was stopped and the next native task is wireless iPhone availability and Personal Team signing.
+
 ## Foreground Simulator evidence — 2026-10-03 07:05–07:30 JST
 
 Backend version: `5f82d7b63ce043e5a41aec1e4a579efb8cb3c843`, dev. Native binary was the

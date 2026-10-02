@@ -274,3 +274,14 @@ No credentials, OAuth parameters or AWS identity fields are included. No AWS res
 browser-policy workaround was performed. This closes the MCP connection-recovery check; a UI
 screenshot is separate evidence. Android runtime/hardware, OS delivery and owner-controlled prod
 release gates remain open.
+
+## Android emulator startup — 2026-10-03 08:25 JST
+
+The dedicated API 36 arm64 emulator booted, the previously inspected Debug APK installed, and
+the owner connected its development client to localhost Metro. Owner-provided secret-free images
+show the native launcher and Contextia's Japanese signed-out screen. Metro bundled 971 modules;
+a bounded app-process log observation found main startup and no ReactNativeJS error or fatal
+exception in 298 retrieved lines. `docs/MOBILE_VALIDATION.md` records artifact/source versions,
+reproduction commands, image references and the limited log evidence. Independent read-only review
+found no documentation/privacy issue. The native UI tool cannot bind this emulator; the owner
+performs its screen actions. PKCE, permission and native capability rows remain open.

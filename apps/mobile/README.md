@@ -84,6 +84,8 @@ Use the pinned Node version above on PATH. The generated, ignored APK is
 `android/app/build/outputs/apk/debug/app-debug.apk`. It uses a Debug certificate and requires
 reachable Metro; it is not a standalone release build. Compilation/manifest/signature evidence is
 in [Mobile validation](../../docs/MOBILE_VALIDATION.md). Android runtime/hardware checks remain open.
+The local API 36 arm64 emulator has booted and the APK displayed Contextia's signed-out screen;
+the same validation document records its Metro port mapping and the remaining native checks.
 Rebuild native projects after changing modules or config plugins.
 
 ## Foreground flow and privacy
