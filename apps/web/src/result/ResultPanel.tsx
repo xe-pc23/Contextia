@@ -9,7 +9,7 @@ import { ProviderStatusPanel } from './ProviderStatusPanel.js';
 import { RecommendationCards } from './RecommendationCards.js';
 import { UsedSignals } from './UsedSignals.js';
 
-const SENT_CONTEXT_LABEL = '送信した正規化コンテキストを表示（開発者向け）';
+const SENT_CONTEXT_LABEL = '送信したコンテキストを表示（共通スキーマ検証済み）';
 
 function httpFailureText(status: number): { title: string; hint: string } {
   if (status === 400) return { title: '入力がAPIの検証で拒否されました。', hint: '下の詳細を確認して入力を修正してください。' };
@@ -106,10 +106,13 @@ function EvaluationView({ result, requestId, elapsedMs, timeZone }: { result: Ev
 }
 
 /** Shows only API responses that passed the shared contract; it never fabricates a result. */
-export function ResultPanel({ state, timeZone }: { state: RunState; timeZone: string }) {
+export function ResultPanel({ state, timeZone, inputsChanged = false }: { state: RunState; timeZone: string; inputsChanged?: boolean }) {
   return (
     <section className="panel result" aria-labelledby="result-heading" aria-live="polite" aria-busy={state.status === 'running'}>
       <h2 id="result-heading">評価結果</h2>
+      {state.status !== 'idle' && inputsChanged ? (
+        <p className="warning">入力は送信時から変更されています。この欄は送信したコンテキストの評価を表示します。変更後の入力は、次の実行で評価します。</p>
+      ) : null}
       {state.status === 'idle' ? (
         <p className="muted">まだ評価していません。「シナリオを実行」を押すと、モバイルと同じ評価APIの結果をここに表示します。</p>
       ) : null}

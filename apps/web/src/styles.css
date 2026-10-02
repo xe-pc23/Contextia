@@ -78,6 +78,9 @@ button.primary:disabled { background: #e6ecf0; border-color: #e6ecf0; color: #6b
 .shortcuts, .presets { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 4px; }
 .presets { margin-bottom: 16px; }
 .presets .hint { flex-basis: 100%; }
+.preset { flex: 1 1 230px; text-align: left; }
+.preset-label { display: block; font-weight: 600; }
+.preset-description { display: block; margin-top: 4px; font-size: 12px; line-height: 1.6; color: var(--muted); }
 
 .event-list { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 12px; }
 .event-row { border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: #fafcfd; }

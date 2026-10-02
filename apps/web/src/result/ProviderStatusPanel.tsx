@@ -10,7 +10,7 @@ export function ProviderStatusPanel({ statuses }: { statuses: ProviderStatusMap 
       <h3 id="provider-status-heading">プロバイダの状態</h3>
       {degraded.length > 0 ? (
         <p className="warning">
-          {degraded.map(key => providerLabels[key]).join('・')} が正常に応答していません。取得できたデータだけで評価しています。
+          {degraded.map(key => providerLabels[key]).join('・')} から十分なデータを取得できませんでした。評価結果と各プロバイダの状態を確認してください。
         </p>
       ) : null}
       <ul className="providers">
