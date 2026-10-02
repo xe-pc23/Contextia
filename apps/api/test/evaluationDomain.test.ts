@@ -19,6 +19,22 @@ const guard = (deliveryMode: 'preview' | 'proactive', userState: PersistedUserSt
   domain.checkDeliveryGuards({ now: NOW, deliveryMode, preferences, state: userState, contextFingerprint: 'fp-1', ...(opportunity ? { opportunity } : {}) });
 
 describe('createEvaluationDomain (lane A guards and detectors)', () => {
+  it.each(['denied', 'unavailable'] as const)('excludes calendar-dependent candidates before enrichment when calendar is %s', async calendarStatus => {
+    const full = createEvaluationDomain();
+    const context = { ...getScenarioInput('free-time'), calendar: [], calendarStatus };
+    const candidates = await full.detectCandidates({ context, preferences, now: NOW });
+    expect(candidates.map(candidate => candidate.type)).toEqual(['WEATHER_ADAPTATION']);
+    const withSteps = { ...context, activity: preview.activity };
+    const independent = await full.detectCandidates({ context: withSteps, preferences, now: NOW });
+    expect(independent.map(candidate => candidate.type)).toEqual(['STEP_GOAL_REST', 'WEATHER_ADAPTATION']);
+  });
+
+  it('still treats a granted empty calendar as free time', async () => {
+    const candidates = await createEvaluationDomain().detectCandidates({
+      context: { ...getScenarioInput('free-time'), calendar: [], calendarStatus: 'granted' }, preferences, now: NOW
+    });
+    expect(candidates.some(candidate => candidate.type === 'FREE_TIME_NEARBY')).toBe(true);
+  });
   it('detects STEP_GOAL_REST with a local-date anchor for a reached goal', async () => {
     const candidates = await domain.detectCandidates({ context: preview, preferences, now: NOW });
     expect(candidates).toEqual([expect.objectContaining({ type: 'STEP_GOAL_REST', anchorKey: '2026-10-01', providerNeeds: ['places-near-current'] })]);

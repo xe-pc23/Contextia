@@ -100,6 +100,16 @@ function numberAt(values: readonly (number | null)[] | undefined, index: number)
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+/** Accumulated hourly rain is labelled by the end of its preceding hour. */
+function rainIndex(times: readonly string[] | undefined, index: number, offset: number): number {
+  const start = times?.[index];
+  const next = times?.[index + 1];
+  if (start === undefined || next === undefined) return -1;
+  const startAt = toSourceTimestamp(start, offset);
+  const endAt = toSourceTimestamp(next, offset);
+  return startAt !== null && endAt !== null && Date.parse(endAt) - Date.parse(startAt) === 3_600_000 ? index + 1 : -1;
+}
+
 function dateStringAt(values: readonly (string | null)[] | undefined, index: number, offset: number): string | undefined {
   const value = values?.[index];
   if (value === null || value === undefined) return undefined;
@@ -154,10 +164,11 @@ function normalizeWeather(raw: unknown, input: WeatherInput, now: Date): Provide
 
   const current = response.current;
   const selectedIndex = targetIndex;
+  const selectedRainIndex = rainIndex(hourly?.time, selectedIndex, offset);
   const temperature = canUseCurrent ? current?.temperature_2m ?? null : numberAt(hourly?.temperature_2m, selectedIndex);
   const feelsLike = canUseCurrent ? current?.apparent_temperature ?? null : numberAt(hourly?.apparent_temperature, selectedIndex);
-  const precipitation = canUseCurrent ? current?.precipitation ?? null : numberAt(hourly?.precipitation, selectedIndex);
-  const precipitationProbability = numberAt(hourly?.precipitation_probability, selectedIndex);
+  const precipitation = canUseCurrent ? current?.precipitation ?? null : numberAt(hourly?.precipitation, selectedRainIndex);
+  const precipitationProbability = numberAt(hourly?.precipitation_probability, selectedRainIndex);
   const conditionCode = canUseCurrent ? current?.weather_code : hourly?.weather_code?.[selectedIndex];
   const condition = weatherCondition(conditionCode);
 
@@ -169,14 +180,15 @@ function normalizeWeather(raw: unknown, input: WeatherInput, now: Date): Provide
       const startAt = toSourceTimestamp(time, offset);
       if (startAt === null) continue;
       const endAt = new Date(Date.parse(startAt) + 60 * 60 * 1_000).toISOString();
+      const accumulatedIndex = rainIndex(hourly.time, index, offset);
       forecast.push({
         startAt,
         endAt,
         condition: weatherCondition(hourly.weather_code?.[index]),
         temperatureCelsius: numberAt(hourly.temperature_2m, index),
         feelsLikeCelsius: numberAt(hourly.apparent_temperature, index),
-        precipitationProbability: numberAt(hourly.precipitation_probability, index),
-        precipitationMillimeters: numberAt(hourly.precipitation, index)
+        precipitationProbability: numberAt(hourly.precipitation_probability, accumulatedIndex),
+        precipitationMillimeters: numberAt(hourly.precipitation, accumulatedIndex)
       });
     }
   }

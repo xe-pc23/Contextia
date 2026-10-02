@@ -26,6 +26,13 @@ function setup() {
 }
 
 describe('recommendation chat', () => {
+  it('preserves unavailable calendar status for follow-up context', async () => {
+    const { request, state, model } = setup();
+    state.getContextSnapshot.mockResolvedValue(ok({ ...record.contextReference, mode: 'real', location: { latitude: 35.68, longitude: 139.76 },
+      calendar: [], calendarStatus: 'denied', createdAt: NOW.toISOString(), expiresAt: NOW.getTime() / 1000 + 600 }));
+    expect((await request()).statusCode).toBe(200);
+    expect(model.followUp.mock.calls[0]?.[0].context).toMatchObject({ calendar: [], calendarStatus: 'denied' });
+  });
   it('denies cross-user access before reading profile, context or history', async () => {
     const { request, state, model } = setup();
     expect((await request('Private question', 'another-user')).statusCode).toBe(404);

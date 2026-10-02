@@ -4,10 +4,12 @@ import { routeModeLabels } from './labels.js';
 
 const actionLabels = { MAP: '地図で開く', WEBSITE: 'Webサイトを開く', TRANSIT: '経路を開く', NONE: '操作なし' } as const;
 
-function ActionLink({ action }: { action: ApiRecommendationItem['action'] }) {
+function ActionLink({ action, place }: Pick<ApiRecommendationItem, 'action' | 'place'>) {
   if (action.type === 'NONE') return null;
   // URLs passed the shared contract (HTTP(S) only) before reaching this component.
-  if (action.url) return <a className="action" href={action.url} target="_blank" rel="noopener noreferrer">{actionLabels[action.type]}</a>;
+  const url = action.url ?? (action.type === 'MAP' && place
+    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${place.latitude},${place.longitude}`)}` : null);
+  if (url) return <a className="action" href={url} target="_blank" rel="noopener noreferrer">{actionLabels[action.type]}</a>;
   return <p className="muted">操作: {actionLabels[action.type]}（リンクなし）</p>;
 }
 
@@ -45,7 +47,7 @@ export function RecommendationCards({ items, timeZone }: { items: readonly ApiRe
               </p>
             ) : null}
             {item.route ? <RouteSummary route={item.route} timeZone={timeZone} /> : null}
-            <ActionLink action={item.action} />
+            <ActionLink action={item.action} place={item.place} />
           </article>
         </li>
       ))}

@@ -29,6 +29,7 @@ export interface ScenarioForm {
   readonly stepsToday: string;
   readonly stepGoal: string;
   readonly events: readonly CalendarEventForm[];
+  readonly calendarStatus?: ScenarioContextInput['calendarStatus'];
   readonly nextEventNumber: number;
   readonly interests: string;
   readonly notificationFrequency: NotificationFrequency;
@@ -84,6 +85,7 @@ export function formFromScenarioInput(input: ScenarioContextInput): ScenarioForm
       id: event.id, title: event.title, startAt: wall(event.startAt), endAt: wall(event.endAt),
       location: event.location ?? '', allDay: event.allDay ?? false
     })),
+    ...(input.calendarStatus === undefined ? {} : { calendarStatus: input.calendarStatus }),
     nextEventNumber: 1,
     interests: (preferences.interests ?? []).join(', '),
     notificationFrequency: preferences.notificationFrequency ?? 'normal',
@@ -278,6 +280,7 @@ export function buildScenarioRequest(form: ScenarioForm): BuildResult {
       ? { stepsToday: null, stepGoal, stepSource: 'scenario' }
       : { stepsToday, stepGoal, stepGoalReached: stepsToday >= stepGoal, stepSource: 'scenario', confidence: 'high' },
     calendar,
+    ...(form.calendarStatus === undefined ? {} : { calendarStatus: form.calendarStatus }),
     preferencesOverride: {
       interests: parseInterests(form.interests), stepGoal, notificationFrequency: form.notificationFrequency,
       notificationsEnabled: form.notificationsEnabled, locale: form.locale.trim(), timezone

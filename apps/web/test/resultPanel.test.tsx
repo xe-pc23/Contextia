@@ -85,6 +85,13 @@ describe('notify result', () => {
     expect(html).toContain('href="https://example.invalid/map/1" target="_blank" rel="noopener noreferrer"');
   });
 
+  it('opens place coordinates when a MAP action has no explicit URL', () => {
+    const item = { ...recommendationItem(1), action: { type: 'MAP' as const } };
+    const html = success({ ...notifyResult(1), recommendations: [item] });
+    expect(html).toContain(`href="https://www.google.com/maps/search/?api=1&amp;query=${item.place?.latitude}%2C${item.place?.longitude}"`);
+    expect(html).not.toContain('リンクなし');
+  });
+
   it('renders route facts in the scenario timezone', () => {
     const item = { ...recommendationItem(1), place: null, route: { mode: 'transit' as const, durationMinutes: 34,
       departAt: '2026-10-01T06:10:00Z', arriveAt: '2026-10-01T06:44:00Z', transfers: 1,

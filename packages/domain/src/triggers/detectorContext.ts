@@ -12,6 +12,7 @@ export interface DetectorContext {
   readonly location: LocationContext;
   readonly activity?: ActivityContext;
   readonly calendar: readonly CalendarEventContext[];
+  readonly calendarStatus?: ContextInput['calendarStatus'];
   readonly preferences: UserPreferences;
   readonly stepGoal: number;
   readonly evaluationAt: Date;
@@ -42,7 +43,8 @@ export function normalizeDetectorContext(input: NormalizeDetectorContextInput): 
     mode: context.mode,
     location: context.location,
     ...(context.activity ? { activity: context.activity } : {}),
-    calendar: context.calendar,
+    calendar: context.calendarStatus === undefined || context.calendarStatus === 'granted' ? context.calendar : [],
+    calendarStatus: context.calendarStatus ?? 'granted',
     preferences: input.preferences,
     stepGoal: context.activity?.stepGoal ?? input.preferences.stepGoal,
     evaluationAt,

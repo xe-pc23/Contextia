@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { CalculateRoutesCommand, GeoRoutesClient } from '@aws-sdk/client-geo-routes';
 import type { CalculateRoutesCommandInput } from '@aws-sdk/client-geo-routes';
-import { GeoPointSchema, RouteAttributionSchema, RouteModeSchema, RouteSummarySchema, TimestampSchema } from '@contextia/contracts';
+import { ceilNanosecondsToMilliseconds, GeoPointSchema, RouteAttributionSchema, RouteModeSchema, RouteSummarySchema, TimestampSchema, timestampNanoseconds } from '@contextia/contracts';
 import type { ProviderResult, RouteSummary } from '@contextia/contracts';
 import { z } from 'zod';
 import type { RouteInput, RouteProvider } from '../ports/RouteProvider.js';
@@ -132,11 +132,7 @@ function failedRoute(status: 'unavailable' | 'error', code: string): NormalizedR
 }
 
 const NANOS_PER_SECOND = 1_000_000_000n;
-function timestampNanos(value: string): bigint {
-  const fraction = /\.(\d{1,9})(?:Z|[+-]\d{2}:\d{2})$/.exec(value)?.[1] ?? '';
-  const submillisecondNanos = Number(fraction.padEnd(9, '0')) % 1_000_000;
-  return BigInt(Date.parse(value)) * 1_000_000n + BigInt(submillisecondNanos);
-}
+const timestampNanos = timestampNanoseconds;
 
 function ceilSeconds(nanos: bigint): number {
   return Number((nanos + NANOS_PER_SECOND - 1n) / NANOS_PER_SECOND);
@@ -216,7 +212,9 @@ function normalizeRoute(raw: unknown, input: z.infer<typeof RouteInputSchema>, n
       || (scheduleNanos !== undefined && reportedTravelSeconds !== undefined
         && !agreesWithIntegerSeconds(reportedTravelSeconds, scheduleNanos))
       || (reportedDurationSeconds !== undefined && travelSeconds !== undefined
-        && Math.abs(reportedDurationSeconds - (beforeSeconds + travelSeconds + afterSeconds)) > (fractionalSchedule ? 1 : 0))
+        && (scheduleNanos !== undefined
+          ? !agreesWithIntegerSeconds(reportedDurationSeconds, scheduleNanos + BigInt(beforeSeconds + afterSeconds) * NANOS_PER_SECOND)
+          : reportedDurationSeconds !== beforeSeconds + travelSeconds + afterSeconds))
       || durationSeconds < beforeSeconds + afterSeconds) {
       return failedRoute('unavailable', 'DURATION_UNRESOLVED');
     }
@@ -225,7 +223,8 @@ function normalizeRoute(raw: unknown, input: z.infer<typeof RouteInputSchema>, n
       || details.Transport?.ShortRouteName?.trim()
       || details.Transport?.LongRouteName?.trim();
     legs.push({
-      mode: normalizeMode(rawLeg.TravelMode), durationMinutes: durationSeconds / 60,
+      mode: normalizeMode(rawLeg.TravelMode), durationMinutes: scheduleNanos === undefined ? durationSeconds / 60
+        : (ceilNanosecondsToMilliseconds(scheduleNanos) / 1000 + beforeSeconds + afterSeconds) / 60,
       ...(departAt === undefined ? {} : { departAt }),
       ...(arriveAt === undefined ? {} : { arriveAt }),
       ...(lineName ? { lineName } : {})
@@ -255,8 +254,7 @@ function normalizeRoute(raw: unknown, input: z.infer<typeof RouteInputSchema>, n
       fractionalTiming ||= gapNanos % NANOS_PER_SECOND !== 0n;
       const accountedSeconds = previous.afterSeconds + current.beforeSeconds;
       const accountedNanos = BigInt(accountedSeconds) * NANOS_PER_SECOND;
-      if (gapNanos < accountedNanos && (gapNanos % NANOS_PER_SECOND === 0n
-        || gapNanos + NANOS_PER_SECOND <= accountedNanos)) return failedRoute('unavailable', 'DURATION_UNRESOLVED');
+      if (gapNanos < accountedNanos) return failedRoute('unavailable', 'DURATION_UNRESOLVED');
       // Parking/boarding steps are already in the overviews; add only the remaining wait.
       durationSeconds += gapNanos > accountedNanos ? ceilSeconds(gapNanos - accountedNanos) : 0;
     }
@@ -269,6 +267,13 @@ function normalizeRoute(raw: unknown, input: z.infer<typeof RouteInputSchema>, n
     if (route.Summary.Duration > durationSeconds + (fractionalTiming ? 1 : 0)) return failedRoute('unavailable', 'DURATION_UNRESOLVED');
     if (route.Summary.Duration !== durationSeconds) warnings.push('DURATION_MISMATCH');
     durationSeconds = Math.max(durationSeconds, route.Summary.Duration);
+  }
+  if (scheduled) {
+    const elapsed = timings.at(-1)!.arrival! - timings[0]!.departure!;
+    // Integer summaries may round a fraction; reject unexplained extra time before using the actual schedule.
+    if (route.Summary?.Duration !== undefined && BigInt(route.Summary.Duration) * NANOS_PER_SECOND > elapsed
+      && !agreesWithIntegerSeconds(route.Summary.Duration, elapsed)) return failedRoute('unavailable', 'DURATION_UNRESOLVED');
+    durationSeconds = ceilNanosecondsToMilliseconds(elapsed) / 1000;
   }
   const normalizedFacts = {
     mode: input.mode, origin: input.origin, destination: input.destination,

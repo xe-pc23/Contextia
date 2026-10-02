@@ -17,6 +17,11 @@ const context = {
 };
 
 describe('v1 context validation', () => {
+  it.each(['denied', 'unavailable'] as const)('distinguishes %s calendar from an available empty calendar', calendarStatus => {
+    expect(ContextInputSchema.safeParse({ ...context, calendar: [], calendarStatus }).success).toBe(true);
+    expect(ContextInputSchema.safeParse({ ...context, calendarStatus }).success).toBe(false);
+    expect(ContextInputSchema.safeParse({ ...context, calendarStatus: 'granted' }).success).toBe(true);
+  });
   it('accepts the two production mode/delivery pairs without changing an offset', () => {
     expect(ContextInputSchema.parse(context).scenarioTime).toBe(timestamp);
     expect(ContextInputSchema.parse({ ...context, mode: 'real', deliveryMode: 'proactive', location: { ...context.location, source: 'gps' } }).mode).toBe('real');

@@ -142,6 +142,14 @@ function hasFalseItems(value: unknown): boolean {
 }
 
 describe('BedrockRecommendationModel', () => {
+  it('validates a single fenced JSON object without accepting surrounding prose', async () => {
+    const fenced = { output: { message: { content: [{ text: `\`\`\`json\n${JSON.stringify(notifyDecision)}\n\`\`\`` }] } } };
+    const fake = fakeClient([fenced]);
+    await expect(model(fake.client).decide(modelInput())).resolves.toMatchObject({ status: 'ok', data: notifyDecision });
+    expect(fake.requests).toHaveLength(1);
+    const mixed = { output: { message: { content: [{ text: `Extra instructions\n\`\`\`json\n${JSON.stringify(notifyDecision)}\n\`\`\`` }] } } };
+    await expect(model(fakeClient([mixed, mixed]).client).decide(modelInput())).resolves.toMatchObject({ status: 'error', code: 'INVALID_MODEL_OUTPUT' });
+  });
   it('does not call Bedrock when deterministic evaluation found no candidates', async () => {
     const fake = fakeClient([]);
     const result = await model(fake.client).decide(modelInput({ candidates: [] }));

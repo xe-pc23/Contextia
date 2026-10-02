@@ -34,8 +34,11 @@ export class WebAuthSession {
   getSnapshot = (): AuthSnapshot => this.snapshot;
   subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   private publish(snapshot: AuthSnapshot): void { this.snapshot = snapshot; this.listeners.forEach(listener => listener()); }
+  private clearTransaction(): void {
+    try { this.ports.storage.removeItem(this.storageKey); } catch { /* Storage denial cannot retain the in-memory session. */ }
+  }
   invalidate = (): void => {
-    this.generation++; this.session = null; this.ports.storage.removeItem(this.storageKey);
+    this.generation++; this.session = null; this.clearTransaction();
     this.publish({ status: 'signed-out', message: 'ログインし直してください。' });
   };
   async signIn(): Promise<void> {
@@ -60,11 +63,11 @@ export class WebAuthSession {
   private async completeLogin(callback: string): Promise<void> {
     const url = new URL(callback);
     if (!url.searchParams.has('code') && !url.searchParams.has('error')) { this.publish({ status: 'signed-out', message: null }); return; }
-    const stored = this.ports.storage.getItem(this.storageKey);
-    this.ports.storage.removeItem(this.storageKey);
-    this.ports.clearCallback();
     const generation = this.generation;
     try {
+      let stored: string | null;
+      try { stored = this.ports.storage.getItem(this.storageKey); }
+      finally { this.clearTransaction(); this.ports.clearCallback(); }
       const transaction = TransactionSchema.parse(stored === null ? null : JSON.parse(stored) as unknown);
       const age = this.ports.now() - transaction.createdAt;
       const code = url.searchParams.get('code');

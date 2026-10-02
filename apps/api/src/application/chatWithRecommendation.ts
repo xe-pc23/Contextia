@@ -49,7 +49,8 @@ export function createChatWithRecommendation(deps: ChatDependencies): ChatWithRe
       context = ContextInputSchema.parse({
         mode: 'real', deliveryMode: 'proactive', capturedAt: snapshot.data.capturedAt,
         location: { ...snapshot.data.location, capturedAt: snapshot.data.capturedAt, source: 'gps' },
-        ...(snapshot.data.activity ? { activity: snapshot.data.activity } : {}), calendar: snapshot.data.calendar
+        ...(snapshot.data.activity ? { activity: snapshot.data.activity } : {}), calendar: snapshot.data.calendar,
+        ...(snapshot.data.calendarStatus === undefined ? {} : { calendarStatus: snapshot.data.calendarStatus })
       });
     }
     const messages = conversation?.messages ?? [];

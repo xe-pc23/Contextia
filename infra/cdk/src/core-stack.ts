@@ -85,6 +85,7 @@ export class ContextiaCoreStack extends Stack {
     // Model IDs and permission resources are deploy-time parameters, never repository constants.
     const modelId = new CfnParameter(this, 'BedrockModelId', { type: 'String', minLength: 1, description: 'Enabled Bedrock model or inference profile ID.' });
     const modelRegion = new CfnParameter(this, 'BedrockRegion', { type: 'String', default: target.region, allowedPattern: '[a-z]{2}(-gov)?-[a-z]+-[0-9]+' });
+    const structuredOutput = new CfnParameter(this, 'BedrockStructuredOutput', { type: 'String', default: 'true', allowedValues: ['true', 'false'], description: 'Enable native JSON Schema only when the selected model supports it; local validation always applies.' });
     const modelResources = new CfnParameter(this, 'BedrockModelResources', {
       type: 'CommaDelimitedList', allowedPattern: 'arn:aws:bedrock:[a-z0-9-]+:[0-9]*:(foundation-model|inference-profile|application-inference-profile)/[A-Za-z0-9._:/-]+',
       description: 'Exact model/inference-profile ARNs, including destination models for cross-region profiles; no wildcards.'
@@ -205,7 +206,7 @@ export class ContextiaCoreStack extends Stack {
         TABLE_NAME: table.tableName,
         BEDROCK_MODEL_ID: modelId.valueAsString,
         BEDROCK_REGION: modelRegion.valueAsString,
-        BEDROCK_STRUCTURED_OUTPUT: 'true',
+        BEDROCK_STRUCTURED_OUTPUT: structuredOutput.valueAsString,
         WEATHER_ENDPOINT: 'https://api.open-meteo.com/v1/forecast',
         STATE_TIMEOUT_MS: '1500', PLACES_TIMEOUT_MS: '2500', WEATHER_TIMEOUT_MS: '2000', ROUTES_TIMEOUT_MS: '3000', MODEL_TIMEOUT_MS: '7000',
         ENRICHMENT_TIMEOUT_MS: '7000', EVALUATION_TIMEOUT_MS: '17000', MAX_ROUTE_PLACES: '6', ROUTE_CONCURRENCY: '4', EVENT_ROUTE_MODE: 'transit',

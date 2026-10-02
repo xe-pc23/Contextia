@@ -103,6 +103,7 @@ function snapshotOf(context: ContextInput, evaluationId: string, now: Date, expi
     location: { latitude, longitude, ...(accuracyMeters === undefined ? {} : { accuracyMeters }) },
     ...(context.activity ? { activity: { ...(steps === undefined ? {} : { stepsToday: steps }), ...(confidence ? { confidence } : {}) } } : {}),
     calendar: context.calendar.map(event => ({ ...event, id: hashCalendarId(event.id) })),
+    ...(context.calendarStatus === undefined ? {} : { calendarStatus: context.calendarStatus }),
     createdAt: now.toISOString(), expiresAt
   };
 }
@@ -229,7 +230,7 @@ export function createEvaluateContext(deps: EvaluationDependencies): EvaluateCon
         ...(normalized.mode === 'simulation' ? { normalizedContext: {
           mode: 'simulation', evaluationAt: normalized.evaluationAt.toISOString(), timezone: normalized.timezone, stepGoal: normalized.stepGoal,
           location: normalized.location, ...(normalized.activity ? { activity: normalized.activity } : {}),
-          calendar: [...normalized.calendar], preferences: normalized.preferences
+          calendar: [...normalized.calendar], ...(context.calendarStatus === undefined ? {} : { calendarStatus: context.calendarStatus }), preferences: normalized.preferences
         } } : {})
       };
       const silent = (decisionReason: string, guardCodes: GuardCode[], usedSignals: EvaluationResult['usedSignals'] = []): EvaluationResult =>

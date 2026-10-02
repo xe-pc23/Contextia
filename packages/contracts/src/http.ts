@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ActivityContextSchema, CalendarEventContextSchema, ContextInputSchema, LocationContextSchema, OpaqueIdSchema, ScenarioContextInputSchema, TimezoneSchema, UserPreferencesSchema, TimestampSchema } from './context.js';
+import { ActivityContextSchema, CalendarEventContextSchema, CalendarStatusSchema, ContextInputSchema, LocationContextSchema, OpaqueIdSchema, ScenarioContextInputSchema, TimezoneSchema, UserPreferencesSchema, TimestampSchema } from './context.js';
 import { GuardCodeSchema, ScenarioIdSchema, SignalNameSchema, TriggerTypeSchema, UrgencySchema } from './enums.js';
 import { ProviderStatusMapSchema, WeatherReadingSchema } from './enrichment.js';
 import { ApiRecommendationItemSchema } from './recommendation.js';
@@ -32,7 +32,7 @@ export const DeliveryDiagnosticsSchema = z.discriminatedUnion('mode', [
 export const NormalizedPreviewContextSchema = z.strictObject({
   mode: z.literal('simulation'), evaluationAt: TimestampSchema, timezone: TimezoneSchema,
   stepGoal: z.number().int().min(1).max(200_000), location: LocationContextSchema,
-  activity: ActivityContextSchema.optional(), calendar: z.array(CalendarEventContextSchema).max(100), preferences: UserPreferencesSchema
+  activity: ActivityContextSchema.optional(), calendar: z.array(CalendarEventContextSchema).max(100), calendarStatus: CalendarStatusSchema.optional(), preferences: UserPreferencesSchema
 });
 const evaluationFields = {
   evaluationId: OpaqueIdSchema, decisionReason: z.string().min(1), usedSignals: z.array(SignalNameSchema),

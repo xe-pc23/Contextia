@@ -19,6 +19,7 @@ import {
   ApiRecommendationItemSchema,
   CalendarDateSchema,
   CalendarEventContextSchema,
+  CalendarStatusSchema,
   EvaluationResultSchema,
   GeoPointSchema,
   ProfileSchema,
@@ -130,6 +131,7 @@ const ContextSnapshotInputSchema = z.strictObject({
   location: LocationSnapshotSchema,
   activity: ActivitySnapshotSchema.optional(),
   calendar: z.array(CalendarEventContextSchema),
+  calendarStatus: CalendarStatusSchema.optional(),
   createdAt: TimestampSchema,
   expiresAt: PositiveEpochSchema
 });
@@ -423,6 +425,7 @@ function toSnapshot(raw: unknown, expectedPK: string, expectedSK: string): Conte
       ...(value.activity.confidence === undefined ? {} : { confidence: value.activity.confidence })
     } }),
     calendar: value.calendar,
+    ...(value.calendarStatus === undefined ? {} : { calendarStatus: value.calendarStatus }),
     createdAt: value.createdAt,
     expiresAt: value.expiresAt
   };
@@ -728,7 +731,8 @@ export class DynamoDbStateRepository implements StateRepository {
       PK: userKey(userId), SK: contextSortKey(context), entityType: 'ContextSnapshot',
       evaluationId: context.evaluationId, mode: context.mode, capturedAt: context.capturedAt,
       location: context.location, ...(context.activity === undefined ? {} : { activity: context.activity }),
-      calendar: context.calendar, createdAt: processedAt, expiresAt, schemaVersion: 1
+      calendar: context.calendar, ...(context.calendarStatus === undefined ? {} : { calendarStatus: context.calendarStatus }),
+      createdAt: processedAt, expiresAt, schemaVersion: 1
     });
     if (snapshotItem === null) return invalidRequest();
     const updateNames: Record<string, string> = {

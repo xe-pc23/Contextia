@@ -62,6 +62,37 @@ const input = {
 };
 
 describe('OpenMeteoWeatherProvider', () => {
+  it.each(['2026-10-01T05:00:00.000Z', '2026-10-01T05:30:00.000Z'])('aligns accumulated rain with the following row at %s while retaining instantaneous fields', async at => {
+    const { provider } = testProvider({ clock: () => new Date('2026-10-01T04:59:00.000Z') });
+    await expect(provider.getWeather({ ...input, at })).resolves.toMatchObject({
+      data: { condition: 'clear', temperatureCelsius: 22, precipitationProbability: 10, precipitationMillimeters: 0,
+        forecast: [
+          { precipitationProbability: 10, precipitationMillimeters: 0, temperatureCelsius: 22 },
+          { precipitationProbability: 20, precipitationMillimeters: 1, temperatureCelsius: 24 },
+          { precipitationProbability: null, precipitationMillimeters: null, temperatureCelsius: 25 }
+        ] }
+    });
+  });
+
+  it('leaves rain unknown when the next row does not cover the exact next hour', async () => {
+    const { provider } = testProvider({ payload: weatherResponse({ hourly: {
+      time: ['2026-10-01T15:00', '2026-10-01T17:00'], temperature_2m: [24, 27], apparent_temperature: [26, 28],
+      precipitation_probability: [90, 100], precipitation: [2, 4], weather_code: [3, 61]
+    } }) });
+    await expect(provider.getWeather(input)).resolves.toMatchObject({ status: 'degraded', data: {
+      temperatureCelsius: 24, precipitationProbability: null, precipitationMillimeters: null,
+      forecast: [{ precipitationProbability: null, precipitationMillimeters: null }, { precipitationProbability: null, precipitationMillimeters: null }]
+    } });
+  });
+
+  it('keeps current precipitation and uses the next hourly probability', async () => {
+    const { provider } = testProvider({ clock: () => new Date('2026-10-01T05:16:00.000Z'),
+      payload: weatherResponse({ current: { time: '2026-10-01T14:15', interval: 900,
+        temperature_2m: 31, apparent_temperature: 32, precipitation: 3, weather_code: 61 } }) });
+    await expect(provider.getWeather({ ...input, at: '2026-10-01T05:15:00.000Z' })).resolves.toMatchObject({
+      data: { precipitationProbability: 10, precipitationMillimeters: 3, temperatureCelsius: 31 }
+    });
+  });
   it.each(['15', '30', '45'])('uses current conditions at the quarter-hour %s within their freshness interval', async minute => {
     const sourceTime = `2026-10-01T14:${minute}`;
     const sourceInstant = Date.parse(`2026-10-01T05:${minute}:00.000Z`);
@@ -165,8 +196,8 @@ describe('OpenMeteoWeatherProvider', () => {
         condition: 'cloudy',
         temperatureCelsius: 24,
         feelsLikeCelsius: 26,
-        precipitationProbability: 10,
-        precipitationMillimeters: 0,
+        precipitationProbability: 20,
+        precipitationMillimeters: 1,
         daily: {
           date: '2026-10-01', temperatureMinCelsius: 18, temperatureMaxCelsius: 25,
           sunriseAt: '2026-09-30T20:30:00.000Z', sunsetAt: '2026-10-01T08:30:00.000Z'

@@ -29,6 +29,7 @@ export function contextFingerprint(context: ContextInput): string {
     context.location.longitude.toFixed(3),
     String(Math.floor(at / TIME_BUCKET_MS)),
     steps === undefined || steps === null ? 'none' : String(Math.floor(steps / STEP_BUCKET)),
-    nextEvent ? `${hashCalendarId(nextEvent.id)}@${Date.parse(nextEvent.startAt)}` : 'none'
+    nextEvent ? `${hashCalendarId(nextEvent.id)}@${Date.parse(nextEvent.startAt)}` : 'none',
+    context.calendarStatus ?? 'granted'
   ].join('|'));
 }

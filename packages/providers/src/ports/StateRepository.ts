@@ -23,6 +23,7 @@ export interface ContextSnapshot extends ContextReference {
   activity?: Pick<ActivityContext, 'stepsToday' | 'confidence'>;
   // IDs are already hashed by the application; only the approved fields survive.
   calendar: CalendarEventContext[];
+  calendarStatus?: ContextInput['calendarStatus'];
   createdAt: string;
   expiresAt: number;
 }

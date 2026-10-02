@@ -1,5 +1,6 @@
 import { CalendarEventContextSchema, ContextInputSchema, type LocationContext } from '@contextia/contracts';
 import { describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
 import { getCalendarQueryWindow, getCalendarReadWindow } from '../src/context/calendarWindow';
 import { projectCalendarEvents } from '../src/context/calendarProjection';
 import { ContextCollector } from '../src/context/contextCollector';
@@ -35,6 +36,16 @@ class StubCalendarSource implements CalendarSource {
 }
 
 describe('Calendar context projection', () => {
+  it('distinguishes recurring instances and keeps equivalent start instants stable', async () => {
+    const window = getCalendarReadWindow(new Date('2026-05-01T12:00:00.000Z'));
+    const hash = async (identity: string) => createHash('sha256').update(identity).digest('hex');
+    const event = { id: 'recurring-series', title: 'Daily meeting', startDate: '2026-05-01T13:00:00Z', endDate: '2026-05-01T14:00:00Z' };
+    const projected = await projectCalendarEvents([event,
+      { ...event, startDate: '2026-05-02T13:00:00Z', endDate: '2026-05-02T14:00:00Z' }], window, hash);
+    expect(projected).toHaveLength(2); expect(projected[0]?.id).not.toBe(projected[1]?.id);
+    const offset = await projectCalendarEvents([{ ...event, startDate: '2026-05-01T22:00:00+09:00' }], window, hash);
+    expect(offset[0]?.id).toBe(projected[0]?.id);
+  });
   it('hashes the native ID and emits only contract-allowed fields', async () => {
     const window = getCalendarReadWindow(new Date(2026, 4, 1, 12));
     const projected = await projectCalendarEvents([{
@@ -96,7 +107,7 @@ describe('Calendar context projection', () => {
         startDate: new Date(window.endExclusive.getTime() - 60 * 60 * 1000),
         endDate: new Date(window.endExclusive.getTime() + 60 * 60 * 1000)
       }
-    ], window, async id => `hash-${id}`);
+    ], window, async id => `hash-${(JSON.parse(id) as [string, number])[0]}`);
 
     expect(events.map(event => event.id)).toEqual(['hash-starts-before-window', 'hash-ends-after-window']);
   });
@@ -136,7 +147,7 @@ describe('Calendar context projection', () => {
           endDate: '2026-05-02T00:00:00.000Z',
           allDay: true
         }
-      ], window, async id => `hash-${id}`, 'android');
+      ], window, async id => `hash-${(JSON.parse(id) as [string, number])[0]}`, 'android');
 
       expect(events).toEqual([{
         id: 'hash-today',
@@ -163,7 +174,7 @@ describe('Calendar context projection', () => {
         startDate: '2026-05-01T00:00:00.000Z',
         endDate: '2026-05-02T00:00:00.000Z',
         allDay: true
-      }], window, async id => `hash-${id}`, 'ios');
+      }], window, async id => `hash-${(JSON.parse(id) as [string, number])[0]}`, 'ios');
 
       expect(events[0]?.startAt).toBe('2026-05-01T00:00:00.000Z');
       expect(events[0]?.endAt).toBe('2026-05-02T00:00:00.000Z');
@@ -186,7 +197,7 @@ describe('Calendar context projection', () => {
       { id: 'ends-at-window-start', title: 'Outside before', startDate: new Date(2026, 3, 30, 23), endDate: window.startInclusive },
       { id: 'starts-at-window-end', title: 'Outside after', startDate: window.endExclusive, endDate: new Date(2026, 4, 5, 1) },
       { id: 'invalid', title: '', startDate: 'not-a-time', endDate: 'not-a-time' }
-    ], window, async id => `hash-${id}`);
+    ], window, async id => `hash-${(JSON.parse(id) as [string, number])[0]}`);
 
     expect(events).toHaveLength(100);
     expect(events[0]?.title).toBe('Event 0');
@@ -233,6 +244,7 @@ describe('ContextCollector', () => {
     expect(result.status).toBe('ready');
     if (result.status !== 'ready') throw new Error('Expected a ready context');
     expect(result.input.calendar).toEqual([]);
+    expect(result.input.calendarStatus).toBe('denied');
     expect(result.permissions).toEqual({ location: 'granted', calendar: 'denied', steps: 'unavailable' });
     expect(ContextInputSchema.safeParse(result.input).success).toBe(true);
   });

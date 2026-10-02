@@ -56,6 +56,15 @@ function setup(fixture: ScenarioFixture, primaryOnly = false) {
 }
 
 describe('Phase 2: five fixtures through the same evaluation pipeline', () => {
+  it.each(['denied', 'unavailable'] as const)('does not enrich or call the model for calendar-dependent opportunities with %s calendar', async calendarStatus => {
+    const fixture = scenarios.find(value => value.id === 'free-time');
+    if (!fixture) throw new Error('Missing fixture');
+    const { evaluate, places, routes, geocoding, model } = setup(fixture, true);
+    const result = await evaluate({ userId: 'user-1', context: { ...fixture.context, calendar: [], calendarStatus } });
+    expect(result).toMatchObject({ decision: 'silent', normalizedContext: { calendarStatus, calendar: [] } });
+    expect(places.searchNearby).not.toHaveBeenCalled(); expect(routes.getRoute).not.toHaveBeenCalled();
+    expect(geocoding.geocode).not.toHaveBeenCalled(); expect(model.decide).not.toHaveBeenCalled();
+  });
   it.each(scenarios)('$id repeats preview with persisted duplicate diagnostics and unchanged delivery state', async fixture => {
     const { evaluate, state } = setup(fixture, true);
     const domain = createEvaluationDomain({ detectors: phase2Detectors.filter(value => value.type === fixture.primaryTrigger) });
@@ -70,6 +79,7 @@ describe('Phase 2: five fixtures through the same evaluation pipeline', () => {
     });
     const first = await evaluate({ userId: 'user-1', context: fixture.context });
     const second = await evaluate({ userId: 'user-1', context: fixture.context });
+    expect(first.normalizedContext).not.toHaveProperty('calendarStatus');
     expect(first).toMatchObject({ decision: 'notify', triggerType: fixture.primaryTrigger, delivery: { mode: 'preview', status: 'preview', wouldSuppress: true } });
     expect(second).toMatchObject({ decision: 'notify', triggerType: fixture.primaryTrigger, delivery: { mode: 'preview', status: 'preview', wouldSuppress: true } });
     expect(second.evaluationId).not.toBe(first.evaluationId);

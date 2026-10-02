@@ -145,6 +145,10 @@ describe('WEATHER_ADAPTATION', () => {
     const availableSignals = ['time', 'location', 'weather'] as const;
     expect(refineCandidates({ context, candidates, evidence: worseningForecast(), availableSignals }).candidates).toEqual([]);
     expect(refineCandidates({ context, candidates, evidence: weatherEvidence(), availableSignals }).candidates).toHaveLength(1);
+    for (const calendarStatus of ['denied', 'unavailable'] as const) {
+      expect(refineCandidates({ context: { ...context, calendarStatus }, candidates, evidence: worseningForecast() }).candidates).toEqual([]);
+      expect(refineCandidates({ context: { ...context, calendarStatus }, candidates, evidence: weatherEvidence() }).candidates).toHaveLength(1);
+    }
   });
 
   it('does not substitute current weather for a past/future simulation or trust a forged requested at', async () => {

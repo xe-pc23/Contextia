@@ -315,6 +315,19 @@ describe('DynamoDbStateRepository', () => {
     expect(update?.UpdateExpression).not.toContain('#recentAnchors.#anchor');
   });
 
+  it('preserves calendar denial through snapshot storage and readback', async () => {
+    const fake = fakeClient(); const store = repository(fake.client);
+    await store.writeContextSnapshot({ userId: 'user-1', snapshot: snapshot({ calendarStatus: 'denied' }),
+      fingerprint: 'fp', processedAt, notificationDay: '2026-10-01' });
+    const request = fake.requests[0];
+    if (request?.operation !== 'transactWrite') throw new Error('Expected snapshot transaction');
+    const item = request.input.TransactItems.find(entry => 'Put' in entry)?.Put?.Item;
+    expect(item).toMatchObject({ calendarStatus: 'denied', calendar: [] });
+    const read = fakeClient([{ Item: item }]);
+    await expect(repository(read.client).getContextSnapshot({ userId: 'user-1', nowEpochSeconds: Math.floor(Date.parse(processedAt) / 1000),
+      reference: { evaluationId: 'eval-1', capturedAt } })).resolves.toMatchObject({ status: 'ok', data: { calendarStatus: 'denied' } });
+  });
+
   it('initializes preview delivery state without incrementing counts or appending anchors', async () => {
     const fake = fakeClient();
     await repository(fake.client).writeContextSnapshot({

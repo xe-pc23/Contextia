@@ -22,9 +22,11 @@ export function cdkArgs(invocation: CdkInvocation, outdir: string): string[] {
 export function deploymentParameters(env: Record<string, string | undefined>): string[] {
   const parameters = {
     BedrockModelId: env.BEDROCK_MODEL_ID, BedrockRegion: env.BEDROCK_REGION?.trim() || 'ap-northeast-1',
+    BedrockStructuredOutput: env.BEDROCK_STRUCTURED_OUTPUT?.trim() || 'true',
     BedrockModelResources: env.BEDROCK_MODEL_RESOURCES, MapKeyExpireTime: env.MAP_KEY_EXPIRE_TIME
   };
   if (Object.values(parameters).some(value => !value?.trim())) throw new Error('Missing deployment parameters');
+  if (!['true', 'false'].includes(parameters.BedrockStructuredOutput)) throw new Error('Invalid structured-output capability');
   if (parameters.BedrockModelResources?.split(',').some(arn => !/^arn:aws:bedrock:[a-z0-9-]+:[0-9]*:(foundation-model|inference-profile|application-inference-profile)\/[A-Za-z0-9._:/-]+$/.test(arn.trim()))) throw new Error('Model resources must be exact ARNs');
   const expiry = Date.parse(parameters.MapKeyExpireTime ?? '');
   if (!Number.isFinite(expiry) || expiry <= Date.now()) throw new Error('Map key expiry must be in the future');

@@ -6,6 +6,10 @@ import { contextFingerprint, hashCalendarId } from '../src/application/fingerpri
 const base: ContextInput = getScenarioInput('step-goal');
 
 describe('contextFingerprint', () => {
+  it('allows a newly available empty calendar to be evaluated again', () => {
+    expect(contextFingerprint({ ...base, calendarStatus: 'denied' })).not.toBe(contextFingerprint({ ...base, calendarStatus: 'granted' }));
+    expect(contextFingerprint({ ...base, calendarStatus: 'granted' })).toBe(contextFingerprint(base));
+  });
   it('is stable for small location, time and step changes inside the same buckets', () => {
     const nudged = { ...base, location: { ...base.location, latitude: base.location.latitude + 0.0001 }, activity: { ...base.activity, stepsToday: 10_440 } };
     expect(contextFingerprint(nudged)).toBe(contextFingerprint(base));

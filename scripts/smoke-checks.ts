@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { ChatResponseSchema, ContextEvaluateResponseSchema, ErrorResponseSchema, GetMeResponseSchema, GetRecommendationResponseSchema, HealthResponseSchema, UpdatePreferencesRequestSchema, UpdatePreferencesResponseSchema } from '@contextia/contracts';
+import { ChatResponseSchema, ContextEvaluateResponseSchema, ErrorResponseSchema, GetMeResponseSchema, GetRecommendationResponseSchema, HealthResponseSchema, ScenarioContextInputSchema, UpdatePreferencesRequestSchema, UpdatePreferencesResponseSchema } from '@contextia/contracts';
 import { getScenarioInput, scenarios } from '@contextia/test-fixtures';
 import type { ContextEvaluateResponse, ScenarioId } from '@contextia/contracts';
 import type { StateRepository, UserState } from '@contextia/providers';
@@ -12,10 +12,31 @@ export type SmokeTarget = z.infer<typeof SmokeTargetSchema>;
 type Fetcher = typeof fetch;
 type SmokeState = Pick<StateRepository, 'getState' | 'getContextSnapshot'>;
 export class SmokeCheckError extends Error {}
-const SAFE_PROVIDER_CODES = new Set(['TIMEOUT', 'THROTTLED', 'UPSTREAM_AUTH', 'UPSTREAM_VALIDATION', 'UPSTREAM_ERROR', 'INVALID_MODEL_OUTPUT', 'UNKNOWN_PLACE_REFERENCE', 'UNKNOWN_ROUTE_REFERENCE', 'NO_COVERAGE', 'DEMO_FORCED_UNAVAILABLE', 'GEOCODE_AMBIGUOUS', 'PLACE_STORAGE_UNAVAILABLE']);
+const SAFE_PROVIDER_CODES = new Set(['TIMEOUT', 'THROTTLED', 'UPSTREAM_AUTH', 'UPSTREAM_VALIDATION', 'UPSTREAM_ERROR', 'INVALID_MODEL_OUTPUT', 'UNKNOWN_PLACE_REFERENCE', 'UNKNOWN_ROUTE_REFERENCE', 'NO_COVERAGE', 'DEMO_FORCED_UNAVAILABLE', 'GEOCODE_AMBIGUOUS', 'GEOCODE_NOT_FOUND', 'GEOCODE_LOW_CONFIDENCE', 'GEOCODE_OUT_OF_AREA', 'PLACE_STORAGE_UNAVAILABLE', 'DURATION_MISMATCH', 'DURATION_UNRESOLVED', 'NO_ROUTE', 'NO_TRANSIT_ROUTE', 'SCHEDULE_UNAVAILABLE', 'PARTIAL_DATA']);
 export function smokeProviderDiagnostic(scenarioId: ScenarioId, result: ContextEvaluateResponse): string {
-  return JSON.stringify({ scenarioId, requestId: /^[A-Za-z0-9_-]{1,128}$/.test(result.requestId) ? result.requestId : 'redacted',
+  return JSON.stringify({ scenarioId, requestId: /^[A-Za-z0-9_+=/-]{1,128}$/.test(result.requestId) ? result.requestId : 'redacted',
     providers: Object.fromEntries(Object.entries(result.data.providerStatus).map(([name, value]) => [name, { status: value.status, ...(value.code && SAFE_PROVIDER_CODES.has(value.code) ? { code: value.code } : {}) }])) });
+}
+
+/** Live provider proof uses a precise public destination; offline fixtures keep their deterministic facts. */
+export function liveSmokeContext(scenarioId: ScenarioId, evaluationAt: Date) {
+  const preset = getScenarioInput(scenarioId);
+  const delta = evaluationAt.getTime() - Date.parse(preset.scenarioTime ?? preset.capturedAt);
+  return ScenarioContextInputSchema.parse({ ...preset, capturedAt: evaluationAt.toISOString(), scenarioTime: evaluationAt.toISOString(),
+    location: { ...preset.location, ...(scenarioId === 'early-arrival' ? { latitude: 35.658034, longitude: 139.701636 } : {}), capturedAt: evaluationAt.toISOString() },
+    calendar: preset.calendar.map(event => ({ ...event,
+      ...(event.location ? { location: '東京都渋谷区渋谷2丁目24番12号 渋谷駅' } : {}),
+      startAt: new Date(Date.parse(event.startAt) + delta).toISOString(), endAt: new Date(Date.parse(event.endAt) + delta).toISOString() })) });
+}
+export function nextLiveSmokeTime(now: Date): Date {
+  const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
+  const slot = Date.parse(`${day}T14:10:00+09:00`);
+  return new Date(slot >= now.getTime() + 10 * 60_000 ? slot : slot + 24 * 60 * 60_000);
+}
+/** Validated cards retain only supplied provider routes; aggregate pedestrian success alone is insufficient. */
+export function hasLiveTransitProof(data: ContextEvaluateResponse['data']): boolean {
+  return ['ok', 'degraded'].includes(data.providerStatus.routes.status) && data.recommendations.some(card =>
+    card.route && ['transit', 'intermodal'].includes(card.route.mode) && card.route.departAt && card.route.arriveAt);
 }
 export function assertPreviewStateUnchanged(before: UserState | null, after: UserState | null): void {
   const delivery = (state: UserState | null) => ({ notificationsSentToday: state?.notificationsSentToday ?? 0, recentAnchors: state?.recentAnchors ?? [], latestRecommendationAt: state?.latestRecommendationAt ?? null });
@@ -72,7 +93,7 @@ export async function runAuthenticatedSmoke(target: SmokeTarget, tokens: { acces
   const profile = GetMeResponseSchema.parse(await json(fetcher, `${api}/v1/me`, { headers }));
   const other = GetMeResponseSchema.parse(await json(fetcher, `${api}/v1/me`, { headers: { authorization: `Bearer ${tokens.secondUserToken}` } }));
   if (profile.data.userId === other.data.userId) throw new SmokeCheckError('Ownership smoke needs two distinct user accounts');
-  const evaluationAt = new Date(Date.now() + 10 * 60_000);
+  const evaluationAt = nextLiveSmokeTime(new Date());
   let ownershipChecked = false;
   let chatUrl: string | null = null;
   const readinessFailures: string[] = [];
@@ -82,18 +103,14 @@ export async function runAuthenticatedSmoke(target: SmokeTarget, tokens: { acces
   for (const scenario of scenarios) {
     const key = randomUUID();
     // Keep preset time gaps but move obsolete fixture dates into live providers' planning window.
-    const preset = getScenarioInput(scenario.id);
-    const delta = evaluationAt.getTime() - Date.parse(preset.scenarioTime ?? preset.capturedAt);
-    const context = { ...preset, capturedAt: evaluationAt.toISOString(), scenarioTime: evaluationAt.toISOString(),
-      location: { ...preset.location, capturedAt: evaluationAt.toISOString() },
-      calendar: preset.calendar.map(event => ({ ...event, startAt: new Date(Date.parse(event.startAt) + delta).toISOString(), endAt: new Date(Date.parse(event.endAt) + delta).toISOString() })) };
+    const context = liveSmokeContext(scenario.id, evaluationAt);
     const request = { method: 'POST', headers: { ...headers, 'idempotency-key': key }, body: JSON.stringify(context) };
     const first = ContextEvaluateResponseSchema.parse(await json(fetcher, `${api}/v1/context/evaluate`, request));
     console.log(smokeProviderDiagnostic(scenario.id, first));
     const second = ContextEvaluateResponseSchema.parse(await json(fetcher, `${api}/v1/context/evaluate`, request));
     if (first.data.delivery.mode !== 'preview' || first.data.delivery.status !== 'preview') throw new SmokeCheckError('Scenario smoke did not use preview');
     if (first.requestId === second.requestId || JSON.stringify(first.data) !== JSON.stringify(second.data)) throw new SmokeCheckError('Idempotency replay did not preserve the result with a fresh request ID');
-    if (scenario.id === 'upcoming-transit' && !['ok', 'degraded'].includes(first.data.providerStatus.routes.status)) readinessFailures.push(`Live transit route provider is not ready: ${smokeProviderDiagnostic(scenario.id, first)}`);
+    if (scenario.id === 'upcoming-transit' && !hasLiveTransitProof(first.data)) readinessFailures.push(`Live scheduled transit card is not ready: ${smokeProviderDiagnostic(scenario.id, first)}`);
     if (scenario.id === 'step-goal' && (first.data.decision !== 'notify' || first.data.triggerType !== 'STEP_GOAL_REST' || !['ok', 'degraded'].includes(first.data.providerStatus.places.status) || !['ok', 'degraded'].includes(first.data.providerStatus.bedrock.status))) readinessFailures.push(`Step-goal live Places/Bedrock slice is not ready: ${smokeProviderDiagnostic(scenario.id, first)}`);
     const fresh = ContextEvaluateResponseSchema.parse(await json(fetcher, `${api}/v1/context/evaluate`, { ...request, headers: { ...headers, 'idempotency-key': randomUUID() } }));
     if (fresh.data.evaluationId === first.data.evaluationId || fresh.data.delivery.mode !== 'preview' || fresh.data.delivery.status !== 'preview' || !fresh.data.delivery.guardCodes.includes('DUPLICATE_CONTEXT') || !fresh.data.delivery.wouldSuppress) throw new SmokeCheckError('Fresh repeated preview did not expose duplicate diagnostics');

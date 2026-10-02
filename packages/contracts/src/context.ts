@@ -33,6 +33,7 @@ export const ActivityContextSchema = z.strictObject({
   stepSource: z.enum(['ios-pedometer', 'android-health-connect', 'foreground-sensor', 'scenario']).optional(),
   confidence: z.enum(['high', 'medium', 'low']).optional()
 });
+export const CalendarStatusSchema = z.enum(['granted', 'denied', 'unavailable']);
 export const UserPreferencesSchema = z.strictObject({
   interests: z.array(z.string().min(1).max(64)).max(20),
   stepGoal: z.number().int().min(1).max(200_000),
@@ -42,10 +43,17 @@ export const UserPreferencesSchema = z.strictObject({
 const contextFields = {
   capturedAt: TimestampSchema, scenarioTime: TimestampSchema.optional(), location: LocationContextSchema,
   activity: ActivityContextSchema.optional(), calendar: z.array(CalendarEventContextSchema).max(100),
+  // Optional for older clients; updated native clients always distinguish unavailable from empty.
+  calendarStatus: CalendarStatusSchema.optional(),
   preferencesOverride: UserPreferencesSchema.partial().optional()
 };
-export const RealContextInputSchema = z.strictObject({ ...contextFields, mode: z.literal('real'), deliveryMode: z.literal('proactive') });
-export const ScenarioContextInputSchema = z.strictObject({ ...contextFields, mode: z.literal('simulation'), deliveryMode: z.literal('preview') });
+function validateCalendarAvailability(context: { calendar: readonly unknown[]; calendarStatus?: z.infer<typeof CalendarStatusSchema> | undefined }, ctx: z.RefinementCtx): void {
+  if (context.calendarStatus !== undefined && context.calendarStatus !== 'granted' && context.calendar.length) {
+    ctx.addIssue({ code: 'custom', path: ['calendar'], message: 'Unavailable calendar must not supply events' });
+  }
+}
+export const RealContextInputSchema = z.strictObject({ ...contextFields, mode: z.literal('real'), deliveryMode: z.literal('proactive') }).superRefine(validateCalendarAvailability);
+export const ScenarioContextInputSchema = z.strictObject({ ...contextFields, mode: z.literal('simulation'), deliveryMode: z.literal('preview') }).superRefine(validateCalendarAvailability);
 export const ContextInputSchema = z.discriminatedUnion('mode', [RealContextInputSchema, ScenarioContextInputSchema]);
 
 export type GeoPoint = z.infer<typeof GeoPointSchema>;

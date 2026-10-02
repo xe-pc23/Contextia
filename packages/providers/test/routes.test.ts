@@ -267,11 +267,11 @@ describe('AmazonLocationRouteProvider normalization', () => {
       }
     }] }] });
     await expect(provider.getRoute(input)).resolves.toMatchObject({ status: 'degraded', data: {
-      durationMinutes: 601 / 60, legs: [{ durationMinutes: 601 / 60 }]
+      durationMinutes: 600.5 / 60, legs: [{ durationMinutes: 600.5 / 60 }]
     } });
   });
 
-  it('rounds a fractional travel time and transfer wait upward even when AWS integer summaries round down', async () => {
+  it('rounds the complete schedule once instead of summing rounded travel and wait', async () => {
     const response = { Routes: [{ Summary: { Duration: 1_200 }, Legs: [
       { Type: 'Transit', TravelMode: 'Bus', TransitLegDetails: {
         Departure: { Time: '2026-10-02T05:00:00Z' }, Arrival: { Time: '2026-10-02T05:10:00.500000000Z' },
@@ -284,7 +284,7 @@ describe('AmazonLocationRouteProvider normalization', () => {
     ] }] };
     const { provider } = testProvider(response);
     await expect(provider.getRoute(input)).resolves.toMatchObject({ status: 'degraded', data: {
-      durationMinutes: 1_202 / 60, legs: [{ durationMinutes: 601 / 60 }, { durationMinutes: 10 }]
+      durationMinutes: 1_201 / 60, legs: [{ durationMinutes: 600.5 / 60 }, { durationMinutes: 10 }]
     } });
   });
 
@@ -298,6 +298,31 @@ describe('AmazonLocationRouteProvider normalization', () => {
     await expect(provider.getRoute({ origin: input.origin, destination: input.destination, mode: 'transit',
       arriveBy: '2026-10-02T05:10:00.000000001Z' }))
       .resolves.toMatchObject({ status: 'unavailable', data: null, code: 'PLANNING_TIME_UNSATISFIED' });
+  });
+
+  it.each([
+    ['2026-10-02T05:14:59.5Z', 'unavailable'],
+    ['2026-10-02T05:15:00Z', 'degraded']
+  ] as const)('requires the transfer gap to fit all before/after steps at %s', async (secondDeparture, status) => {
+    const { provider } = testProvider({ Routes: [{ Summary: { Duration: 1200 }, Legs: [
+      { Type: 'Transit', TravelMode: 'Bus', TransitLegDetails: {
+        Departure: { Time: '2026-10-02T05:00:00Z' }, Arrival: { Time: '2026-10-02T05:10:00Z' },
+        Summary: { TravelOnly: { Duration: 600 }, Overview: { Duration: 900 } }, AfterTravelSteps: [{ Duration: 300 }]
+      } },
+      { Type: 'Transit', TravelMode: 'CityTrain', TransitLegDetails: {
+        Departure: { Time: secondDeparture }, Arrival: { Time: '2026-10-02T05:25:00Z' },
+        Summary: { TravelOnly: { Duration: 600 }, Overview: { Duration: 600 } }
+      } }
+    ] }] });
+    await expect(provider.getRoute(input)).resolves.toMatchObject({ status, ...(status === 'unavailable' ? { code: 'DURATION_UNRESOLVED', data: null } : { data: { durationMinutes: 25 } }) });
+  });
+
+  it.each([false, true])('rejects an overview exceeding the fractional schedule by more than integer rounding, travelSummary=%s', async includeTravel => {
+    const { provider } = testProvider({ Routes: [{ Summary: { Duration: 600 }, Legs: [{ Type: 'Transit', TravelMode: 'Subway', TransitLegDetails: {
+      Departure: { Time: '2026-10-02T05:00:00Z' }, Arrival: { Time: '2026-10-02T05:10:00.5Z' },
+      Summary: { ...(includeTravel ? { TravelOnly: { Duration: 601 } } : {}), Overview: { Duration: 602 } }
+    } }] }] });
+    await expect(provider.getRoute(input)).resolves.toMatchObject({ status: 'unavailable', code: 'DURATION_UNRESOLVED', data: null });
   });
 
   it('rejects an unexplained difference between the full leg duration and travel timestamps', async () => {

@@ -55,7 +55,7 @@ export class ContextCollector {
       capturedAt: now.toISOString(),
       location: locationResult.location,
       activity,
-      calendar: calendarEvents(calendarResult)
+      calendar: calendarEvents(calendarResult), calendarStatus: calendar
     };
     const parsed = RealContextInputSchema.safeParse(candidate);
     if (!parsed.success) return { status: 'invalid-context', location: 'granted', calendar, steps };

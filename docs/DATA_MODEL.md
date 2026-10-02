@@ -157,6 +157,10 @@ Keep `recentAnchors` bounded. If it starts growing, move to separate TTL items.
 
 Store the normalized minimum needed for debugging/recommendation continuity.
 
+An optional `calendarStatus` (`granted`, `denied`, or `unavailable`) is retained in
+the bounded context snapshot and its recommendation-scoped chat context. This distinguishes
+permission denial from an available empty schedule; older snapshots omit it.
+
 Example:
 ```json
 {

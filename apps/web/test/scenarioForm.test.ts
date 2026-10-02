@@ -19,6 +19,12 @@ function errorsOf(result: BuildResult, key: FieldKey) {
 }
 
 describe('step-goal preset', () => {
+  it('round-trips explicit calendar availability without changing legacy requests', () => {
+    for (const calendarStatus of ['granted', 'denied', 'unavailable'] as const) {
+      const preset = { ...getScenarioInput('step-goal'), calendarStatus };
+      expect(request(buildScenarioRequest(formFromScenarioInput(preset)))).toEqual(preset);
+    }
+  });
   it('fills only inputs and rebuilds exactly the preset preview request', () => {
     const preset = getScenarioInput('step-goal');
     const form = stepGoalForm();

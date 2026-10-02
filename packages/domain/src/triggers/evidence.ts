@@ -2,6 +2,7 @@ import type {
   CandidateDiagnosticCode, CandidateEvidence, ContextInput, DetectorPolicy, GeocodedPlace, GeoPoint,
   ProviderNeed, ProviderPlace, RouteSummary, WeatherSnapshot
 } from '@contextia/contracts';
+import { ceilNanosecondsToMilliseconds, scheduledDurationMilliseconds, timestampNanoseconds } from '@contextia/contracts';
 import { distanceMeters, MINUTE_MS } from './calendar.js';
 
 export type EvidenceResult<T> = { ok: true; value: T } | { ok: false; code: CandidateDiagnosticCode };
@@ -59,9 +60,9 @@ export function matchingRoutes(
     if (distanceMeters(route.origin, origin) > policy.routeEndpointToleranceMeters ||
       distanceMeters(route.destination, destination) > policy.routeEndpointToleranceMeters) return [];
     if (route.departAt && route.arriveAt) {
-      const elapsed = Date.parse(route.arriveAt) - Date.parse(route.departAt);
+      const elapsed = scheduledDurationMilliseconds(route.departAt, route.arriveAt);
       // Only tolerate floating-point rounding of provider seconds converted to minutes.
-      if (elapsed < 0 || elapsed + 0.001 < route.durationMinutes * MINUTE_MS) return [];
+      if (elapsed === null || elapsed + 0.001 < route.durationMinutes * MINUTE_MS) return [];
     }
     return [route];
   });
@@ -140,6 +141,12 @@ export function forecastWeatherBetween(
 // not an invented transit timetable. The resulting instant is an internal feasibility calculation.
 export function journeyArrival(route: RouteSummary, earliestDeparture: number): number | null {
   if (route.mode !== 'pedestrian' && (!route.departAt || !route.arriveAt)) return null;
+  if (route.departAt && route.arriveAt) {
+    const duration = scheduledDurationMilliseconds(route.departAt, route.arriveAt);
+    if (duration === null || duration + 0.001 < route.durationMinutes * MINUTE_MS
+      || timestampNanoseconds(route.departAt) < BigInt(Math.ceil(earliestDeparture)) * 1_000_000n) return null;
+    return ceilNanosecondsToMilliseconds(timestampNanoseconds(route.arriveAt));
+  }
   const departure = route.departAt ? Date.parse(route.departAt) : earliestDeparture;
   if (departure < earliestDeparture) return null;
   const minimumArrival = departure + route.durationMinutes * MINUTE_MS;

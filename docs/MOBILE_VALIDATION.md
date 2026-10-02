@@ -6,10 +6,14 @@ The owner cannot attach an iPhone to this Mac. Local development uses the React 
 development build on the iOS Simulator. A member with a device can perform the hardware checks below.
 No credentials or messages have been sent to another member.
 
-The local unsigned Simulator Debug build succeeded with Xcode 26.6, iOS 26.5 runtime and iPhone 17.
-Its bundle ID is `com.contextia.dev`, version `0.0.1`. This proves native compilation only;
-The initial React Native screen also ran through localhost Metro; auth configuration was absent,
-so login, collection and API execution remain open. Expo Go is not a substitute.
+The local Simulator Debug build succeeded with Xcode 26.6, iOS 26.5 runtime and iPhone 17.
+Its bundle ID is `com.contextia.dev`, version `0.0.1`. The initial React Native screen ran
+through localhost Metro. After live dev configuration, an ad hoc signed rebuild
+(`CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=-`) restored Simulator application identity
+and removed the SecureStore startup `-34018` error seen with signing disabled. Simulator signing
+does not require an Apple development team. The Cognito sign-in form was submitted, but the Mac
+locked before the result could be inspected. Login, collection and API execution remain open.
+Expo Go is not a substitute.
 Proof: [Simulator initial screen](hackathon/evidence/task5-simulator-start.png).
 
 ## Run locally

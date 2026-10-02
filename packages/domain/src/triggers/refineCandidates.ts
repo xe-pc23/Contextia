@@ -271,7 +271,8 @@ export function refineCandidates(input: RefineCandidatesInput): CandidateRefinem
   const policy = detectorPolicy(input.policy);
   const evidence = CandidateEvidenceSchema.parse(input.evidence);
   const candidates = CandidateOpportunitySchema.array().parse(input.candidates);
-  const coreSignals = new Set<SignalName>(['time', 'location', 'calendar', 'preferences']);
+  const coreSignals = new Set<SignalName>(['time', 'location', 'preferences']);
+  if (input.context.calendarStatus === undefined || input.context.calendarStatus === 'granted') coreSignals.add('calendar');
   if (input.context.activity?.stepsToday !== undefined && input.context.activity.stepsToday !== null) coreSignals.add('steps');
   const providerSignals = new Set<SignalName>(['weather', 'places', 'transit']);
   const explicitSignals = input.availableSignals ? new Set(SignalNameSchema.array().parse(input.availableSignals)) : undefined;
@@ -295,7 +296,7 @@ export function refineCandidates(input: RefineCandidatesInput): CandidateRefinem
         case 'UPCOMING_EVENT_TRANSIT': return assessUpcoming(seed, input.context, evidence, policy);
         case 'FREE_TIME_NEARBY':
         case 'EARLY_ARRIVAL_DETOUR': return assessActivity(seed, input.context, evidence, policy);
-        case 'WEATHER_ADAPTATION': return assessWeather(seed, input.context, evidence, policy, explicitSignals?.has('calendar') ?? true);
+        case 'WEATHER_ADAPTATION': return assessWeather(seed, input.context, evidence, policy, explicitSignals?.has('calendar') ?? coreSignals.has('calendar'));
         case 'STEP_GOAL_REST': {
           const places = placesFor(evidence, 'places-near-current', 'current');
           if (!places.ok) return places;

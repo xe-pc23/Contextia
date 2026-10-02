@@ -6,16 +6,35 @@ import { configFixture } from './support/config.js';
 
 function fixture(fetchImpl: typeof fetch = async () => new Response(JSON.stringify({ access_token: 'access-value', refresh_token: 'refresh-value', expires_in: 3600, token_type: 'Bearer' }))) {
   const values = new Map<string, string>();
-  let time = 1_000_000; let destination = ''; let cleaned = false;
+  let time = 1_000_000; let destination = ''; let cleaned = false; let storageFailure: 'read' | 'remove' | null = null;
   const auth = new WebAuthSession(parseWebConfig(configFixture), {
-    storage: { getItem: key => values.get(key) ?? null, setItem: (key, value) => { values.set(key, value); }, removeItem: key => { values.delete(key); } },
+    storage: { getItem: key => { if (storageFailure === 'read') throw new DOMException('Storage blocked', 'SecurityError'); return values.get(key) ?? null; },
+      setItem: (key, value) => { values.set(key, value); },
+      removeItem: key => { if (storageFailure === 'remove') throw new DOMException('Storage blocked', 'SecurityError'); values.delete(key); } },
     crypto: webcrypto as unknown as Crypto, fetch: fetchImpl, now: () => time,
     navigate: value => { destination = value; }, clearCallback: () => { cleaned = true; }, origin: 'https://console.example.com'
   });
-  return { auth, values, advance: (ms: number) => { time += ms; }, destination: () => new URL(destination), cleaned: () => cleaned };
+  return { auth, values, advance: (ms: number) => { time += ms; }, destination: () => new URL(destination), cleaned: () => cleaned,
+    blockStorage: (operation: 'read' | 'remove') => { storageFailure = operation; } };
 }
 
 describe('Cognito Web session', () => {
+  it('clears the in-memory session and completes logout when PKCE cleanup fails', async () => {
+    const f = fixture(); await f.auth.signIn();
+    await f.auth.initialize(`https://console.example.com/?code=code&state=${f.destination().searchParams.get('state')}`);
+    f.blockStorage('remove');
+    expect(() => f.auth.signOut()).not.toThrow();
+    expect(f.auth.getSnapshot().status).toBe('signed-out');
+    expect(await f.auth.getAccessToken()).toBeNull();
+    expect(f.destination().pathname).toBe('/logout');
+  });
+  it('fails closed and clears the callback when reading PKCE storage fails', async () => {
+    let requests = 0; const f = fixture(async () => { requests++; return Response.json({}); });
+    await f.auth.signIn(); const callback = `https://console.example.com/?code=code&state=${f.destination().searchParams.get('state')}`;
+    f.blockStorage('read'); await f.auth.initialize(callback);
+    expect(requests).toBe(0); expect(f.cleaned()).toBe(true);
+    expect(f.auth.getSnapshot().status).toBe('signed-out');
+  });
   it('uses the RFC7636 SHA256 PKCE challenge', async () => {
     expect(await pkceChallenge('dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk', webcrypto as unknown as Crypto)).toBe('E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM');
   });

@@ -42,7 +42,7 @@ describe.each(stages)('%s core stack', (stage) => {
   it('runs the API on Node.js 24 with JSON logs and client IDs for preview authorization', () => {
     template.hasResourceProperties('AWS::Lambda::Function', {
       FunctionName: `contextia-${stage}-api`, Runtime: 'nodejs24.x', Timeout: 20, MemorySize: 512,
-      Environment: { Variables: Match.objectLike({ CONTEXTIA_STAGE: stage, BUILD_ID: 'abc123', WEB_CLIENT_ID: Match.anyValue(), MOBILE_CLIENT_ID: Match.anyValue(), TABLE_NAME: Match.anyValue(), BEDROCK_MODEL_ID: { Ref: 'BedrockModelId' }, CONVERSATION_TTL_SECONDS: '7200' }) },
+      Environment: { Variables: Match.objectLike({ CONTEXTIA_STAGE: stage, BUILD_ID: 'abc123', WEB_CLIENT_ID: Match.anyValue(), MOBILE_CLIENT_ID: Match.anyValue(), TABLE_NAME: Match.anyValue(), BEDROCK_MODEL_ID: { Ref: 'BedrockModelId' }, BEDROCK_STRUCTURED_OUTPUT: { Ref: 'BedrockStructuredOutput' }, CONVERSATION_TTL_SECONDS: '7200' }) },
       LoggingConfig: Match.objectLike({ LogFormat: 'JSON' })
     });
     template.hasResourceProperties('AWS::Logs::LogGroup', { LogGroupName: `/aws/lambda/contextia-${stage}-api`, RetentionInDays: isDev ? 7 : 30 });

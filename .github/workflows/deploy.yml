@@ -55,6 +55,7 @@ jobs:
       BEDROCK_MODEL_ID: ${{ vars.BEDROCK_MODEL_ID }}
       BEDROCK_REGION: ${{ vars.BEDROCK_REGION }}
       BEDROCK_MODEL_RESOURCES: ${{ vars.BEDROCK_MODEL_RESOURCES }}
+      BEDROCK_STRUCTURED_OUTPUT: ${{ vars.BEDROCK_STRUCTURED_OUTPUT }}
       MAP_KEY_EXPIRE_TIME: ${{ vars.MAP_KEY_EXPIRE_TIME }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -173,9 +173,16 @@ type ContextInput = {
   location: LocationContext;
   activity?: ActivityContext;
   calendar: CalendarEventContext[];
+  calendarStatus?: "granted" | "denied" | "unavailable";
   preferencesOverride?: Partial<UserPreferences>;
 };
 ```
+
+Updated Mobile clients always send `calendarStatus`. `denied` and `unavailable` require
+an empty `calendar` and exclude calendar-dependent candidates before provider or model calls.
+A granted empty calendar remains valid free-time evidence. Omission is accepted for older clients
+and retains their previous granted-calendar semantics. Preview normalized context includes the status
+only when the request supplied it.
 
 Allowed production combinations:
 - `mode="real"` + `deliveryMode="proactive"`

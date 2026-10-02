@@ -255,6 +255,14 @@ Set these non-secret GitHub environment variables (or local shell variables for 
 | `BEDROCK_MODEL_ID` | Enabled model or inference profile ID |
 | `BEDROCK_REGION` | Region for Converse, default `ap-northeast-1` |
 | `BEDROCK_MODEL_RESOURCES` | Comma-separated exact foundation-model/profile ARNs. Include required destination model ARNs for cross-region profiles. Wildcards rejected |
+| `BEDROCK_STRUCTURED_OUTPUT` | `true` (default) for native JSON Schema support; `false` for locally validated JSON on models without that capability. Both paths enforce Zod and supplied references |
+
+The current dev configuration uses `amazon.nova-lite-v1:0` in Tokyo with
+`BEDROCK_STRUCTURED_OUTPUT=false`. Anthropic access in this account returned the missing-use-case
+declaration error; Nova Lite accepted a schema-valid response without that owner prerequisite.
+The authenticated smoke rebases fixture times to a future Tokyo daytime window and uses a precise
+public Shibuya Station address for event destinations. It preserves each fixture's timing gaps and
+requires actual geocoding/transit results; it does not substitute estimated transit times.
 | `MAP_KEY_EXPIRE_TIME` | Future UTC timestamp, `YYYY-MM-DDTHH:MM:SSZ`. Rotate before expiry |
 
 `pnpm deploy:dev` / `pnpm deploy:prod` verify STS account and Region, require deploy parameters, and set `BUILD_ID` to the actual Git HEAD. A supplied build marker must equal HEAD. Prod accepts only a manual main workflow, or the owner's local main checkout. Review `pnpm cdk:diff:dev` / `pnpm cdk:diff:prod` first. No script hardcodes a local AWS profile. Synth stays credential-free and does not need parameter values.

@@ -15,7 +15,7 @@ const NativeEventSchema = z.object({
   allDay: z.boolean().optional()
 });
 
-export type CalendarEventIdHasher = (nativeEventId: string) => Promise<string>;
+export type CalendarEventIdHasher = (nativeInstanceIdentity: string) => Promise<string>;
 export type CalendarPlatform = 'android' | 'ios';
 
 function toEpochMilliseconds(value: Date | string | number): number | null {
@@ -57,7 +57,8 @@ export async function projectCalendarEvents(
     if (start === null || end === null || end < start || !title) return null;
     if (start >= endExclusive || end <= startInclusive) return null;
 
-    const id = await hashEventId(parsed.data.id);
+    // iOS recurring instances share the series identifier. Include the normalized occurrence instant.
+    const id = await hashEventId(JSON.stringify([parsed.data.id, start]));
     const locationValue = parsed.data.location?.trim().slice(0, 200);
     const location = locationValue ? locationValue : null;
     const candidate = {

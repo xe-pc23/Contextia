@@ -35,7 +35,11 @@ const ConverseResponseSchema = z.object({
 const SYSTEM_PROMPT = [
   'You are Contextia, a concise contextual recommendation assistant.',
   'Use only facts in the supplied candidates and provider results. Never invent places, route details, or provider facts.',
-  'Return only the requested decision object. Do not provide internal reasoning; give concise, user-facing reasons.'
+  'Return only a JSON data object, never the JSON schema itself or Markdown. Do not provide internal reasoning; give concise, user-facing reasons in preferences.locale.',
+  'The decision object has exactly six top-level fields: decision, decisionReason, usedSignals, urgency, message, recommendations. Do not add fields such as $schema, anyOf, properties or triggerType.',
+  'decision is exactly "notify" or "silent". For "silent", urgency and message are null and recommendations is []. For "notify", urgency is "low", "medium" or "high", message is a nonempty string, and recommendations has one to three cards.',
+  'usedSignals is an array using only the supplied signal names. Every card has title, reason, action and only optional supplied place/route facts.',
+  'Copy supplied place names, IDs, coordinates and route facts exactly; do not translate source place names. A place has only provider, placeId, name, latitude, longitude and optional distanceMeters. A route has only mode, durationMinutes, optional departAt, arriveAt, transfers and attributions; exclude routeId, legs and warnings.'
 ].join(' ');
 
 const FOLLOW_UP_SYSTEM_PROMPT = [
@@ -263,10 +267,13 @@ function parseModelJson(response: unknown): unknown {
   const content = parsedResponse.data.output.message.content
     .map(block => block.text)
     .filter((text): text is string => text !== undefined)
-    .join('\n');
+    .join('\n').trim();
   if (content.length === 0) return null;
+  // Some JSON-only models wrap the data in one code fence. Validation still rejects extra fields,
+  // surrounding prose and unsupplied references after unwrapping this format.
+  const fenced = /^```(?:json)?\s*\n([\s\S]*?)\n```$/i.exec(content);
   try {
-    return JSON.parse(content) as unknown;
+    return JSON.parse(fenced?.[1] ?? content) as unknown;
   } catch {
     return null;
   }

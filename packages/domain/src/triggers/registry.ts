@@ -21,6 +21,7 @@ export async function detectCandidates(input: DetectorContext, detectors: readon
   const detected = await Promise.all(detectors.map(detector => detector.detect(input)));
   const unique = new Map<string, CandidateOpportunity>();
   for (const candidate of detected.flat()) {
+    if (input.calendarStatus !== undefined && input.calendarStatus !== 'granted' && candidate.requiredSignals.includes('calendar')) continue;
     const key = JSON.stringify([candidate.type, candidate.anchorKey]);
     if (!unique.has(key)) unique.set(key, candidate);
   }
