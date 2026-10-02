@@ -219,7 +219,7 @@ The local AWS profiles and GitHub access should be used where available. If boot
 - `0e443f828d84441ac032c045a47e40bfdb5437c8` passed [run 37057828984](https://github.com/xe-pc23/Contextia/actions/runs/37057828984):
   validation, OIDC deploy, public SHA/assets/config, five previews, step/transit, fault degradation,
   owned chat/expiry/cross-user denial, replay/snapshot/quota invariants, Mobile SRP, one ready client
-  reservation with one quota increment, duplicate/cap suppression and bounded safe EMF coverage.
+  reservation with one quota increment, duplicate/cap suppression and bounded recent EMF metric coverage.
   No concurrent manual evaluation used that identity during this run.
 - Browser PKCE login, clean callback URL, live Japanese step recommendation and selected Places usage
   were observed. Evidence: `docs/hackathon/evidence/dev-preview-0e443f8.jpg` and

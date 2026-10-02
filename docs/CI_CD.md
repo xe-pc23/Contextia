@@ -262,7 +262,7 @@ The current dev configuration uses `amazon.nova-lite-v1:0` in Tokyo with
 declaration error; Nova Lite accepted a schema-valid response without that owner prerequisite.
 Dev functional SHA `0e443f8` passed the extended authenticated gate in
 [run 37057828984](https://github.com/xe-pc23/Contextia/actions/runs/37057828984), including weather fault,
-Mobile SRP, one client reservation/quota increment, duplicate/cap suppression and safe EMF coverage.
+Mobile SRP, one client reservation/quota increment, duplicate/cap suppression and recent EMF metric coverage.
 Run these checks without simultaneous manual evaluations on the dedicated smoke identity: its latest
 context fingerprint can be replaced by another evaluation. Naturally capped later runs verify cap/replay;
 the recorded uncapped positive run remains separate evidence. Never reset counters to produce a pass.
@@ -306,8 +306,8 @@ suppression, while an uncapped run must produce exactly one reserved client deli
 This synthetic context proves API behavior, not sensor provenance or an OS notification.
 
 After smoke, the dev role can `logs:FilterLogEvents` only on `/aws/lambda/contextia-dev-api`.
-A bounded recent-log check requires private-free EMF records for HTTP/evaluation/Places/model attempts
-and notify/silent decisions. It verifies emitted EMF coverage, not materialized CloudWatch metric data.
+A bounded recent-log check requires matching EMF metric records for HTTP/evaluation/Places/model attempts
+and notify/silent decisions. It verifies emitted metric coverage; it does not verify live log redaction or materialized CloudWatch metric data.
 Model validation failures are counted at each rejected output, including successful repairs or a
 subsequent transport failure; terminal results do not double-count them. Decision counts represent
 successful evaluation responses, including idempotent replays, not delivered notifications.
