@@ -546,16 +546,20 @@ function proactiveDeliveryStateUpdate(
   const currentAnchor = anchorMapKey(delivery.triggerType, delivery.anchorKey);
   const pruneKeys = anchorKeysToPrune(state, currentAnchor, canonicalTimestamp(delivery.at), delivery.maxRecentAnchors);
   const names: Record<string, string> = {
-    '#entityType': 'entityType', '#notificationDay': 'notificationDay', '#notificationsSentToday': 'notificationsSentToday',
+    '#notificationDay': 'notificationDay', '#notificationsSentToday': 'notificationsSentToday',
     '#latestContextEvaluationId': 'latestContextEvaluationId', '#latestContextFingerprint': 'latestContextFingerprint',
     '#recentAnchors': 'recentAnchors', '#anchor': currentAnchor, '#latestRecommendationAt': 'latestRecommendationAt',
     '#updatedAt': 'updatedAt'
   };
   const values: Record<string, DynamoDbValue> = {
     ':day': delivery.notificationDay, ':evaluationId': delivery.evaluationId, ':fingerprint': delivery.contextFingerprint,
-    ':at': canonicalTimestamp(delivery.at), ':one': 1, ':zero': 0, ':max': delivery.maxDailyNotifications,
+    ':at': canonicalTimestamp(delivery.at), ':one': 1,
     ':anchorCutoff': new Date(Date.parse(delivery.at) - delivery.anchorDedupSeconds * 1_000).toISOString()
   };
+  if (sameDay) {
+    values[':zero'] = 0;
+    values[':max'] = delivery.maxDailyNotifications;
+  }
   const removePaths = pruneKeys.map((key, index) => {
     const name = `#prune${index}`;
     names[name] = key;
