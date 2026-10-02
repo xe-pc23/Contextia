@@ -36,4 +36,10 @@ describe.each(['dev', 'prod'] as const)('%s stage bootstrap', stage => {
       .flatMap(policy => policy.PolicyDocument.Statement).find(item => item.Action.includes('lambda:InvokeFunction'));
     expect(statement?.Resource).toEqual([`arn:aws:lambda:ap-northeast-1:634512763705:function:contextia-${stage}-core-*`]);
   });
+  it('allows creating the browser key only for the map permission the key grants', () => {
+    const role = JSON.stringify(stageBootstrapTemplate(stage).Resources.CloudFormationExecutionRole);
+    expect(role).toContain('geo-maps:GetTile');
+    expect(role).toContain('arn:aws:geo-maps:ap-northeast-1::provider/default');
+    expect(role).not.toContain('geo-maps:*');
+  });
 });

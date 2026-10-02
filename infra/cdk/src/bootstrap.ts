@@ -78,6 +78,8 @@ export function stageBootstrapTemplate(stage: 'dev' | 'prod') {
     allow(operations('s3', ['GetAccelerateConfiguration', 'GetAnalyticsConfiguration', 'GetInventoryConfiguration', 'GetMetricsConfiguration', 'GetReplicationConfiguration', 'ListTagsForResource', 'GetBucketAbac', 'GetIntelligentTieringConfiguration', 'GetBucketMetadataTableConfiguration']), [`arn:aws:s3:::${prefix}-core-*`]),
     allow(operations('s3', ['GetObject', 'GetObjectVersion', 'GetBucketLocation', 'ListBucket']), [bucket, `${bucket}/*`]),
     allow(operations('geo', ['CreateKey', 'DescribeKey', 'UpdateKey', 'DeleteKey', 'TagResource', 'UntagResource', 'ListTagsForResource']), [arn('geo', `api-key/${prefix}-web-map`)]),
+    // Creating/updating a key also authorizes the specific map action granted by its restrictions.
+    allow(['geo-maps:GetTile'], [`arn:aws:geo-maps:${region}::provider/default`]),
     allow(['cognito-idp:CreateUserPool'], ['*'], { StringEquals: { 'aws:RequestTag/project': 'contextia', 'aws:RequestTag/stage': stage } }),
     allow(['cognito-idp:TagResource'], [arn('cognito-idp', 'userpool/*')], { StringEquals: { 'aws:RequestTag/project': 'contextia', 'aws:RequestTag/stage': stage } }),
     allow(operations('cognito-idp', ['DeleteUserPool', 'DescribeUserPool', 'UpdateUserPool', 'CreateUserPoolClient', 'DeleteUserPoolClient', 'DescribeUserPoolClient', 'UpdateUserPoolClient', 'CreateUserPoolDomain', 'DeleteUserPoolDomain', 'UpdateUserPoolDomain', 'SetUserPoolMfaConfig', 'GetUserPoolMfaConfig', 'TagResource', 'UntagResource', 'ListTagsForResource']), [arn('cognito-idp', 'userpool/*')], stageTags),
