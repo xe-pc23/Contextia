@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { Button, ScrollView, Text, View } from 'react-native';
 import { randomUUID } from 'expo-crypto';
 import { apiBaseUrl, createBackendClient, type BackendClient } from './api/backendClient';
@@ -8,15 +8,18 @@ import { useCognitoAuth, type CognitoAuthState } from './auth/useCognitoAuth';
 import { ContextCollector, SystemClock } from './context/contextCollector';
 import { ExpoCalendarSource } from './context/expoCalendarSource';
 import { ExpoLocationSource } from './context/expoLocationSource';
+import { createNativeStepSource } from './context/nativeSteps';
 import { Card, styles } from './screens/components';
 import { Dashboard } from './screens/Dashboard';
 import { RecommendationDetail } from './screens/RecommendationDetail';
 import { Settings } from './screens/Settings';
+import { BackgroundControl } from './screens/BackgroundControl';
+import { subscribeToRecommendationNotifications } from './notifications/nativeNotifications';
 
-function ForegroundApp({ client }: { client: BackendClient }) {
+function ForegroundApp({ client, config, getSessionSignal }: { client: BackendClient; config: CognitoConfiguration; getSessionSignal: () => AbortSignal }) {
   const clock = useMemo(() => new SystemClock(), []);
   const controller = useMemo(() => new MobileController({
-    client, collector: new ContextCollector(new ExpoLocationSource(), new ExpoCalendarSource(), clock)
+    client, collector: new ContextCollector(new ExpoLocationSource(), new ExpoCalendarSource(), clock, createNativeStepSource())
   }), [client, clock]);
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
   const [screen, setScreen] = useState<'dashboard' | 'settings' | 'detail'>('dashboard');
@@ -27,11 +30,12 @@ function ForegroundApp({ client }: { client: BackendClient }) {
     void controller.loadHistory();
     return () => controller.dispose();
   }, [controller]);
-  const openDetail = (id: string) => {
+  const openDetail = useCallback((id: string) => {
     setDetailId(id);
     setScreen('detail');
     void controller.openDetail(id);
-  };
+  }, [controller]);
+  useEffect(() => subscribeToRecommendationNotifications(openDetail), [openDetail]);
   const navigate = (target: 'dashboard' | 'settings') => {
     controller.closeDetail();
     setDetailId(null);
@@ -43,7 +47,7 @@ function ForegroundApp({ client }: { client: BackendClient }) {
       <Button title="設定" onPress={() => navigate('settings')} />
     </View>
     {screen === 'dashboard' ? <Dashboard state={state} controller={controller} clock={clock} openDetail={openDetail} /> : null}
-    {screen === 'settings' ? <Settings state={state} controller={controller} /> : null}
+    {screen === 'settings' ? <><Settings state={state} controller={controller} /><BackgroundControl config={config} client={client} getSessionSignal={getSessionSignal} /></> : null}
     {screen === 'detail' ? <RecommendationDetail key={detailId} state={state} sendChat={message => controller.sendChat(message)} retry={() => { if (detailId) void controller.openDetail(detailId); }} /> : null}
   </>;
 }
@@ -68,7 +72,7 @@ function AuthenticatedApp({ config, baseUrl }: { config: CognitoConfiguration; b
     <Text style={styles.brand}>Contextia</Text>
     <AuthPanel auth={auth} />
     {!baseUrl ? <Card title="接続先が未設定です"><Text style={styles.body}>アプリの API 接続設定を用意してから、再度開いてください。</Text></Card> : null}
-    {auth.status === 'signed-in' && client ? <ForegroundApp client={client} /> : null}
+    {auth.status === 'signed-in' && client ? <ForegroundApp client={client} config={config} getSessionSignal={auth.getSessionSignal} /> : null}
   </ScrollView></View>;
 }
 

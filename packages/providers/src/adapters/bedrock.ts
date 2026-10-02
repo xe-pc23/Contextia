@@ -113,6 +113,7 @@ export interface BedrockRecommendationAdapterOptions {
   timeoutMs: number;
   structuredOutput?: boolean;
   onAttempt?: (entry: { operation: 'decide' | 'followUp'; attempt: 'initial' | 'fallback' | 'repair'; status: 'ok' | 'error' | 'timeout'; latencyMs: number }) => void;
+  onValidationFailure?: (entry: { operation: 'decide' | 'followUp' }) => void;
 }
 
 export interface BedrockRecommendationConfig {
@@ -121,6 +122,7 @@ export interface BedrockRecommendationConfig {
   timeoutMs: number;
   structuredOutput?: boolean;
   onAttempt?: BedrockRecommendationAdapterOptions['onAttempt'];
+  onValidationFailure?: BedrockRecommendationAdapterOptions['onValidationFailure'];
 }
 
 function sdkBackedClient(client: BedrockRuntimeClient): BedrockConverseClient {
@@ -370,6 +372,7 @@ export class BedrockRecommendationModel implements RecommendationModel {
   private readonly timeoutMs: number;
   private readonly structuredOutput: boolean;
   private readonly onAttempt: BedrockRecommendationAdapterOptions['onAttempt'];
+  private readonly onValidationFailure: BedrockRecommendationAdapterOptions['onValidationFailure'];
 
   constructor(options: BedrockRecommendationAdapterOptions) {
     this.client = options.client;
@@ -377,6 +380,7 @@ export class BedrockRecommendationModel implements RecommendationModel {
     this.timeoutMs = options.timeoutMs;
     this.structuredOutput = options.structuredOutput ?? true;
     this.onAttempt = options.onAttempt;
+    this.onValidationFailure = options.onValidationFailure;
   }
 
   async decide(input: RecommendationModelInput): Promise<ProviderResult<RecommendationDecision>> {
@@ -429,12 +433,14 @@ export class BedrockRecommendationModel implements RecommendationModel {
     }
     decision = parse(firstResponse);
     if (decision !== null) return available('ok', decision, elapsedSince(startedAt));
+    try { this.onValidationFailure?.({ operation }); } catch { /* Observability cannot affect validation. */ }
 
     const remaining = remainingTimeoutMs();
     if (remaining <= 0) return timeoutResult();
     try {
       const repairedResponse = await attempt(request(useStructuredOutput, true), remaining, 'repair');
       decision = parse(repairedResponse);
+      if (decision === null) { try { this.onValidationFailure?.({ operation }); } catch { /* Observability cannot affect validation. */ } }
     } catch (error: unknown) {
       return mapBedrockFailure(error, elapsedSince(startedAt));
     }
@@ -455,6 +461,7 @@ export function createBedrockRecommendationModel(
     modelId: config.modelId,
     timeoutMs: config.timeoutMs,
     ...(config.structuredOutput === undefined ? {} : { structuredOutput: config.structuredOutput }),
-    ...(config.onAttempt === undefined ? {} : { onAttempt: config.onAttempt })
+    ...(config.onAttempt === undefined ? {} : { onAttempt: config.onAttempt }),
+    ...(config.onValidationFailure === undefined ? {} : { onValidationFailure: config.onValidationFailure })
   });
 }

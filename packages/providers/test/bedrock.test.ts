@@ -142,6 +142,17 @@ function hasFalseItems(value: unknown): boolean {
 }
 
 describe('BedrockRecommendationModel', () => {
+  it('counts every invalid output, including a recovered repair and a repair transport failure', async () => {
+    for (const [second, expected, status] of [[response(notifyDecision), 1, 'degraded'], [new Error('transport'), 1, 'error'], [response({ invalid: true }), 2, 'error']] as const) {
+      const entries: unknown[] = []; const fake = fakeClient([response({ private: 'invalid' }), second]);
+      const observed = new BedrockRecommendationModel({ client: fake.client, modelId: 'test', timeoutMs: 100,
+        onValidationFailure: entry => { entries.push(entry); throw new Error('observer'); } });
+      expect(await observed.decide(modelInput())).toMatchObject({ status });
+      expect(entries).toHaveLength(expected);
+      expect(entries).toEqual(Array.from({ length: expected }, () => ({ operation: 'decide' })));
+      expect(JSON.stringify(entries)).not.toContain('private');
+    }
+  });
   it('counts initial and repair SDK attempts without payloads and isolates observer failures', async () => {
     const entries: unknown[] = []; const fake = fakeClient([response({ private: 'invalid' }), response(notifyDecision)]);
     const observed = new BedrockRecommendationModel({ client: fake.client, modelId: 'test', timeoutMs: 100, onAttempt: entry => { entries.push(entry); throw new Error('observer'); } });

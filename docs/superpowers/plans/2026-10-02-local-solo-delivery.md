@@ -75,9 +75,9 @@ On 2026-10-02, this checkout is `feature/phase0-d-platform` at `7b3091b` and is 
 
 **Produces:** Live dev `STEP_GOAL_REST`: Cognito → API Gateway/Lambda → Places V2 + Bedrock → schema-valid response → Web, with DynamoDB persistence and preview invariants.
 
-- [ ] Check the local AWS profiles' account/Region, CDK diff, bootstrap qualifier, OIDC role trust, GitHub `dev`/`prod` environments, required non-secret variables, and Bedrock model access. Make needed CDK/workflow changes before live deployment. Record any service-level blocker precisely.
-- [ ] Change `scripts/smoke.ts` so dev gate mode fails when either test-user token is absent. Enable password auth on the existing dev Web Cognito client only for two dedicated smoke users; mint short-lived tokens on each workflow run from protected `dev` environment credentials without printing them. Keep the prod Web client on PKCE. Assert `/me`, schema-valid evaluation, a DynamoDB write, and cross-user recommendation denial. Public-only smoke remains a separate diagnostic, never a passed dev gate.
-- [ ] Use the validated local dev profile for the first core deployment that creates the OIDC roles; then exercise the dev workflow through OIDC. Record deployed SHA and outputs. Run public HTTPS/asset/health smoke and authenticated `/me`/step-goal evaluation.
+- [x] Check the local AWS profiles' account/Region, CDK diff, bootstrap qualifier, OIDC role trust, GitHub `dev`/`prod` environments, required non-secret variables, and Bedrock model access. Make needed CDK/workflow changes before live deployment. Record any service-level blocker precisely.
+- [x] Change `scripts/smoke.ts` so dev gate mode fails when either test-user token is absent. Enable password auth on the existing dev Web Cognito client only for two dedicated smoke users; mint short-lived tokens on each workflow run from protected `dev` environment credentials without printing them. Keep the prod Web client on PKCE. Assert `/me`, schema-valid evaluation, a DynamoDB write, and cross-user recommendation denial. Public-only smoke remains a separate diagnostic, never a passed dev gate.
+- [x] Use the validated local dev profile for the first core deployment that creates the OIDC roles; then exercise the dev workflow through OIDC. Record deployed SHA and outputs. Run public HTTPS/asset/health smoke and authenticated `/me`/step-goal evaluation.
 - [ ] Run the same preview twice. Verify the second response is visible, `wouldSuppress` identifies duplicate guards, no push is sent, and the daily notification count is unchanged. Test a valid proactive request separately in dev.
 - [ ] Test another user's detail/chat access denial, token/redaction in structured logs, a provider timeout, and model-schema failure. Keep successful provider evidence if one fails. Exercise proactive guard/counter behavior with a dedicated dev test user; remote notification delivery is completed in Task 6.
 - [ ] Run the five commands and live smoke on the deployed SHA; have a fresh subagent review the CDK diff, IAM trust, persistence intent, and execution evidence.
@@ -90,9 +90,9 @@ On 2026-10-02, this checkout is `feature/phase0-d-platform` at `7b3091b` and is 
 
 **Produces:** All five editable Web scenarios use the same backend, with live Geocode/Routes/Weather where required; recommendation-scoped chat uses only persisted permitted facts.
 
-- [ ] Use existing five fixtures to write any missing regression tests for positive, negative, boundary, candidate exclusion, duplicate behavior, at most three recommendations, and correct used signals. Pin ambiguous geocodes, unavailable transit, out-of-range forecast, and unknown selected place/route IDs.
-- [ ] Repair only concrete adapter/orchestration gaps found by those tests; preserve `SingleUse` discovery and `GetPlace(IntendedUse=Storage)` for persisted selections.
-- [ ] Add the `docs/DEMO.md` §8 fault selector for weather or routes only in dev, accepting only the authenticated Web demo client and rejecting the selector in prod. Test the forced provider status and visible Web degradation while other valid candidates continue.
+- [x] Use existing five fixtures to write any missing regression tests for positive, negative, boundary, candidate exclusion, duplicate behavior, at most three recommendations, and correct used signals. Pin ambiguous geocodes, unavailable transit, out-of-range forecast, and unknown selected place/route IDs.
+- [x] Repair only concrete adapter/orchestration gaps found by those tests; preserve `SingleUse` discovery and `GetPlace(IntendedUse=Storage)` for persisted selections.
+- [x] Add the `docs/DEMO.md` §8 fault selector for weather or routes only in dev, accepting only the authenticated Web demo client and rejecting the selector in prod. Test the forced provider status and visible Web degradation while other valid candidates continue.
 - [ ] Run authenticated dev smoke for all five presets and the reproducible dev-only provider-degraded case; weather-dependent scenarios may validly be silent under live conditions. Confirm chat ownership, two-hour expiry, and no raw provider payload persistence.
 - [ ] Run the five commands and a fresh subagent review of normalized facts, provider statuses, and `SPEC.md` coverage.
 
@@ -106,10 +106,10 @@ On 2026-10-02, this checkout is `feature/phase0-d-platform` at `7b3091b` and is 
 
 **Produces:** A locally executed iOS Simulator development build and a hardware handoff, followed by at least one iOS or Android development build that signs in, collects actual foreground GPS and minimized calendar events, calls the deployed dev API, and displays the result.
 
-- [ ] Add failing tests for denied location/calendar access, permitted calendar fields only, expired Cognito session, API error display, and validated response rendering.
-- [ ] Complete the merged Mobile foreground flow and stage runtime configuration. Keep attendees, descriptions, tokens in logs, and unbounded GPS history out of requests/persistence.
+- [x] Add failing tests for denied location/calendar access, permitted calendar fields only, expired Cognito session, API error display, and validated response rendering.
+- [x] Complete the merged Mobile foreground flow and stage runtime configuration. Keep attendees, descriptions, tokens in logs, and unbounded GPS history out of requests/persistence.
 - [ ] Run targeted Mobile tests and the five repository commands. Build a development client, then record device, OS, build ID, stage, backend SHA, GPS/calendar permission result, and evaluation result; Expo Go or JS export is insufficient.
-- [ ] Ask a fresh subagent to review client privacy, auth expiry, and the device evidence; fix findings.
+- [x] Ask a fresh subagent to review client privacy, auth expiry, and the device evidence; fix findings.
 
 **Gate:** One real device has a dated foreground GPS + calendar → authenticated dev API → result proof. The other OS remains open for Task 7.
 
@@ -119,11 +119,11 @@ On 2026-10-02, this checkout is `feature/phase0-d-platform` at `7b3091b` and is 
 
 **Produces:** `/devices` registration/deletion, one delivery path per recommendation ID, bounded/atomic proactive state, and CloudWatch logs/metrics without private payloads.
 
-- [ ] Add failing contract/API/repository tests for device registration, token rotation/deletion, account ownership, idempotent dispatch, daily cap across local-day/DST boundaries, and DynamoDB failure before notification.
-- [ ] Pin the path table in tests and `docs/API.md`: preview → `preview`/no delivery; foreground Mobile → `ready`/in-app only; background Mobile → `ready`/local only; explicit server push → `sent` or `failed`/no local fallback; silent → `suppressed`. Public `/context/evaluate` produces the client path; only a trusted internal application command may choose server push. Reserve `client` or `remote` atomically before a recommendation becomes visible, and never change a `ready` client recommendation into a remote send later. Test a server send racing a Mobile local callback and a failed/retried server send: one recommendation ID must use one path. `sent` means provider acceptance, not OS display.
-- [ ] Implement both Expo Push and SNS adapters through the notification port and device API. Configuration selects exactly one remote adapter for each send; do not send through both for one recommendation ID. Preserve idempotency across retries without logging tokens.
-- [ ] Add structured metrics/logging for request/evaluation/provider/model counts and latency, with no auth/push token or raw context. Verify stage-specific log retention and API throttling.
-- [ ] Run the five commands and a fresh subagent review of concurrency, privacy, IAM, and the updated API contract.
+- [x] Add failing contract/API/repository tests for device registration, token rotation/deletion, account ownership, idempotent dispatch, daily cap across local-day/DST boundaries, and DynamoDB failure before notification.
+- [x] Pin the path table in tests and `docs/API.md`: preview → `preview`/no delivery; foreground Mobile → `ready`/in-app only; background Mobile → `ready`/local only; explicit server push → `sent` or `failed`/no local fallback; silent → `suppressed`. Public `/context/evaluate` produces the client path; only a trusted internal application command may choose server push. Reserve `client` or `remote` atomically before a recommendation becomes visible, and never change a `ready` client recommendation into a remote send later. Test a server send racing a Mobile local callback and a failed/retried server send: one recommendation ID must use one path. `sent` means provider acceptance, not OS display.
+- [x] Implement both Expo Push and SNS adapters through the notification port and device API. Configuration selects exactly one remote adapter for each send; do not send through both for one recommendation ID. Preserve idempotency across retries without logging tokens.
+- [x] Add structured metrics/logging for request/evaluation/provider/model counts and latency, with no auth/push token or raw context. Verify stage-specific log retention and API throttling.
+- [x] Run the five commands and a fresh subagent review of concurrency, privacy, IAM, and the updated API contract.
 
 **Gate:** Competing server/client paths deliver at most once per recommendation ID, counters remain correct, and logs/metrics are observable without private data.
 
@@ -133,9 +133,9 @@ On 2026-10-02, this checkout is `feature/phase0-d-platform` at `7b3091b` and is 
 
 **Produces:** Foreground dashboard/feed/detail/chat, iOS steps, feasible Android Health Connect steps, permission health, local notification deduplication, and opportunistic background callbacks.
 
-- [ ] Write failing tests for `StepSource` selection/confidence, permission denial, local notification dedup by recommendation ID, background callback behavior, and feed/detail/follow-up rendering.
-- [ ] Implement iOS Pedometer and Android Health Connect through `StepSource`; label foreground-only fallback lower-confidence. Implement background location callbacks without a fixed five-minute promise.
-- [ ] Connect dashboard, preferences, feed/detail/follow-up, and local notifications to the same authenticated API. Follow Task 6's path table; suppress local delivery for a `sent` or `failed` server path.
+- [x] Write failing tests for `StepSource` selection/confidence, permission denial, local notification dedup by recommendation ID, background callback behavior, and feed/detail/follow-up rendering.
+- [x] Implement iOS Pedometer and Android Health Connect through `StepSource`; label foreground-only fallback lower-confidence. Implement background location callbacks without a fixed five-minute promise.
+- [x] Connect dashboard, preferences, feed/detail/follow-up, and local notifications to the same authenticated API. Follow Task 6's path table; suppress local delivery for a `sent` or `failed` server path.
 - [ ] Run the five commands, then make iOS and Android development builds. Record device, OS, build ID, stage, backend SHA, and each capability result separately, including login, GPS, calendar, steps, local notification, background callback, and map/deep link.
 - [ ] Have a fresh subagent review native permission/privacy behavior and the device evidence; resolve findings.
 
@@ -159,3 +159,23 @@ On 2026-10-02, this checkout is `feature/phase0-d-platform` at `7b3091b` and is 
 Run Tasks 1–5 before broad Phase 3 work so the public vertical slice and one real Mobile foreground path are established early. Tasks 6 and 7 can proceed in separate local code slices, but the primary agent owns their contract/lockfile integration and the single release SHA. A fresh subagent reviews each slice; no subagent makes an independent product-scope decision.
 
 The local AWS profiles and GitHub access should be used where available. If bootstrap, OIDC environment protection, model entitlement, judge credentials, or real devices require an action only the account owner can perform, finish all code and read-only checks first, then request the exact minimal action with the failing gate and evidence. Do not call the release complete while a mandatory live or native gate remains unverified.
+
+## Execution evidence — 2026-10-03 04:10 JST
+
+- Dev `ba15f30db006c56ca7702fd4f22570bb841e423b` was deployed through GitHub OIDC.
+  [Run 37046597403](https://github.com/xe-pc23/Contextia/actions/runs/37046597403) passed validation,
+  deployment and mandatory authenticated smoke. Public URL: https://d1grgebh7iqqmf.cloudfront.net/.
+  Five previews, idempotency/state/quota invariants, live STEP_GOAL_REST Places/Bedrock and an actual
+  scheduled transit card, owned chat and cross-user denial were observed. Weather-adaptation's model
+  call timed out and remained explicitly degraded; this is not a claim all provider paths always succeed.
+- Task 7 native code has Sensors/Health Connect step sources, saved-timezone day/DST handling,
+  globally registered opportunistic TaskManager callbacks, read-only headless auth and bounded atomic
+  SQLite claims. Native iOS Debug build/install passed. Android minSdk 26 is committed configuration;
+  SDK/license and APK/device proof remain open. Foreground sensor fallback is a tested primitive
+  without an enabled native subscription. Headless expired access tokens skip until foreground refresh.
+- Current source passed the five commands (1,253 tests / 78 files). Independent native/provider/IAM
+  reviews led to fixes for stale permission prompts, start/stop ordering, post-acceptance notification
+  cleanup, minimum Android SDK and recovered-model validation metrics. Extended live fault, SRP,
+  proactive counter and recent EMF checks are prepared for the next dev SHA.
+- Tasks 3/4 full live UI evidence, Task 5/7 hardware matrix and Task 8 production release remain open.
+  A Simulator build, SRP script or JS export does not close a native capability row.

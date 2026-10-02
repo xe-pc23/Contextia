@@ -52,7 +52,7 @@ export class MobileController {
 
   constructor(private readonly options: {
     client: BackendClient;
-    collector: { collect(stepGoal?: number): Promise<ContextCollectionResult> };
+    collector: { collect(stepGoal?: number, timezone?: string): Promise<ContextCollectionResult> };
     collectionTimeoutMs?: number;
   }) {}
 
@@ -184,7 +184,7 @@ export class MobileController {
     this.patch({ collecting: true, collection: null, collectionError: null });
     try {
       const goal = this.state.profile.data?.preferences.stepGoal;
-      const result = await withTimeout(this.options.collector.collect(goal), this.options.collectionTimeoutMs ?? 45_000);
+      const result = await withTimeout(this.options.collector.collect(goal, this.state.profile.data?.preferences.timezone), this.options.collectionTimeoutMs ?? 45_000);
       if (!this.current(lifetime)) return null;
       this.patch({ collection: result });
       return result;

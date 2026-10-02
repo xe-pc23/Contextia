@@ -75,9 +75,10 @@ describe('createEvaluationDomain (lane A guards and detectors)', () => {
     expect(guard('proactive', repeated)).toMatchObject({ shouldEvaluate: false, guardCodes: ['DUPLICATE_CONTEXT'] });
   });
 
-  it('runs real-mode detection on the server clock, not the client capture time', async () => {
+  it('keeps real detection on the server clock and excludes a prior local day’s steps', async () => {
     const stale = { ...proactive, capturedAt: '2026-09-30T05:10:00.000Z' };
-    const [candidate] = await domain.detectCandidates({ context: stale, preferences, now: NOW });
+    expect(await domain.detectCandidates({ context: stale, preferences, now: NOW })).toEqual([]);
+    const [candidate] = await domain.detectCandidates({ context: { ...proactive, capturedAt: '2026-10-01T04:10:00.000Z' }, preferences, now: NOW });
     expect(candidate?.anchorKey).toBe('2026-10-01');
   });
 });

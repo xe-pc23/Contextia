@@ -11,12 +11,13 @@ async function hashNativeEventId(nativeEventId: string): Promise<string> {
 }
 
 export class ExpoCalendarSource implements CalendarSource {
+  constructor(private readonly options: { requestPermissions?: boolean } = {}) {}
   async readUpcomingEvents(now: Date): Promise<CalendarReadResult> {
     try {
       const current = await Calendar.getCalendarPermissionsAsync();
       const permission = current.granted
         ? current
-        : current.canAskAgain
+        : current.canAskAgain && this.options.requestPermissions !== false
           ? await Calendar.requestCalendarPermissionsAsync()
           : current;
       if (!permission.granted) return { status: 'denied' };

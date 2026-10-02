@@ -98,6 +98,14 @@ function setup(options: Options = {}) {
 }
 
 describe('createEvaluateContext', () => {
+  it('excludes stale-day real activity from model input and stored context while preserving other candidates', async () => {
+    const { evaluate, decide, state } = setup({ clock: () => new Date('2026-10-03T15:00:01Z') });
+    await evaluate({ userId: 'user-1', context: { ...proactive, capturedAt: '2026-10-03T14:59:59Z' } });
+    expect(decide).toHaveBeenCalledOnce();
+    expect(decide.mock.calls[0]?.[0].context.activity).toBeUndefined();
+    expect(state.writeContextSnapshot.mock.calls[0]?.[0].snapshot.activity).toBeUndefined();
+    expect(decide.mock.calls[0]?.[0].context.location).toEqual(proactive.location);
+  });
   it('returns the server-normalized preview inputs even when no candidate runs, and keeps them out of real responses', async () => {
     const { evaluate, places, decide } = setup({ candidates: [] });
     const result = await evaluate({ userId: 'user-1', context: { ...preview, activity: {},

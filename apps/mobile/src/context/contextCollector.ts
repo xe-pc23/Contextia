@@ -19,7 +19,7 @@ export class ContextCollector {
     private readonly stepSource: StepSource = new UnavailableStepSource()
   ) {}
 
-  async collect(stepGoal?: number): Promise<ContextCollectionResult> {
+  async collect(stepGoal?: number, timezone?: string): Promise<ContextCollectionResult> {
     const now = this.clock.now();
     if (!Number.isFinite(now.getTime())) {
       return { status: 'location-unavailable', location: 'unavailable', calendar: 'unavailable', steps: 'unavailable' };
@@ -28,7 +28,7 @@ export class ContextCollector {
     const [locationResult, calendarResult, stepResult] = await Promise.all([
       this.locationSource.readCurrentLocation().catch(() => ({ status: 'unavailable' as const })),
       this.calendarSource.readUpcomingEvents(now).catch(() => ({ status: 'unavailable' as const })),
-      this.stepSource.getTodaySteps(now).catch(() => ({ status: 'unavailable' as const }))
+      this.stepSource.getTodaySteps(now, timezone).catch(() => ({ status: 'unavailable' as const }))
     ]);
     const calendar = calendarStatus(calendarResult);
 

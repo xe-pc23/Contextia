@@ -179,6 +179,7 @@ export class ContextiaCoreStack extends Stack {
       retention: isDev ? RetentionDays.ONE_WEEK : RetentionDays.ONE_MONTH,
       removalPolicy
     });
+    if (isDev) deployRole.addToPolicy(new PolicyStatement({ actions: ['logs:FilterLogEvents'], resources: [logs.logGroupArn] }));
     const apiRole = new Role(this, 'ApiRole', {
       roleName: `${prefix}-api-role`,
       assumedBy: new ServicePrincipal('lambda.amazonaws.com')

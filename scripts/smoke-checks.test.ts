@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { assertPreviewStateUnchanged, hasLiveTransitProof, liveSmokeContext, liveTransitProofContext, nextLiveSmokeTime, runPublicSmoke, smokeProviderDiagnostic } from './smoke-checks.js';
+import { assertCappedProactive, assertPreviewStateUnchanged, assertProactiveTransition, assertWeatherFault, hasLiveTransitProof, liveSmokeContext, liveTransitProofContext, nextLiveSmokeTime, runPublicSmoke, smokeProviderDiagnostic } from './smoke-checks.js';
 import { ContextEvaluateResponseSchema } from '@contextia/contracts';
 import { getScenarioInput } from '@contextia/test-fixtures';
 const target = { stage: 'dev' as const, buildId: 'sha-1', apiBaseUrl: 'https://api.example.com', webUrl: 'https://web.example.com/' };
@@ -75,6 +75,31 @@ describe('public deployment smoke', () => {
   });
 });
 describe('preview delivery invariants', () => {
+  it('requires the forced weather failure to stay explicit while valid step suggestions continue', () => {
+    const result = { decision: 'notify', triggerType: 'STEP_GOAL_REST', weather: null,
+      delivery: { mode: 'preview', status: 'preview' },
+      providerStatus: { places: { status: 'ok' }, bedrock: { status: 'ok' }, weather: { status: 'unavailable', code: 'DEMO_FORCED_UNAVAILABLE' } } };
+    expect(() => assertWeatherFault(result as unknown as Parameters<typeof assertWeatherFault>[0])).not.toThrow();
+    expect(() => assertWeatherFault({ ...result, weather: { condition: 'clear' } } as unknown as Parameters<typeof assertWeatherFault>[0])).toThrow();
+  });
+  it('requires one quota increment and an immutable client reservation, including a local-day reset', () => {
+    const before = { notificationDay: '2026-10-02', notificationsSentToday: 9, recentAnchors: [] };
+    const after = { notificationDay: '2026-10-03', notificationsSentToday: 1, recentAnchors: [] };
+    const result = { decision: 'notify', delivery: { mode: 'proactive', status: 'ready', wouldSuppress: false } };
+    const intent = { path: 'client', status: 'ready' } as const;
+    expect(() => assertProactiveTransition(before, after, result as unknown as Parameters<typeof assertProactiveTransition>[2], intent)).not.toThrow();
+    expect(() => assertProactiveTransition(before, { ...after, notificationsSentToday: 2 }, result as unknown as Parameters<typeof assertProactiveTransition>[2], intent)).toThrow();
+    expect(() => assertProactiveTransition(before, after, result as unknown as Parameters<typeof assertProactiveTransition>[2], { path: 'remote', status: 'reserved' })).toThrow();
+    expect(() => assertProactiveTransition(after, { ...after, notificationsSentToday: 2 }, result as unknown as Parameters<typeof assertProactiveTransition>[2], intent)).toThrow();
+  });
+  it('does not accept an invented cap label or provider call when the low-frequency pre-state is uncapped', () => {
+    const before = { notificationDay: '2026-10-03', notificationsSentToday: 1, recentAnchors: [] };
+    const data = { decision: 'silent', delivery: { guardCodes: ['DAILY_CAP_REACHED'] }, providerStatus: { bedrock: { status: 'not_requested' } } } as unknown as Parameters<typeof assertCappedProactive>[2];
+    expect(() => assertCappedProactive(before, before, data, '2026-10-03')).not.toThrow();
+    expect(() => assertCappedProactive({ ...before, notificationsSentToday: 0 }, before, data, '2026-10-03')).toThrow();
+    expect(() => assertCappedProactive(before, before, data, '2026-10-04')).toThrow();
+    expect(() => assertCappedProactive(before, before, { ...data, providerStatus: { ...data.providerStatus, bedrock: { status: 'ok' } } }, '2026-10-03')).toThrow();
+  });
   const state = { notificationDay: '2026-10-02', notificationsSentToday: 2, recentAnchors: [{ triggerType: 'STEP_GOAL_REST' as const, anchorKey: 'today', notifiedAt: '2026-10-02T10:00:00Z' }] };
   it('allows context persistence while leaving delivery state unchanged', () => {
     expect(() => assertPreviewStateUnchanged(state, { ...state, latestContext: { evaluationId: 'new', capturedAt: '2026-10-02T10:00:00Z' } })).not.toThrow();

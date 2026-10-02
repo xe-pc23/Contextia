@@ -24,6 +24,12 @@ function synth(stage: typeof stages[number]) {
   return entry;
 }
 const localOrigins = ['http://localhost:5173', 'http://127.0.0.1:5173'];
+it('limits live metrics inspection to the dev API log group', () => {
+  const dev = synth('dev').template.findResources('AWS::IAM::Policy');
+  const statements = Object.values(dev).flatMap(resource => resource.Properties.PolicyDocument.Statement as { Action: string | string[]; Resource: unknown }[]);
+  expect(statements.filter(statement => statement.Action === 'logs:FilterLogEvents')).toEqual([expect.objectContaining({ Resource: expect.any(Object) })]);
+  expect(JSON.stringify(synth('prod').template.toJSON())).not.toContain('logs:FilterLogEvents');
+});
 
 describe.each(stages)('%s core stack', (stage) => {
   const { stack, template } = synth(stage);

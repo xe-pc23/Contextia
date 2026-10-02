@@ -16,6 +16,19 @@ locked before the result could be inspected. Login, collection and API execution
 Expo Go is not a substitute.
 Proof: [Simulator initial screen](hackathon/evidence/task5-simulator-start.png).
 
+The Task 7 Debug native rebuild also succeeded and installed on the iPhone 17 Simulator,
+including Sensors, SQLite, Notifications and TaskManager. Native SDK resolution/compilation is
+verified; configured login, collection and OS notification display remain open because no accessible
+Simulator window was available. Both native projects prebuild successfully. Android is configured
+with minSdk 26 for Health Connect; APK compilation awaits SDK installation/license consent.
+
+The implementation has opportunistic location callbacks and durable local recommendation-ID claims.
+Headless authentication is read-only: an expired access token skips evaluation until the app refreshes
+it in the foreground. Existing installations must sign in again or refresh before validating the new
+after-first-unlock SecureStore accessibility. Android background step reads require the separate
+Health Connect background grant. A foreground fallback primitive exists, but no native fallback
+sensor subscription is enabled. These limits must be included in hardware results.
+
 ## Run locally
 
 1. Use Node 24.13.1 and pnpm 10.29.3; run `pnpm install --frozen-lockfile`.
@@ -62,6 +75,7 @@ handoff channel. The owner does not share their Apple Account password or AWS cr
 | Saved preferences | Open | Open | Open |
 | Today's steps | Hardware required | Open | Open — Health Connect |
 | Local notification / recommendation ID dedup | Open | Open | Open |
+| Tap notification → owned detail; sign-out clears pending/last response | Open | Open | Open |
 | Background location callback | Hardware required | Open | Open |
 | Remote push acceptance / OS display | Hardware required | Open | Open |
 | Map / route deep link | Open | Open | Open |

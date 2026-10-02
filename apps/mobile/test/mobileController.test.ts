@@ -9,6 +9,8 @@ function success<T>(data: T): BackendOutcome<T> { return { kind: 'success', requ
 function setup() {
   const client = {
     getProfile: vi.fn<BackendClient['getProfile']>(async () => success(profile)),
+    registerDevice: vi.fn<BackendClient['registerDevice']>(async () => success({ registered: true })),
+    deleteDevice: vi.fn<BackendClient['deleteDevice']>(async () => success(null)),
     updatePreferences: vi.fn<BackendClient['updatePreferences']>(async () => success({ updated: true })),
     evaluate: vi.fn<BackendClient['evaluate']>(async () => success(notify)),
     listRecommendations: vi.fn<BackendClient['listRecommendations']>(async () => success({ items: [historyItem], nextCursor: null })),
@@ -23,7 +25,7 @@ function setup() {
 describe('foreground mobile workflow', () => {
   it('collects new context with the saved goal and shows notify/partial provider results', async () => {
     const test = setup(); await test.controller.loadProfile(); await test.controller.evaluate();
-    expect(test.collect).toHaveBeenCalledWith(10000);
+    expect(test.collect).toHaveBeenCalledWith(10000, 'Asia/Tokyo');
     expect(test.client.evaluate.mock.calls[0]?.[0]).toEqual(collection.status === 'ready' ? collection.input : null);
     expect(test.controller.getSnapshot().evaluation).toEqual({ status: 'ready', data: { result: notify, requestId: 'req-test' } });
     expect(test.controller.getSnapshot().evaluation.data?.result.providerStatus.weather.status).toBe('unavailable');

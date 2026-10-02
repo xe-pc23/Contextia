@@ -12,12 +12,16 @@ export function createSecureSessionStore(config: Pick<CognitoConfiguration, 'sta
   const key = sessionStorageKey(config);
   return {
     read: () => readSecureSession(key),
-    write: session => SecureStore.setItemAsync(key, JSON.stringify(session)),
+    write: session => SecureStore.setItemAsync(key, JSON.stringify(session), { keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY }),
     clear: () => SecureStore.deleteItemAsync(key)
   };
 }
 
-async function readSecureSession(key: string): Promise<StoredSession | null> {
+export function readBackgroundSession(config: Pick<CognitoConfiguration, 'stage' | 'clientId'>): Promise<StoredSession | null> {
+  return readSecureSession(sessionStorageKey(config), false);
+}
+
+async function readSecureSession(key: string, discardCorrupt = true): Promise<StoredSession | null> {
   const serialized = await SecureStore.getItemAsync(key);
   if (serialized === null) return null;
 
@@ -27,6 +31,6 @@ async function readSecureSession(key: string): Promise<StoredSession | null> {
   } catch {
     // Corrupt local data is discarded; credentials are never logged.
   }
-  await SecureStore.deleteItemAsync(key);
+  if (discardCorrupt) await SecureStore.deleteItemAsync(key);
   return null;
 }

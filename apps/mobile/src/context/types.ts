@@ -34,7 +34,7 @@ export type StepReadResult =
   | { status: 'denied' | 'unavailable' };
 
 export interface StepSource {
-  getTodaySteps(now: Date): Promise<StepReadResult>;
+  getTodaySteps(now: Date, timezone?: string): Promise<StepReadResult>;
 }
 
 export type RealContextInput = Extract<ContextInput, { mode: 'real' }>;

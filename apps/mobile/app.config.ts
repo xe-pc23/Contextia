@@ -13,19 +13,29 @@ const config: ExpoConfig = {
   ios: { bundleIdentifier: `com.contextia.${stage}`, supportsTablet: true },
   android: {
     package: `com.contextia.${stage}`,
-    permissions: ['android.permission.ACCESS_COARSE_LOCATION', 'android.permission.ACCESS_FINE_LOCATION', 'android.permission.READ_CALENDAR']
+    permissions: ['android.permission.ACCESS_COARSE_LOCATION', 'android.permission.ACCESS_FINE_LOCATION', 'android.permission.READ_CALENDAR', 'android.permission.health.READ_STEPS', 'android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND']
   },
   plugins: [
     'expo-dev-client',
+    ['expo-build-properties', { android: { minSdkVersion: 26 } }],
     [
       'expo-location',
-      { locationWhenInUsePermission: 'Contextia uses your location while you use the app to prepare relevant suggestions.' }
+      {
+        locationWhenInUsePermission: 'Contextia uses your location while you use the app to prepare relevant suggestions.',
+        locationAlwaysAndWhenInUsePermission: 'With your permission, Contextia checks location in the background to prepare timely suggestions.',
+        isIosBackgroundLocationEnabled: true,
+        isAndroidBackgroundLocationEnabled: true,
+        isAndroidForegroundServiceEnabled: true
+      }
     ],
     [
       'expo-calendar',
       { calendarPermission: 'Contextia uses event titles, times, and locations to prepare relevant suggestions.' }
     ],
-    ['expo-secure-store', { configureAndroidBackup: true }]
+    ['expo-secure-store', { configureAndroidBackup: true }],
+    ['expo-sensors', { motionPermission: 'Contextia reads today’s steps to suggest a rest after your goal.' }],
+    'expo-notifications',
+    'react-native-health-connect'
   ]
 };
 

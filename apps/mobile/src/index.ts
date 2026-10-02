@@ -1,3 +1,4 @@
+import './background/locationTask';
 import { registerRootComponent } from 'expo';
 import { App } from './App';
 

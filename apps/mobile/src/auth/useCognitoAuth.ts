@@ -7,6 +7,7 @@ import { createSecureSessionStore } from './secureSessionStore';
 import { SessionManager } from './sessionManager';
 import { toStoredSession, type StoredSession } from './sessionModel';
 import { withTimeout } from '../async/withTimeout';
+import { disableBackground } from '../background/control';
 
 export type CognitoAuthState = {
   status: 'loading' | 'signed-out' | 'signed-in' | 'error';
@@ -133,7 +134,9 @@ export function useCognitoAuth(config: CognitoConfiguration): CognitoAuthState {
     let browserCompleted = false;
     try {
       // Hide private screens and invalidate refresh before any remote logout.
-      await manager.clear().catch(() => { cleared = false; });
+      const clearing = manager.clear().catch(() => { cleared = false; });
+      await disableBackground(config).catch(() => { cleared = false; });
+      await clearing;
       if (stored?.refreshToken && discovery?.revocationEndpoint) {
         await withTimeout(AuthSession.revokeAsync({
           clientId: config.clientId, token: stored.refreshToken,

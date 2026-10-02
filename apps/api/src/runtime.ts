@@ -30,7 +30,8 @@ export function composeRuntime(env: Record<string, string | undefined>, log: (en
   const routes = createAmazonLocationRouteProvider({ region: config.region, timeoutMs: config.routesTimeoutMs });
   const weather = createOpenMeteoWeatherProvider({ endpoint: config.weatherEndpoint, timeoutMs: config.weatherTimeoutMs });
   const model = createBedrockRecommendationModel({ region: config.modelRegion, modelId: config.modelId, timeoutMs: config.modelTimeoutMs, structuredOutput: config.structuredOutput,
-    onAttempt: entry => metrics.record({ Provider: 'modelAttempt', Operation: entry.attempt, Status: entry.status, Count: 1, Errors: entry.status === 'ok' ? 0 : 1, Latency: entry.latencyMs }) });
+    onAttempt: entry => metrics.record({ Provider: 'modelAttempt', Operation: entry.attempt, Status: entry.status, Count: 1, Errors: entry.status === 'ok' ? 0 : 1, Latency: entry.latencyMs }),
+    onValidationFailure: () => metrics.record({ Provider: 'bedrock', Operation: 'validate', Status: 'error', Count: 1, Errors: 1, Latency: 0 }) });
   const observedPlaces: PlacesProvider = { searchNearby: input => metrics.provider('places', 'searchNearby', () => places.searchNearby(input)), getPlace: <I extends PersistenceIntent>(input: GetPlaceInput<I>) => metrics.provider('places', 'getPlace', () => places.getPlace(input)) };
   const observedModel = { decide: (input: Parameters<typeof model.decide>[0]) => metrics.provider('bedrock', 'decide', () => model.decide(input)), followUp: (input: Parameters<typeof model.followUp>[0]) => metrics.provider('bedrock', 'followUp', () => model.followUp(input)) };
   const sns = env.SNS_IOS_APPLICATION_ARN || env.SNS_ANDROID_APPLICATION_ARN ? createSnsNotificationProvider({ region: config.region, stage: config.stage, timeoutMs: 5000,
@@ -56,7 +57,7 @@ export function composeRuntime(env: Record<string, string | undefined>, log: (en
   const dispatch = createRemoteDelivery({ state, providers: { expo, ...(sns ? { sns } : {}) }, provider: env.REMOTE_PUSH_PROVIDER === 'sns' ? 'sns' : 'expo', clock, newClaimId: () => randomUUID() });
   const observedEvaluate: typeof evaluate = async input => {
     const started = performance.now(); let status: 'ok' | 'error' = 'error';
-    try { const result = await evaluate(input); status = 'ok'; return result; }
+    try { const result = await evaluate(input); status = 'ok'; metrics.decision(result); return result; }
     finally { metrics.record({ Provider: 'evaluation', Operation: 'evaluate', Status: status, Count: 1, Errors: status === 'ok' ? 0 : 1, Latency: Math.round(performance.now() - started) }); }
   };
   return {

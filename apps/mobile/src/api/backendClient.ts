@@ -1,13 +1,14 @@
-import type { z } from 'zod';
+import { z } from 'zod';
 import {
   ChatRequestSchema, ChatResponseSchema, ContextEvaluateResponseSchema, ErrorResponseSchema, EvaluationHeadersSchema, GetMeResponseSchema,
   GetRecommendationResponseSchema, ListRecommendationsResponseSchema,
   RealContextInputSchema, RecommendationParamsSchema, RecommendationsQuerySchema,
-  UpdatePreferencesRequestSchema, UpdatePreferencesResponseSchema
+  UpdatePreferencesRequestSchema, UpdatePreferencesResponseSchema,
+  RegisterDeviceRequestSchema, RegisterDeviceResponseSchema, DeleteDeviceParamsSchema, responseEnvelopeSchema
 } from '@contextia/contracts';
 import type {
   ChatResponse, ContextEvaluateResponse, GetMeResponse, GetRecommendationResponse,
-  ListRecommendationsResponse, UpdatePreferencesResponse
+  ListRecommendationsResponse, UpdatePreferencesResponse, RegisterDeviceResponse
 } from '@contextia/contracts';
 
 export type BackendFailure =
@@ -28,6 +29,8 @@ export interface BackendClient {
   listRecommendations(query?: unknown, signal?: AbortSignal): Promise<BackendOutcome<ListRecommendationsResponse['data']>>;
   getRecommendation(id: string, signal?: AbortSignal): Promise<BackendOutcome<GetRecommendationResponse['data']>>;
   chat(id: string, input: unknown, signal?: AbortSignal): Promise<BackendOutcome<ChatResponse['data']>>;
+  registerDevice(input: unknown, signal?: AbortSignal): Promise<BackendOutcome<RegisterDeviceResponse['data']>>;
+  deleteDevice(id: string, signal?: AbortSignal): Promise<BackendOutcome<null>>;
 }
 
 export function apiBaseUrl(value: unknown): string | null {
@@ -66,10 +69,11 @@ export function createBackendClient(options: {
   async function request<T>(
     path: string,
     schema: z.ZodType<{ requestId: string; data: T }>,
-    method: 'GET' | 'PUT' | 'POST',
+    method: 'GET' | 'PUT' | 'POST' | 'DELETE',
     signal?: AbortSignal,
     body?: unknown,
-    headers: Record<string, string> = {}
+    headers: Record<string, string> = {},
+    emptyResponse = false
   ): Promise<BackendOutcome<T>> {
     const sessionSignal = options.getSessionSignal?.();
     if (signal?.aborted || sessionSignal?.aborted) return { kind: 'cancelled' };
@@ -110,6 +114,11 @@ export function createBackendClient(options: {
         await options.onUnauthorized?.(token, sessionSignal).catch(() => undefined);
         return { kind: 'unauthenticated' };
       }
+      if (emptyResponse && response.ok) {
+        if (response.status !== 204) return { kind: 'invalid-response' };
+        const parsed = schema.safeParse({ requestId: response.headers.get('x-request-id') ?? response.headers.get('apigw-requestid') ?? 'unavailable', data: null });
+        return parsed.success ? { kind: 'success', requestId: parsed.data.requestId, data: parsed.data.data } : { kind: 'invalid-response' };
+      }
       let raw: unknown;
       try { raw = await response.json(); } catch { raw = null; }
       if (stopped) return stopped;
@@ -139,6 +148,14 @@ export function createBackendClient(options: {
   }
 
   return {
+    async registerDevice(input, signal) {
+      const parsed = RegisterDeviceRequestSchema.safeParse(input);
+      return parsed.success ? request('v1/devices', RegisterDeviceResponseSchema, 'POST', signal, parsed.data) : invalidFields(parsed.error.issues);
+    },
+    async deleteDevice(id, signal) {
+      const parsed = DeleteDeviceParamsSchema.safeParse({ deviceId: id });
+      return parsed.success ? request(`v1/devices/${encodeURIComponent(parsed.data.deviceId)}`, responseEnvelopeSchema(z.null()), 'DELETE', signal, undefined, {}, true) : invalidFields(parsed.error.issues);
+    },
     getProfile: signal => request('v1/me', GetMeResponseSchema, 'GET', signal),
     async updatePreferences(input, signal, createOnly) {
       const parsed = UpdatePreferencesRequestSchema.safeParse(input);

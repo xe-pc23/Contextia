@@ -17,7 +17,7 @@ import { claimEvaluation } from './idempotency.js';
 import type { IdempotencyRepository } from './idempotency.js';
 import { ApiFailure } from './apiFailure.js';
 import { EvaluationDeadline } from './evaluationDeadline.js';
-import { defaultDetectorPolicy, localDate, normalizeDetectorContext, weatherAt } from '@contextia/domain';
+import { contextWithCurrentDayActivity, defaultDetectorPolicy, localDate, normalizeDetectorContext, weatherAt } from '@contextia/domain';
 import { selectOpportunity } from './selectOpportunity.js';
 
 export type EvaluationFailureCode = 'PROFILE_NOT_FOUND' | 'STATE_UNAVAILABLE';
@@ -176,7 +176,8 @@ export function createEvaluateContext(deps: EvaluationDependencies): EvaluateCon
     throw new RangeError('contextTtlSeconds must exceed contextDedupSeconds so an expired snapshot is never a recent duplicate');
   }
 
-  return async ({ userId, context, idempotencyKey, demoFault, deliveryPath = 'client' }) => {
+  return async ({ userId, context: receivedContext, idempotencyKey, demoFault, deliveryPath = 'client' }) => {
+    let context = receivedContext;
     if (deliveryPath === 'remote' && context.deliveryMode !== 'proactive') throw new ApiFailure('STATE_UNAVAILABLE');
     // One request-start instant keeps both guard passes on the same day and window.
     const now = deps.clock();
@@ -206,6 +207,9 @@ export function createEvaluateContext(deps: EvaluationDependencies): EvaluateCon
       if (!profile.data) throw new EvaluationFailure('PROFILE_NOT_FOUND');
       if (profile.data.userId !== userId) throw new EvaluationFailure('STATE_UNAVAILABLE');
       const preferences = effectivePreferences(profile.data.preferences, context);
+      // Keep the original idempotency request hash, but exclude stale daily evidence from every
+      // subsequent detector, model and persisted snapshot (including later recommendation chat).
+      context = contextWithCurrentDayActivity(context, now, preferences.timezone);
 
       const stateResult = await deadline.run(() => deps.state.getState({ userId, nowEpochSeconds }));
       if (stateResult.status !== 'ok' && stateResult.status !== 'degraded') throw new EvaluationFailure('STATE_UNAVAILABLE');

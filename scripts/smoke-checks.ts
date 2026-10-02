@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { ChatResponseSchema, ContextEvaluateResponseSchema, ErrorResponseSchema, GetMeResponseSchema, GetRecommendationResponseSchema, HealthResponseSchema, ScenarioContextInputSchema, UpdatePreferencesRequestSchema, UpdatePreferencesResponseSchema } from '@contextia/contracts';
+import { ChatResponseSchema, ContextEvaluateResponseSchema, ErrorResponseSchema, GetMeResponseSchema, GetRecommendationResponseSchema, HealthResponseSchema, RealContextInputSchema, ScenarioContextInputSchema, UpdatePreferencesRequestSchema, UpdatePreferencesResponseSchema } from '@contextia/contracts';
 import { getScenarioInput, scenarios } from '@contextia/test-fixtures';
 import type { ContextEvaluateResponse, ScenarioId } from '@contextia/contracts';
-import type { StateRepository, UserState } from '@contextia/providers';
+import type { DeliveryIntent, StateRepository, UserState } from '@contextia/providers';
 
 export const SmokeTargetSchema = z.strictObject({
   stage: z.enum(['dev', 'prod']), buildId: z.string().min(1), apiBaseUrl: z.url(), webUrl: z.url()
@@ -49,6 +49,28 @@ export function liveTransitProofContext(evaluationAt: Date) {
 export function assertPreviewStateUnchanged(before: UserState | null, after: UserState | null): void {
   const delivery = (state: UserState | null) => ({ notificationsSentToday: state?.notificationsSentToday ?? 0, recentAnchors: state?.recentAnchors ?? [], latestRecommendationAt: state?.latestRecommendationAt ?? null });
   if (JSON.stringify(delivery(before)) !== JSON.stringify(delivery(after))) throw new SmokeCheckError('Preview mutated notification quota or delivery anchors');
+}
+export function assertWeatherFault(data: ContextEvaluateResponse['data']): void {
+  if (data.delivery.mode !== 'preview' || data.delivery.status !== 'preview' || data.weather !== null
+    || data.providerStatus.weather.status !== 'unavailable' || data.providerStatus.weather.code !== 'DEMO_FORCED_UNAVAILABLE'
+    || data.decision !== 'notify' || data.triggerType !== 'STEP_GOAL_REST'
+    || !['ok', 'degraded'].includes(data.providerStatus.places.status) || !['ok', 'degraded'].includes(data.providerStatus.bedrock.status)) {
+    throw new SmokeCheckError('Dev weather fault did not preserve explicit degradation and valid step suggestions');
+  }
+}
+export function assertProactiveTransition(before: UserState | null, after: UserState | null, data: ContextEvaluateResponse['data'], intent: DeliveryIntent | null): void {
+  const expected = (before?.notificationDay === after?.notificationDay ? before?.notificationsSentToday ?? 0 : 0) + 1;
+  if (data.decision !== 'notify' || data.delivery.mode !== 'proactive' || data.delivery.status !== 'ready' || data.delivery.wouldSuppress
+    || !after || expected !== 1 || after.notificationsSentToday !== expected || intent?.path !== 'client' || intent.status !== 'ready') {
+    throw new SmokeCheckError('Proactive evaluation did not reserve exactly one client delivery and quota increment');
+  }
+}
+export function assertCappedProactive(before: UserState | null, after: UserState | null, data: ContextEvaluateResponse['data'], notificationDay: string): void {
+  if (!before || before.notificationDay !== notificationDay || before.notificationsSentToday < 1 || data.decision !== 'silent'
+    || !data.delivery.guardCodes.includes('DAILY_CAP_REACHED') || Object.values(data.providerStatus).some(value => value.status !== 'not_requested')) {
+    throw new SmokeCheckError('Proactive low-frequency cap did not match persisted pre-state');
+  }
+  assertPreviewStateUnchanged(before, after);
 }
 async function initializeProfile(api: string, token: string, fetcher: Fetcher): Promise<void> {
   const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
@@ -154,4 +176,64 @@ export async function runAuthenticatedSmoke(target: SmokeTarget, tokens: { acces
     const remaining = Date.parse(chat.data.expiresAt) - Date.now();
     if (remaining <= 0 || remaining > 7200_000) throw new SmokeCheckError('Conversation expiry exceeded two hours');
   }
+  const fault = await response(fetcher, `${api}/v1/context/evaluate`, { method: 'POST', headers: { ...headers,
+    'idempotency-key': randomUUID(), 'X-Contextia-Demo-Fault': 'weather' }, body: JSON.stringify(liveSmokeContext('step-goal', evaluationAt)) });
+  if (target.stage === 'prod') {
+    if (fault.status !== 403) throw new SmokeCheckError('Production accepted the dev fault selector');
+  } else {
+    if (!fault.ok) throw new SmokeCheckError('Dev fault preview failed');
+    const result = ContextEvaluateResponseSchema.parse(await fault.json() as unknown);
+    assertWeatherFault(result.data);
+    console.log(smokeProviderDiagnostic('step-goal', result));
+    const after = await state.getState(ownedRead);
+    if (after.status !== 'ok' && after.status !== 'degraded') throw new SmokeCheckError('Cannot verify fault preview delivery state');
+    assertPreviewStateUnchanged(before.data, after.data);
+  }
+}
+
+/** Dedicated dev user and synthetic public context; this is an API/counter gate, not native sensor proof. */
+export async function runProactiveSmoke(target: SmokeTarget, tokens: { webAccessToken: string; mobileAccessToken: string }, state: Pick<StateRepository, 'getState' | 'getDeliveryIntent'>, fetcher: Fetcher = fetch): Promise<void> {
+  if (target.stage !== 'dev') throw new SmokeCheckError('Synthetic proactive smoke is dev only');
+  const api = target.apiBaseUrl.replace(/\/$/, '');
+  const headers = { authorization: `Bearer ${tokens.mobileAccessToken}`, 'content-type': 'application/json' };
+  const profile = GetMeResponseSchema.parse(await json(fetcher, `${api}/v1/me`, { headers }));
+  const webProfile = GetMeResponseSchema.parse(await json(fetcher, `${api}/v1/me`, { headers: { authorization: `Bearer ${tokens.webAccessToken}` } }));
+  if (profile.data.userId !== webProfile.data.userId) throw new SmokeCheckError('Mobile SRP smoke must use the same dedicated user as Web smoke');
+  const readState = async () => {
+    const result = await state.getState({ userId: profile.data.userId, nowEpochSeconds: Math.floor(Date.now() / 1000) });
+    if (result.status !== 'ok' && result.status !== 'degraded') throw new SmokeCheckError('Proactive persisted state unavailable');
+    return result.data;
+  };
+  const updatePreferences = async (preferences: typeof profile.data.preferences) => {
+    UpdatePreferencesResponseSchema.parse(await json(fetcher, `${api}/v1/me/preferences`, { method: 'PUT', headers, body: JSON.stringify(preferences) }));
+  };
+  const at = new Date(); const preset = liveSmokeContext('step-goal', at);
+  const real = RealContextInputSchema.parse({ mode: 'real', deliveryMode: 'proactive', capturedAt: preset.capturedAt,
+    location: preset.location, calendar: preset.calendar,
+    activity: { ...preset.activity, stepGoal: profile.data.preferences.stepGoal, stepsToday: Math.max(10432, profile.data.preferences.stepGoal), stepGoalReached: true } });
+  const request = { method: 'POST', headers: { ...headers, 'idempotency-key': randomUUID() }, body: JSON.stringify(real) };
+  const denied = await response(fetcher, `${api}/v1/context/evaluate`, { ...request, headers: { ...request.headers, authorization: `Bearer ${tokens.webAccessToken}` } });
+  if (denied.status !== 403) throw new SmokeCheckError('Web client accepted proactive real context');
+  try {
+    await updatePreferences({ ...profile.data.preferences, notificationsEnabled: true, notificationFrequency: 'low' });
+    const before = await readState();
+    const notificationDay = new Intl.DateTimeFormat('en-CA', { timeZone: profile.data.preferences.timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    const first = ContextEvaluateResponseSchema.parse(await json(fetcher, `${api}/v1/context/evaluate`, request));
+    const after = await readState();
+    if (first.data.decision === 'notify') {
+      const intent = await state.getDeliveryIntent({ userId: profile.data.userId, recommendationId: first.data.recommendationId, nowEpochSeconds: Math.floor(Date.now() / 1000) });
+      if (intent.status !== 'ok' && intent.status !== 'degraded') throw new SmokeCheckError('Client delivery reservation unavailable');
+      assertProactiveTransition(before, after, first.data, intent.data);
+    } else {
+      assertCappedProactive(before, after, first.data, notificationDay);
+    }
+    const replay = ContextEvaluateResponseSchema.parse(await json(fetcher, `${api}/v1/context/evaluate`, request));
+    if (first.requestId === replay.requestId || JSON.stringify(first.data) !== JSON.stringify(replay.data)) throw new SmokeCheckError('Proactive idempotency replay changed the evaluation');
+    assertPreviewStateUnchanged(after, await readState());
+    const duplicate = ContextEvaluateResponseSchema.parse(await json(fetcher, `${api}/v1/context/evaluate`, { ...request, headers: { ...headers, 'idempotency-key': randomUUID() } }));
+    if (duplicate.data.decision !== 'silent' || !duplicate.data.delivery.guardCodes.includes('DUPLICATE_CONTEXT')
+      || !duplicate.data.delivery.guardCodes.includes('DAILY_CAP_REACHED') || Object.values(duplicate.data.providerStatus).some(value => value.status !== 'not_requested')) throw new SmokeCheckError('Proactive duplicate/cap guards did not stop provider calls');
+    assertPreviewStateUnchanged(after, await readState());
+    console.log(`Dev Mobile SRP/proactive gate passed (${first.data.decision === 'notify' ? 'one client reservation and quota increment' : 'existing daily cap preserved'}; replay and duplicate suppressed).`);
+  } finally { await updatePreferences(profile.data.preferences); }
 }

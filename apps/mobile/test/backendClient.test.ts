@@ -10,6 +10,18 @@ function setup(response: () => Response | Promise<Response>, token: () => Promis
 }
 
 describe('mobile API URL and request boundary', () => {
+  it('registers only validated device fields and handles an owned DELETE 204 without JSON', async () => {
+    const { client, fetch } = setup(() => json({ requestId: 'req', data: { registered: true } }));
+    const device = { deviceId: 'device /?', platform: 'ios', provider: 'expo', token: 'ExponentPushToken[test]' };
+    expect((await client.registerDevice(device)).kind).toBe('success');
+    expect((await client.registerDevice({ ...device, userId: 'other' })).kind).toBe('invalid-request');
+    fetch.mockResolvedValue(new Response(null, { status: 204, headers: { 'x-request-id': 'delete-req' } }));
+    expect(await client.deleteDevice('device /?')).toEqual({ kind: 'success', requestId: 'delete-req', data: null });
+    expect(fetch.mock.calls[1]).toMatchObject(['https://api.example.test/dev/v1/devices/device%20%2F%3F', { method: 'DELETE' }]);
+    expect((await client.deleteDevice('x'.repeat(129))).kind).toBe('invalid-request');
+    fetch.mockResolvedValue(json({ requestId: 'wrong', data: null }));
+    expect((await client.deleteDevice('device')).kind).toBe('invalid-response');
+  });
   it('sends a bounded follow-up only to the owned recommendation chat endpoint', async () => {
     const reply = { conversationId: 'chat-1', reply: 'A nearby rest is possible.', recommendations: [], expiresAt: '2026-10-03T12:00:00Z' };
     const { client, fetch } = setup(() => json({ requestId: 'req', data: reply }));

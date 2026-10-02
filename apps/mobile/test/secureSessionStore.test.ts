@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-const native = vi.hoisted(() => ({ getItemAsync: vi.fn(), setItemAsync: vi.fn(), deleteItemAsync: vi.fn() }));
+const native = vi.hoisted(() => ({ getItemAsync: vi.fn(), setItemAsync: vi.fn(), deleteItemAsync: vi.fn(), AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY: 3 }));
 vi.mock('expo-secure-store', () => native);
-import { createSecureSessionStore, sessionStorageKey } from '../src/auth/secureSessionStore';
+import { createSecureSessionStore, readBackgroundSession, sessionStorageKey } from '../src/auth/secureSessionStore';
 
 describe('stage-specific secure sessions', () => {
   beforeEach(() => vi.resetAllMocks());
@@ -20,5 +20,16 @@ describe('stage-specific secure sessions', () => {
     expect(await createSecureSessionStore(config).read()).toBeNull();
     expect(native.getItemAsync).toHaveBeenCalledWith(sessionStorageKey(config));
     expect(native.deleteItemAsync).toHaveBeenCalledWith(sessionStorageKey(config));
+  });
+  it('writes device-only credentials accessible after unlock and never mutates them from a background read', async () => {
+    const config = { stage: 'dev' as const, clientId: 'clientA' };
+    await createSecureSessionStore(config).write({ accessToken: 'token', expiresAtEpochSeconds: 99999 });
+    expect(native.setItemAsync).toHaveBeenCalledWith(sessionStorageKey(config), expect.any(String), { keychainAccessible: 3 });
+    native.getItemAsync.mockResolvedValue('corrupt');
+    expect(await readBackgroundSession(config)).toBeNull();
+    expect(native.deleteItemAsync).not.toHaveBeenCalled();
+    native.getItemAsync.mockRejectedValue(new Error('locked'));
+    await expect(readBackgroundSession(config)).rejects.toThrow('locked');
+    expect(native.deleteItemAsync).not.toHaveBeenCalled();
   });
 });

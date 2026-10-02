@@ -1,7 +1,7 @@
-import type { ProviderResult } from '@contextia/contracts';
+import type { EvaluationResult, ProviderResult } from '@contextia/contracts';
 export type OperationMetric = {
   Stage: 'dev' | 'prod'; Provider: 'http' | 'evaluation' | 'places' | 'geocoding' | 'routes' | 'weather' | 'bedrock' | 'modelAttempt';
-  Operation: 'request' | 'evaluate' | 'searchNearby' | 'getPlace' | 'geocode' | 'getRoute' | 'getWeather' | 'decide' | 'followUp' | 'initial' | 'fallback' | 'repair';
+  Operation: 'request' | 'evaluate' | 'searchNearby' | 'getPlace' | 'geocode' | 'getRoute' | 'getWeather' | 'decide' | 'followUp' | 'initial' | 'fallback' | 'repair' | 'validate';
   Status: 'ok' | 'degraded' | 'unavailable' | 'error' | 'timeout' | 'not_requested'; Count: number; Errors: number; Latency: number;
 };
 export function createMetrics(stage: 'dev' | 'prod', emit: (entry: unknown) => void) {
@@ -11,9 +11,16 @@ export function createMetrics(stage: 'dev' | 'prod', emit: (entry: unknown) => v
   };
   return {
     record,
+    decision(result: Pick<EvaluationResult, 'decision' | 'triggerType'>) {
+      try { emit({ _aws: { Timestamp: Date.now(), CloudWatchMetrics: [{ Namespace: 'Contextia', Dimensions: [['Stage', 'Decision', 'TriggerType']], Metrics: [{ Name: 'Count', Unit: 'Count' }] }] }, Stage: stage, Decision: result.decision, TriggerType: result.triggerType ?? 'NONE', Count: 1 }); }
+      catch { /* Metric transport cannot change a recommendation. */ }
+    },
     async provider<T>(provider: OperationMetric['Provider'], operation: OperationMetric['Operation'], run: () => Promise<ProviderResult<T>>): Promise<ProviderResult<T>> {
       const started = performance.now(); let status: OperationMetric['Status'] = 'error';
-      try { const result = await run(); status = result.status; return result; }
+      try {
+        const result = await run(); status = result.status;
+        return result;
+      }
       finally { record({ Provider: provider, Operation: operation, Status: status, Count: 1, Errors: ['error', 'timeout', 'unavailable'].includes(status) ? 1 : 0, Latency: Math.round(performance.now() - started) }); }
     }
   };

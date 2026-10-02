@@ -28,6 +28,15 @@ function guard(opportunity: CandidateOpportunity, state: DeliveryGuardState, del
 }
 
 describe('STEP_GOAL_REST detector', () => {
+  it('does not assign yesterday’s real step count to a new local day, while same-day and preview remain valid', async () => {
+    const real = ContextInputSchema.parse({ ...stepGoal.context, mode: 'real', deliveryMode: 'proactive', capturedAt: '2026-10-03T14:59:59Z' });
+    const after = { clock: fixedClock('2026-10-03T15:00:01Z') };
+    const stale = normalized(real, after);
+    expect(stale.activity).toBeUndefined(); expect(stale.location).toEqual(real.location);
+    expect(await stepGoalRestDetector.detect(stale)).toEqual([]);
+    expect(await stepGoalRestDetector.detect(normalized(real, { clock: fixedClock('2026-10-03T14:59:59.900Z') }))).toHaveLength(1);
+    expect(await stepGoalRestDetector.detect(normalized(stepGoal.context, after))).toHaveLength(1);
+  });
   it('detects the positive fixture and declares only nearby Places enrichment', async () => {
     const candidates = await stepGoalRestDetector.detect(normalized());
     expect(candidates).toHaveLength(1);
@@ -117,8 +126,8 @@ describe('step-goal evaluation time and timezone', () => {
     expect(normalized(noScenarioTime, { clock }).evaluationAt.toISOString()).toBe(new Date(context.capturedAt).toISOString());
   });
 
-  it('uses the injected evaluation clock for real context regardless of stale capturedAt/scenarioTime', async () => {
-    const context = ContextInputSchema.parse({ ...at('2000-01-01T00:00:00Z'), mode: 'real', deliveryMode: 'proactive' });
+  it('uses the injected evaluation clock for real context regardless of stale scenarioTime', async () => {
+    const context = ContextInputSchema.parse({ ...at('2000-01-01T00:00:00Z'), capturedAt: '2026-10-01T15:00:00Z', mode: 'real', deliveryMode: 'proactive' });
     const input = normalized(context, { clock: fixedClock('2026-10-01T15:00:00Z') });
     expect(input.evaluationAt.toISOString()).toBe('2026-10-01T15:00:00.000Z');
     expect((await stepGoalRestDetector.detect(input))[0]?.anchorKey).toBe('2026-10-02');

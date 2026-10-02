@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { smokeAuthentication, smokeMode } from './smoke-auth.js';
+import { smokeAuthentication, smokeMobileAuthentication, smokeMode } from './smoke-auth.js';
 
 describe('mandatory dev smoke authentication', () => {
+  it('uses the existing Mobile SRP client for a transient test token', async () => {
+    const env = { SMOKE_USER_1_USERNAME: 'one', SMOKE_USER_1_PASSWORD: 'private-one' };
+    expect(await smokeMobileAuthentication(env, 'pool', 'mobile', async (pool, client, user, password) => {
+      expect([pool, client, user, password]).toEqual(['pool', 'mobile', 'one', 'private-one']); return 'transient';
+    })).toBe('transient');
+    await expect(smokeMobileAuthentication({}, 'pool', 'mobile', async () => 'unused')).rejects.toThrow();
+  });
   it('defaults dev to the authenticated gate and labels public diagnostics explicitly', () => {
     expect(smokeMode('dev', {})).toBe('authenticated');
     expect(smokeMode('dev', { SMOKE_MODE: 'public' })).toBe('public');

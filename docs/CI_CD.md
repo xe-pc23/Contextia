@@ -290,6 +290,22 @@ Dev defaults to the authenticated gate and fails if two distinct test-user token
 
 Authenticated smoke now checks all five previews, same-key replay, fresh-key duplicate diagnostics, step-goal Places/Bedrock readiness, owned recommendation detail/chat, cross-user detail/chat denial, persisted context, and unchanged notification count/anchors. The GitHub dev role can read only `GetItem` on its stage table for these checks. Tokens obtained with PKCE can be supplied for an explicit prod authenticated check. `SMOKE_MODE=public` is a labeled public diagnostic and does not pass the authenticated dev gate. Native delivery remains a separate gate.
 
+The dev gate also runs the authenticated Web-only weather fault selector, requiring explicit unavailable
+weather and a valid step recommendation with unchanged preview delivery state. It uses USER_SRP_AUTH
+on the public Mobile client for the same dedicated user, verifies Web cannot submit real/proactive
+context, and exercises ordinary low-frequency preferences, persisted client reservation/quota,
+same-key replay, and fresh-key duplicate/daily-cap suppression before providers. Original preferences
+are restored; notification counters and anchors are never reset. An already capped user's run verifies
+suppression, while an uncapped run must produce exactly one reserved client delivery and count 1.
+This synthetic context proves API behavior, not sensor provenance or an OS notification.
+
+After smoke, the dev role can `logs:FilterLogEvents` only on `/aws/lambda/contextia-dev-api`.
+A bounded recent-log check requires private-free EMF records for HTTP/evaluation/Places/model attempts
+and notify/silent decisions. It verifies emitted EMF coverage, not materialized CloudWatch metric data.
+Model validation failures are counted at each rejected output, including successful repairs or a
+subsequent transport failure; terminal results do not double-count them. Decision counts represent
+successful evaluation responses, including idempotent replays, not delivered notifications.
+
 ### Local bootstrap preparation
 
 The pinned CDK v32 bootstrap is adapted by `infra/cdk/src/bootstrap.ts`; `scripts/bootstrap.ts` writes an inspectable template and validates/applies it through the AWS SDK using the selected profile. It removes AdministratorAccess/read-all policies, Docker publishing, cross-account artifact permissions and refactoring. File assets are private; role assumption is limited to the corresponding local stage role and GitHub role. CloudFormation deployment targets only `contextia-{stage}-core` and its named change sets. Core execution uses service actions on stage resource names/tags. HTTP API child resources and untaggable CloudFront OAC require regional/account ARN patterns until resource IDs exist; these are documented bootstrap exceptions, not a claim of resistance to malicious template edits.
