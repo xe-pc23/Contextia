@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { DeliveryGuardCodeSchema } from '@contextia/contracts';
 import { getScenarioInput } from '@contextia/test-fixtures';
 import type { EvaluationResult } from '@contextia/contracts';
 import { settleRun } from '../src/execution/runState.js';
@@ -55,7 +56,7 @@ describe('notify result', () => {
     expect(html).toContain('status-timeout');
     expect(html).toContain('2000 ms');
     expect(html).toContain('WEATHER_TIMEOUT');
-    expect(html).toContain('天気（Open-Meteo） が正常に応答していません');
+    expect(html).toContain('天気（Open-Meteo） から十分なデータを取得できませんでした');
   });
 
   it('shows preview suppression diagnostics without hiding the recommendation', () => {
@@ -63,6 +64,7 @@ describe('notify result', () => {
     expect(html).toContain('プレビューのため通知は送信されず');
     expect(html).toContain('直前に同じ状況を評価済み');
     expect(html).toContain('DUPLICATE_CONTEXT');
+    expect(html).toContain('wouldSuppress=true');
     expect(count(html, 'class="recommendation-card"')).toBe(1);
   });
 
@@ -114,6 +116,71 @@ describe('silent result', () => {
     expect(html).toContain('No candidate is useful enough to interrupt the user.');
     expect(html).not.toContain('recommendation-card');
     expect(html).toContain('実際の配信でも抑止条件には該当しません');
+    expect(html).toContain('wouldSuppress=false');
+  });
+});
+
+describe('provider degradation and delivery diagnostics', () => {
+  it.each([
+    ['ok', '正常', false], ['degraded', '一部劣化', true], ['unavailable', '利用不可', true],
+    ['timeout', 'タイムアウト', true], ['error', 'エラー', true], ['not_requested', '未使用', false]
+  ] as const)('renders weather=%s while preserving successful providers and cards', (status, label, warns) => {
+    const result = notifyResult(3);
+    const html = success({ ...result, providerStatus: { ...result.providerStatus, weather: { status, latencyMs: 42, code: 'WEATHER_STATUS' } } });
+    expect(html).toContain(`status-${status}`);
+    expect(html).toContain(label);
+    expect(html).toContain('42 ms');
+    expect(html).toContain('WEATHER_STATUS');
+    expect(html.includes('から十分なデータを取得できませんでした')).toBe(warns);
+    expect(html).toContain('周辺施設（Places）');
+    expect(html).toContain('AI判断（Bedrock）');
+    expect(count(html, 'status-ok')).toBeGreaterThanOrEqual(2);
+    expect(count(html, 'class="recommendation-card"')).toBe(3);
+  });
+
+  it('renders an unavailable-provider silent result without inventing recommendations', () => {
+    const result = silentResult();
+    const html = success({ ...result, providerStatus: { ...result.providerStatus, routes: { status: 'unavailable', code: 'NO_TRANSIT_COVERAGE' } } });
+    expect(html).toContain('今は通知しない判断（silent）');
+    expect(html).toContain('NO_TRANSIT_COVERAGE');
+    expect(html).not.toContain('recommendation-card');
+  });
+
+  it.each(DeliveryGuardCodeSchema.options)('shows %s without hiding preview content', code => {
+    const html = success({ ...notifyResult(3), delivery: { mode: 'preview', status: 'preview', wouldSuppress: true, guardCodes: [code] } });
+    expect(html).toContain(code);
+    expect(html).toContain('wouldSuppress=true');
+    expect(html).toContain('通知回数にも数えません');
+    expect(count(html, 'class="recommendation-card"')).toBe(3);
+  });
+
+  it('displays all delivery guards together without interpreting them as an API failure', () => {
+    const html = success({ ...notifyResult(1), delivery: { mode: 'preview', status: 'preview', wouldSuppress: true, guardCodes: [...DeliveryGuardCodeSchema.options] } });
+    for (const code of DeliveryGuardCodeSchema.options) expect(html).toContain(code);
+    expect(html).not.toContain('role="alert"');
+    expect(count(html, 'class="recommendation-card"')).toBe(1);
+  });
+});
+
+describe('sent context', () => {
+  it('offers a closed native toggle for the exact validated request, separate from later input edits', () => {
+    const state = settleRun(request, { kind: 'success', requestId: 'req-test-1', result: notifyResult(1) }, 1234);
+    const html = renderToStaticMarkup(<ResultPanel state={state} timeZone="Asia/Tokyo" inputsChanged />);
+    expect(html).toContain('入力は送信時から変更されています');
+    expect(html).toContain('変更後の入力は、次の実行で評価します');
+    expect(html).toContain('<details class="debug">');
+    expect(html).not.toContain('<details class="debug" open');
+    expect(html).toContain('送信したコンテキストを表示（共通スキーマ検証済み）');
+    expect(html).toContain('&quot;latitude&quot;: 35.681236');
+    expect(html).toContain('&quot;deliveryMode&quot;: &quot;preview&quot;');
+    expect(count(html, 'class="recommendation-card"')).toBe(1);
+  });
+
+  it('does not mark an unchanged or unsubmitted context as an old result', () => {
+    expect(success(notifyResult(1))).not.toContain('入力は送信時から変更されています');
+    const html = renderToStaticMarkup(<ResultPanel state={{ status: 'idle' }} timeZone="Asia/Tokyo" inputsChanged />);
+    expect(html).not.toContain('入力は送信時から変更されています');
+    expect(html).not.toContain('class="debug"');
   });
 });
 
