@@ -13,6 +13,17 @@ Optimize for:
 
 Do not expand product scope without an explicit human decision.
 
+## Current delivery mode (2026-10-02)
+
+One human owner will drive implementation through Codex Cloud. The A–E lane
+assignments in older planning documents describe responsibility boundaries for
+the former team workflow; they do not restrict which repository paths a Cloud
+task may edit. Preserve the product specification, dependency direction, phase
+gates, tests, and owner-controlled production release. Start Cloud work from a
+GitHub branch containing the latest integrated implementation, not from `main`
+until that implementation has been validated and merged. See
+`docs/superpowers/plans/2026-10-02-codex-cloud-solo-delivery.md`.
+
 ## 1. Read these first
 
 Before editing implementation code, read:

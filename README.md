@@ -9,11 +9,11 @@ A separate Web **Scenario Console** lets judges choose arbitrary location/time/s
 ## Status
 
 Specification: **v1.1 candidate**  
-Implementation: **Phase 0 integrated and verified; five lanes ready for Phase 1**
+Implementation on this branch: **Phase 2 A/B/D code integrated; live phase gates remain open**
 
 Public production URL: `TBD after deployment`
 
-The common workspace, v1 Zod contracts, five input/provider fixtures, seven provider ports, React/Vite shell, Expo development-client shell, local `/health`, and separate dev/prod CDK health stacks are available. See the [Phase 0 handoff](docs/hackathon/PHASE0_HANDOFF.md) for evidence and the [Phase 1 assignments](docs/hackathon/PHASE1_ASSIGNMENTS.md) for ready branches and copyable task prompts. Authentication, live evaluation and provider adapters are Phase 1 work. No AWS deployment has been performed.
+This branch contains the contracts, five detectors, provider adapters, API evaluation paths, Web Scenario Console, Expo foreground baseline, dev/prod CDK, and GitHub validation/deployment workflows. The Phase 2 Web and Mobile branches still need integration. No AWS deployment or public URL has been verified. For the single-owner Codex Cloud setup, integration order, and remaining gates, see the [Cloud delivery plan](docs/superpowers/plans/2026-10-02-codex-cloud-solo-delivery.md). The [Phase 0 handoff](docs/hackathon/PHASE0_HANDOFF.md) and [Phase 1 assignments](docs/hackathon/PHASE1_ASSIGNMENTS.md) are historical records.
 
 ```bash
 pnpm install --frozen-lockfile
@@ -28,9 +28,9 @@ pnpm dev:web
 pnpm dev:mobile
 ```
 
-Use the tested Node.js 24.13.1 from `.node-version` (minimum 24.3.0, below 25) and pnpm 10.29.3. `pnpm dev:api` serves health at `http://127.0.0.1:3001/health`; `pnpm dev:web` opens the shell on `http://127.0.0.1:5173`. Mobile uses a development client; follow [its README](apps/mobile/README.md) for native setup. Both apps show their unconnected status.
+Use Node.js 24.13.1 from `.node-version` (minimum 24.3.0, below 25) and pnpm 10.29.3. `pnpm dev:api` serves health at `http://127.0.0.1:3001/health`; `pnpm dev:web` opens the Web app at `http://127.0.0.1:5173`. Runtime authentication and live evaluation require deployed stage configuration. Mobile uses a development client; follow [its README](apps/mobile/README.md) for native setup.
 
-The integrated baseline passed all five verification commands with 124 tests, including a fresh archived checkout with no prior build output. The Web shell also booted in a browser. Mobile build exports both iOS/Android JavaScript/Hermes assets; native device capabilities and APK/IPA compilation remain unverified.
+The Phase 0 baseline passed all five verification commands with 124 tests. On 2026-10-02, a fresh isolated checkout of Phase 2 integration SHA `6a588cb` passed frozen installation, lint, typecheck, 879 tests, build, and offline CDK synth. Remote CI and live service results remain unverified. Mobile JavaScript export does not verify APK/IPA compilation or native device behavior.
 
 ## Stack
 
