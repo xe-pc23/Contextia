@@ -227,3 +227,22 @@ The local AWS profiles and GitHub access should be used where available. If boot
 - Real iOS/Android rows, authenticated Simulator UI, SNS and production remain open. Mac lock prevents
   native UI actions. MCP OAuth and local AWS login also expired; OIDC dev deployment remains usable.
   No hardware or production gate is closed by this script/browser evidence.
+
+## Foreground native and privacy gate update — 2026-10-03 07:30 JST
+
+- Native Simulator PKCE login, simulated public GPS, nonempty neutral Calendar collection → dev
+  evaluation, owned detail/chat, settings save/readback and explicit logout passed. Evidence and the
+  development Reload freeze investigation are in `docs/MOBILE_VALIDATION.md`. Refresh/denial,
+  actual steps, background callbacks and OS notifications remain open; this is not hardware proof.
+- Review found automatic 401/refresh rejection/access-only expiry left native notification cleanup
+  behind. All session-clear paths now revoke eligibility immediately and serialize cleanup/credential
+  deletion before a new login. Seven red regressions became green; focused native review passed
+  45 tests. Explicit logout also cleared the visible private Simulator UI.
+- The dev smoke now places distinct synthetic markers in successful/invalid owned chat probes,
+  correlates their 200/400 API request IDs, checks strict structured request fields and scans every
+  raw message for those markers and three transient tokens in an unfiltered complete bounded window.
+  Direct JSON, Lambda JSON wrappers and TEXT prefixes are supported. Pagination gaps fail closed.
+  Evidence stays in memory; raw logs and secrets are never printed. Live verification awaits this SHA.
+- Independent review passed the 33 focused smoke tests. All five local gates passed with 1,289 tests
+  / 80 files. No infrastructure/model/IAM configuration changed. Live timeout/model-schema evidence,
+  AWS MCP OAuth proof, Android SDK/license, physical devices, SNS and owner-controlled prod remain open.

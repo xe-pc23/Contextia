@@ -18,6 +18,8 @@ Items here are explicitly **not required for v1 hackathon shipping** unless prom
 - complex workflow orchestration
 
 ## Mobile
+- investigate Expo DevMenu native reload wait observed on iOS 26.5 / SDK 57; process restart is the
+  current development workaround (see `MOBILE_VALIDATION.md`); no dependency patch is included
 - production-hardening of all vendor-specific background execution edge cases
 - deeper Health Connect history analytics
 - Apple Health aggregation beyond step goal use case

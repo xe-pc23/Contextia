@@ -25,6 +25,7 @@ export class SessionManager {
     refresh: (session: StoredSession) => Promise<SessionRefreshResult>;
     now: () => number;
     onSessionChange: (signedIn: boolean) => void;
+    onSessionCleared?: () => Promise<void>;
     refreshTimeoutMs?: number;
   }) {}
 
@@ -130,7 +131,18 @@ export class SessionManager {
     this.session = null;
     this.refreshing = null;
     this.options.onSessionChange(false);
-    await this.enqueue(() => this.options.store.clear());
+    // Revoke native eligibility immediately, even behind a pending credential write.
+    // Keep completion in the write queue so a new sign-in cannot overtake old cleanup.
+    let cleanupFailed = false;
+    let cleanup = Promise.resolve();
+    try {
+      cleanup = (this.options.onSessionCleared?.() ?? Promise.resolve()).catch(() => { cleanupFailed = true; });
+    } catch { cleanupFailed = true; }
+    await this.enqueue(async () => {
+      await cleanup;
+      await this.options.store.clear();
+      if (cleanupFailed) throw new Error('Session cleanup incomplete');
+    });
   }
 
   /** Unmount cancels in-flight work while preserving the stored login. */

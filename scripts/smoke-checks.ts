@@ -96,6 +96,22 @@ async function json(fetcher: Fetcher, url: string, init?: RequestInit): Promise<
   return result.json() as Promise<unknown>;
 }
 
+export interface ChatLogProof { successRequestId: string; invalidRequestId: string; canaries: [string, string] }
+/** Synthetic markers and response IDs stay in memory; no private user content is needed. */
+export async function probeChatLogs(chatUrl: string, headers: HeadersInit, fetcher: Fetcher): Promise<ChatLogProof> {
+  const canaries: [string, string] = [`contextia-success-${randomUUID()}`, `contextia-invalid-${randomUUID()}`];
+  const chat = ChatResponseSchema.parse(await json(fetcher, chatUrl, { method: 'POST', headers,
+    body: JSON.stringify({ message: `この推薦について、場所の候補を短く教えてください。検証用識別子: ${canaries[0]}` }) }));
+  const remaining = Date.parse(chat.data.expiresAt) - Date.now();
+  if (remaining <= 0 || remaining > 7200_000) throw new SmokeCheckError('Conversation expiry exceeded two hours');
+  const invalid = await response(fetcher, chatUrl, { method: 'POST', headers,
+    body: JSON.stringify({ message: canaries[1], unexpected: true }) });
+  const failure = ErrorResponseSchema.safeParse(await invalid.json() as unknown);
+  if (invalid.status !== 400 || !failure.success || failure.data.error.code !== 'VALIDATION_ERROR'
+    || failure.data.requestId === chat.requestId) throw new SmokeCheckError('Chat validation log probe failed');
+  return { successRequestId: chat.requestId, invalidRequestId: failure.data.requestId, canaries };
+}
+
 export async function runPublicSmoke(input: SmokeTarget, fetcher: Fetcher = fetch): Promise<void> {
   const target = SmokeTargetSchema.parse(input);
   const api = target.apiBaseUrl.replace(/\/$/, '');
@@ -120,7 +136,7 @@ export async function runPublicSmoke(input: SmokeTarget, fetcher: Fetcher = fetc
 }
 
 /** Tokens are caller-supplied transient access tokens; never printed or written to artifacts. */
-export async function runAuthenticatedSmoke(target: SmokeTarget, tokens: { accessToken: string; secondUserToken: string }, fetcher: Fetcher = fetch, state?: SmokeState): Promise<void> {
+export async function runAuthenticatedSmoke(target: SmokeTarget, tokens: { accessToken: string; secondUserToken: string }, fetcher: Fetcher = fetch, state?: SmokeState): Promise<ChatLogProof> {
   if (!state) throw new SmokeCheckError('Authenticated smoke requires persisted state verification');
   const api = target.apiBaseUrl.replace(/\/$/, '');
   const headers = { authorization: `Bearer ${tokens.accessToken}`, 'content-type': 'application/json' };
@@ -176,11 +192,8 @@ export async function runAuthenticatedSmoke(target: SmokeTarget, tokens: { acces
   }
   if (readinessFailures.length) throw new SmokeCheckError(readinessFailures.join('; '));
   if (!ownershipChecked) throw new SmokeCheckError('No recommendation was available to prove the ownership boundary');
-  if (chatUrl) {
-    const chat = ChatResponseSchema.parse(await json(fetcher, chatUrl, { method: 'POST', headers, body: JSON.stringify({ message: 'この推薦について、場所の候補を短く教えてください。' }) }));
-    const remaining = Date.parse(chat.data.expiresAt) - Date.now();
-    if (remaining <= 0 || remaining > 7200_000) throw new SmokeCheckError('Conversation expiry exceeded two hours');
-  }
+  if (!chatUrl) throw new SmokeCheckError('Owned chat probe unavailable');
+  const logProof = await probeChatLogs(chatUrl, headers, fetcher);
   const fault = await response(fetcher, `${api}/v1/context/evaluate`, { method: 'POST', headers: { ...headers,
     'idempotency-key': randomUUID(), 'X-Contextia-Demo-Fault': 'weather' }, body: JSON.stringify(liveSmokeContext('step-goal', evaluationAt)) });
   if (target.stage === 'prod') {
@@ -194,6 +207,7 @@ export async function runAuthenticatedSmoke(target: SmokeTarget, tokens: { acces
     if (after.status !== 'ok' && after.status !== 'degraded') throw new SmokeCheckError('Cannot verify fault preview delivery state');
     assertPreviewStateUnchanged(before.data, after.data);
   }
+  return logProof;
 }
 
 /** Dedicated dev user and synthetic public context; this is an API/counter gate, not native sensor proof. */

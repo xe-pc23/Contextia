@@ -11,15 +11,16 @@ Its bundle ID is `com.contextia.dev`, version `0.0.1`. The initial React Native 
 through localhost Metro. After live dev configuration, an ad hoc signed rebuild
 (`CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=-`) restored Simulator application identity
 and removed the SecureStore startup `-34018` error seen with signing disabled. Simulator signing
-does not require an Apple development team. The Cognito sign-in form was submitted, but the Mac
-locked before the result could be inspected. Login, collection and API execution remain open.
+does not require an Apple development team. After the Mac was unlocked, native PKCE sign-in,
+simulated GPS, a neutral nonempty Calendar event, dev evaluation, owned detail/chat and saved
+preferences were observed. Explicit sign-out returned to the sign-in screen and removed private UI.
 Expo Go is not a substitute.
 Proof: [Simulator initial screen](hackathon/evidence/task5-simulator-start.png).
 
 The Task 7 Debug native rebuild also succeeded and installed on the iPhone 17 Simulator,
 including Sensors, SQLite, Notifications and TaskManager. Native SDK resolution/compilation is
-verified; configured login, collection and OS notification display remain open because no accessible
-Simulator window was available. Both native projects prebuild successfully. Android is configured
+verified. Configured foreground Simulator flows now have the evidence below; OS notification
+display and physical sensor/background behavior remain open. Both native projects prebuild successfully. Android is configured
 with minSdk 26 for Health Connect; APK compilation awaits SDK installation/license consent.
 
 The implementation has opportunistic location callbacks and durable local recommendation-ID claims.
@@ -68,11 +69,11 @@ handoff channel. The owner does not share their Apple Account password or AWS cr
 | Check | Simulator | iPhone hardware | Android hardware |
 |---|---|---|---|
 | Native build | Passed locally | Open | Open |
-| Sign in, refresh, sign out | Open | Open | Open |
-| Foreground GPS | Simulated location only | Open | Open |
-| Calendar allow / deny; neutral title/time/location | Open | Open | Open |
-| Dev API evaluation and result/detail | Open | Open | Open |
-| Saved preferences | Open | Open | Open |
+| Sign in, refresh, sign out | Sign-in/out passed; refresh open | Open | Open |
+| Foreground GPS | Public simulated location collected | Open | Open |
+| Calendar allow / deny; neutral title/time/location | Allow + nonempty event passed; deny open | Open | Open |
+| Dev API evaluation and result/detail | Passed, including owned chat | Open | Open |
+| Saved preferences | Save/readback passed; original restored | Open | Open |
 | Today's steps | Hardware required | Open | Open — Health Connect |
 | Local notification / recommendation ID dedup | Open | Open | Open |
 | Tap notification → owned detail; sign-out clears pending/last response | Open | Open | Open |
@@ -84,3 +85,42 @@ For each row, record `passed`, `failed` with a reproducible symptom, or `not ava
 An unavailable sensor stays unknown; do not treat it as zero steps. Background callbacks depend
 on the OS and do not promise a fixed interval. Provider acceptance does not prove notification display.
 Hardware rows remain open until the member returns the device, OS, commit and observed result.
+
+## Foreground Simulator evidence — 2026-10-03 07:05–07:30 JST
+
+Backend version: `5f82d7b63ce043e5a41aec1e4a579efb8cb3c843`, dev. Native binary was the
+Task 7 `79ff4cd` build; Metro served the current local delivery working tree including the
+automatic session-clear cleanup fix. Screenshot suffixes identify the backend version.
+
+- [Sign-in](hackathon/evidence/simulator-auth-5f82d7b.jpg): PKCE completed and owned history loaded.
+- [Evaluation](hackathon/evidence/simulator-evaluation-5f82d7b.jpg): real collection of the public
+  Tokyo Station simulated coordinates `35.681236, 139.767125` returned an in-app proposal.
+- [Calendar](hackathon/evidence/simulator-calendar-5f82d7b.jpg): a local neutral event,
+  `Contextia Simulator validation`, 08:00–09:00 JST, `Tokyo Station`, was collected as one event.
+  [Its evaluation](hackathon/evidence/simulator-calendar-evaluation-5f82d7b.jpg) used Calendar
+  and displayed unavailable route/geocoding facts explicitly. Today's steps stayed unknown.
+- [Settings](hackathon/evidence/simulator-settings-5f82d7b.jpg): low frequency was saved and
+  re-fetched, then restored to normal and saved. No manual evaluation overlaps the next CI smoke.
+- [Owned chat](hackathon/evidence/simulator-chat-5f82d7b.jpg) returned a Japanese reply and the
+  supplied place card. [Sign-out](hackathon/evidence/simulator-signout-5f82d7b.jpg) cleared the
+  visible location, events, history, result and chat. Pending/displayed OS notifications were not
+  populated in this foreground test, so their cleanup is unit evidence only.
+
+### Development reload and keyboard troubleshooting
+
+Expo DevMenu's accessibility `Reload` stopped responding during this session. A two-second native
+sample showed main waiting in DevMenu reload/RCTInstance/TurboModule initialization and another
+thread waiting during NativeAnimated invalidation/module notification. The installed Expo module
+observer dispatches on main; a circular wait is a supported hypothesis, not a proven vendor fix.
+The device/Metro stayed responsive and the app later resumed with a new process. No device erase,
+credential reset or dependency patch was performed. Subsequent foreground flows above passed.
+
+For a repeat, preserve Metro and restart the app process instead of DevMenu `Reload`/Metro `r`:
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun simctl launch --terminate-running-process <SIMULATOR_UDID> com.contextia.dev
+```
+
+Confirm the home/settings response after restart. If text does not reach the device, use Simulator
+I/O → Input → Send Keyboard Input to Device; return that capture setting after testing. This fixed
+the separate missing text-input symptom. Neither workaround proves every native freeze is resolved.

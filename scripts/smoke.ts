@@ -21,13 +21,13 @@ try {
     const tableName = process.env.SMOKE_TABLE_NAME ?? outputs?.TableName;
     if (tableName !== `contextia-${stage}-data`) throw new Error('Authenticated smoke needs the selected stage table');
     const state = createDynamoDbStateRepository({ region: 'ap-northeast-1', tableName, timeoutMs: 5000 });
-    await runAuthenticatedSmoke(target, tokens, fetch, state);
+    const logProof = await runAuthenticatedSmoke(target, tokens, fetch, state);
     console.log(`Authenticated ${stage} scenario/ownership/idempotency smoke passed.`);
     if (stage === 'dev') {
       const mobileAccessToken = await smokeMobileAuthentication(process.env, process.env.SMOKE_USER_POOL_ID ?? outputs?.UserPoolId, process.env.SMOKE_MOBILE_CLIENT_ID ?? outputs?.MobileClientId);
       await runProactiveSmoke(target, { webAccessToken: tokens.accessToken, mobileAccessToken }, state);
-      await verifyDevMetrics(smokeStartedAt);
-      console.log('Dev safe EMF request/evaluation/provider/model/decision coverage passed.');
+      await verifyDevMetrics(smokeStartedAt, { ...logProof, accessTokens: [tokens.accessToken, tokens.secondUserToken, mobileAccessToken] });
+      console.log('Dev EMF coverage and bounded correlated request-log privacy checks passed.');
     }
   } else console.log('Public diagnostic only; the authenticated dev gate was not run.');
 } catch (cause: unknown) {

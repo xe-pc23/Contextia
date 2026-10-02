@@ -46,6 +46,7 @@ export function useCognitoAuth(config: CognitoConfiguration): CognitoAuthState {
     store: createSecureSessionStore(config),
     now: () => Date.now() / 1000,
     onSessionChange: signedIn => setStatus(signedIn ? 'signed-in' : 'signed-out'),
+    onSessionCleared: () => disableBackground(config),
     refresh: async stored => {
       const tokenEndpoint = discoveryRef.current?.tokenEndpoint;
       if (!tokenEndpoint || !stored.refreshToken) return { kind: 'unavailable' };
@@ -135,7 +136,6 @@ export function useCognitoAuth(config: CognitoConfiguration): CognitoAuthState {
     try {
       // Hide private screens and invalidate refresh before any remote logout.
       const clearing = manager.clear().catch(() => { cleared = false; });
-      await disableBackground(config).catch(() => { cleared = false; });
       await clearing;
       if (stored?.refreshToken && discovery?.revocationEndpoint) {
         await withTimeout(AuthSession.revokeAsync({

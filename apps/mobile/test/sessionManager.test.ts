@@ -4,7 +4,7 @@ import type { StoredSession } from '../src/auth/sessionModel';
 import { deferred } from './support/data';
 
 const session: StoredSession = { accessToken: 'test-access', refreshToken: 'test-refresh', expiresAtEpochSeconds: 1000 };
-function setup(refresh: (value: StoredSession) => Promise<SessionRefreshResult> = async value => ({ kind: 'success', session: { ...value, accessToken: 'refreshed-access', expiresAtEpochSeconds: 5000 } })) {
+function setup(refresh: (value: StoredSession) => Promise<SessionRefreshResult> = async value => ({ kind: 'success', session: { ...value, accessToken: 'refreshed-access', expiresAtEpochSeconds: 5000 } }), onSessionCleared: () => Promise<void> = async () => undefined) {
   let now = 100;
   let saved: StoredSession | null = session;
   const store: SessionStore = {
@@ -14,7 +14,8 @@ function setup(refresh: (value: StoredSession) => Promise<SessionRefreshResult> 
   };
   const changed = vi.fn<(value: boolean) => void>();
   const refreshCall = vi.fn(refresh);
-  const manager = new SessionManager({ store, now: () => now, refresh: refreshCall, onSessionChange: changed, refreshTimeoutMs: 50 });
+  const options = { store, now: () => now, refresh: refreshCall, onSessionChange: changed, onSessionCleared, refreshTimeoutMs: 50 };
+  const manager = new SessionManager(options);
   return { manager, store, changed, refreshCall, saved: () => saved, setNow: (value: number) => { now = value; } };
 }
 
@@ -180,5 +181,76 @@ describe('mobile session manager', () => {
     expect(await test.manager.getAccessToken()).toBeNull();
     expect(test.saved()).toEqual(session);
     expect(test.store.clear).not.toHaveBeenCalled();
+  });
+  it.each(['http-401', 'refresh-rejected', 'expired-access-only', 'explicit-sign-out'] as const)('removes existing notifications and background eligibility when the session clears via %s', async reason => {
+    let visibleNotification = true;
+    let backgroundEligible = true;
+    const test = setup(async () => ({ kind: 'rejected' }), async () => {
+      visibleNotification = false; backgroundEligible = false;
+    });
+    await test.manager.restore();
+    if (reason === 'http-401') await test.manager.rejectAccessToken(session.accessToken, test.manager.getSessionSignal());
+    else if (reason === 'explicit-sign-out') await test.manager.clear();
+    else {
+      if (reason === 'expired-access-only') await test.manager.accept({ accessToken: 'access-only', expiresAtEpochSeconds: 1000 });
+      test.setNow(1001); await test.manager.getAccessToken();
+    }
+    expect(visibleNotification).toBe(false);
+    expect(backgroundEligible).toBe(false);
+    expect(test.saved()).toBeNull();
+  });
+  it('deletes credentials even when notification cleanup fails', async () => {
+    const test = setup(undefined, async () => { throw new Error('private OS cleanup failure'); });
+    await test.manager.restore();
+    await expect(test.manager.clear()).rejects.toBeInstanceOf(Error);
+    expect(test.saved()).toBeNull();
+    expect(await test.manager.getAccessToken()).toBeNull();
+  });
+  it('finishes old notification cleanup before exposing a new sign-in', async () => {
+    const pending = deferred<void>();
+    let notificationCleanupFinished = false;
+    const test = setup(undefined, async () => { await pending.promise; notificationCleanupFinished = true; });
+    await test.manager.restore();
+    const oldSignal = test.manager.getSessionSignal();
+    const clearing = test.manager.rejectAccessToken(session.accessToken, oldSignal);
+    let accepted = false;
+    const accepting = test.manager.accept({ ...session, accessToken: 'new-account-access', expiresAtEpochSeconds: 5000 }).then(value => { accepted = value; });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(accepted).toBe(false);
+    expect(test.changed).toHaveBeenLastCalledWith(false);
+    pending.resolve(); await clearing; await accepting;
+    expect(notificationCleanupFinished).toBe(true);
+    expect(accepted).toBe(true);
+    expect(test.saved()?.accessToken).toBe('new-account-access');
+    expect(test.changed).toHaveBeenLastCalledWith(true);
+  });
+  it('keeps new notifications when a stale request returns 401', async () => {
+    let cleanupCount = 0;
+    const test = setup(undefined, async () => { cleanupCount++; });
+    await test.manager.restore(); const oldSignal = test.manager.getSessionSignal();
+    await test.manager.accept({ ...session, accessToken: 'new-account-access', expiresAtEpochSeconds: 5000 });
+    await test.manager.rejectAccessToken(session.accessToken, oldSignal);
+    expect(cleanupCount).toBe(0);
+    expect(await test.manager.getAccessToken()).toBe('new-account-access');
+  });
+  it('does not revoke background enrollment just for an empty restore or unmount', async () => {
+    let cleanupCount = 0;
+    const test = setup(undefined, async () => { cleanupCount++; });
+    test.store.read = async () => null;
+    await test.manager.restore(); test.manager.deactivate();
+    expect(cleanupCount).toBe(0);
+  });
+  it('revokes background eligibility immediately even while a credential write is pending', async () => {
+    const writing = deferred<void>();
+    let backgroundEligible = true;
+    const test = setup(undefined, async () => { backgroundEligible = false; });
+    const write = test.store.write;
+    test.store.write = async value => { await writing.promise; await write(value); };
+    const accepting = test.manager.accept(session);
+    await Promise.resolve();
+    const clearing = test.manager.clear();
+    expect(backgroundEligible).toBe(false);
+    writing.resolve(); await accepting; await clearing;
+    expect(test.saved()).toBeNull();
   });
 });

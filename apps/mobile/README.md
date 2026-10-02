@@ -66,7 +66,8 @@ accepted automatically. Rebuild native projects after changing modules or config
 
 - Sign-in uses authorization code + PKCE with the public Mobile client. SecureStore keys include
   stage/client. Foreground access refresh is single-flight; revoked/stale requests cannot clear
-  a newer session. Sign-out aborts active API work immediately.
+  a newer session. Sign-out and automatic session expiry/rejection abort active API work immediately
+  and invoke the same native eligibility/notification cleanup before a new login can persist.
 - Fresh accounts initialize defaults only after `PROFILE_NOT_FOUND`, using create-only preferences;
   concurrent existing profiles are preserved. Failed preference writes remain visible.
 - Collection/evaluation reads fresh GPS, minimized Calendar and steps through source interfaces.
@@ -117,8 +118,11 @@ unconfigured. Provider acceptance and actual OS display require separate hardwar
 ## Verification evidence — 2026-10-03
 
 The Task 7 iOS Simulator Debug native build and install succeeded, including SQLite, Sensors,
-Notifications and TaskManager. The earlier initial screen has a saved screenshot. Live configured
-Simulator login/collection remains unverified because the Mac UI became unavailable.
+Notifications and TaskManager. Configured native PKCE login, public simulated GPS, a neutral
+nonempty Calendar event, dev evaluation, owned detail/chat, preference save/readback and explicit
+sign-out were observed on 2026-10-03. The dated screenshots and development Reload/keyboard
+troubleshooting are in [Mobile validation](../../docs/MOBILE_VALIDATION.md). Refresh, denial and
+OS notification behavior still need their own native evidence.
 
 The deployed dev API at `ba15f30` passed the authenticated Web five-scenario/ownership/preview gate;
 this is backend proof, not a native login/sensor result. The extended SRP/proactive/fault/metrics gate
