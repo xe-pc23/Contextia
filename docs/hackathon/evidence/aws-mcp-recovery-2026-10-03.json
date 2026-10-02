@@ -1,0 +1,23 @@
+{
+  "recordType": "sanitized-mcp-execution-evidence",
+  "recordedAt": "2026-10-03T08:16:56+09:00",
+  "connectionName": "aws-mcp",
+  "serverHost": "aws-mcp.us-east-1.api.aws",
+  "mcpStatus": "success",
+  "apiCalls": [
+    {
+      "service": "sts",
+      "operation": "GetCallerIdentity",
+      "status": "success"
+    }
+  ],
+  "approvedAccountMatched": true,
+  "identityFieldsOmitted": [
+    "UserId",
+    "Account",
+    "Arn"
+  ],
+  "operationMode": "read-only",
+  "resourceChanges": false,
+  "iamChanges": false
+}

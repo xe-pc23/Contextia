@@ -263,3 +263,14 @@ The local AWS profiles and GitHub access should be used where available. If boot
   Settings → Browser before a fresh same-domain authorization request and will perform login/MFA.
   No alternate access path, browser-policy change or AWS permission addition was performed.
   After authentication, use a read-only MCP call to prove recovery. OIDC dev validation remained usable.
+
+## AWS MCP recovery — 2026-10-03 08:16 JST
+
+The owner completed the normal OAuth login and switched the existing `aws-mcp` connection OFF/ON
+with restarts. A subsequent Codex MCP `run_script` returned `status=success` and one successful
+STS `GetCallerIdentity` entry in `api_calls`; the account matched the approved environment.
+The sanitized execution record is `docs/hackathon/evidence/aws-mcp-recovery-2026-10-03.json`.
+No credentials, OAuth parameters or AWS identity fields are included. No AWS resource/IAM change or
+browser-policy workaround was performed. This closes the MCP connection-recovery check; a UI
+screenshot is separate evidence. Android runtime/hardware, OS delivery and owner-controlled prod
+release gates remain open.
