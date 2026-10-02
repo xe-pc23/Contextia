@@ -30,4 +30,10 @@ describe.each(['dev', 'prod'] as const)('%s stage bootstrap', stage => {
     expect(role).toContain('ssm:GetParameters');
     expect(role).toContain(`/cdk-bootstrap/${stage === 'dev' ? 'ctiadev' : 'ctiaprod'}/version`);
   });
+  it('lets CloudFormation invoke only this stage core custom-resource helpers', () => {
+    const statement = z.array(z.object({ PolicyDocument: z.object({ Statement: z.array(z.object({ Action: z.array(z.string()), Resource: z.array(z.string()) })) }) }))
+      .parse(stageBootstrapTemplate(stage).Resources.CloudFormationExecutionRole?.Properties.Policies)
+      .flatMap(policy => policy.PolicyDocument.Statement).find(item => item.Action.includes('lambda:InvokeFunction'));
+    expect(statement?.Resource).toEqual([`arn:aws:lambda:ap-northeast-1:634512763705:function:contextia-${stage}-core-*`]);
+  });
 });
