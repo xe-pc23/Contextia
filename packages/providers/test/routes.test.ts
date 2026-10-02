@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { CalculateRoutesCommand, GeoRoutesClient } from '@aws-sdk/client-geo-routes';
 import { RouteSummarySchema, providerResultSchema } from '@contextia/contracts';
 import type { RouteInput } from '../src/ports/RouteProvider.js';
 import { AmazonLocationRouteProvider, createAmazonLocationRouteProvider } from '../src/adapters/routes.js';
@@ -110,6 +111,22 @@ describe('AmazonLocationRouteProvider guards', () => {
       .resolves.toMatchObject({ status: 'unavailable', data: null, code: 'NO_TRANSIT_ROUTE' });
   });
 
+  it('retains required transit attribution links from the selected route', async () => {
+    const response = { Routes: [{ Summary: { Duration: 1_200 }, Legs: [{
+      Type: 'Transit', TravelMode: 'Subway', TransitLegDetails: {
+        Departure: { Time: '2026-10-02T05:00:00Z' }, Arrival: { Time: '2026-10-02T05:20:00Z' },
+        Summary: { Overview: { Duration: 1_200 } },
+        Attributions: [{ AttributionType: 'Disclaimer', WebLink: {
+          AnchorText: 'Transit terms', Description: 'Terms for this transit route', Url: 'https://example.com/terms'
+        } }]
+      }
+    }] }] };
+    const { provider } = testProvider(response);
+    await expect(provider.getRoute(input)).resolves.toMatchObject({ status: 'ok', data: {
+      attributions: [{ type: 'Disclaimer', text: 'Transit terms', url: 'https://example.com/terms' }]
+    } });
+  });
+
   it.each([['Transit', 'Subway'], ['Vehicle', 'Car'], ['Rental', 'Car'], ['Taxi', 'Car']])(
     'rejects a %s/%s leg returned for a pedestrian request', async (type, travelMode) => {
       const { provider } = testProvider({ Routes: [{ Summary: { Duration: 600 }, Legs: [
@@ -128,10 +145,16 @@ describe('AmazonLocationRouteProvider guards', () => {
       .resolves.toMatchObject({ status: 'unavailable', data: null, code: 'NO_TRANSIT_ROUTE' });
   });
 
-  it('keeps the factory safe until a real Routes client is connected', async () => {
-    const provider = createAmazonLocationRouteProvider({ region: 'ap-northeast-1', timeoutMs: 50 });
-    await expect(provider.getRoute(input))
-      .resolves.toMatchObject({ status: 'unavailable', data: null, code: 'ROUTES_NOT_CONFIGURED' });
+  it('connects the default factory to the current Routes SDK', async () => {
+    const send = vi.spyOn(GeoRoutesClient.prototype, 'send').mockResolvedValue(routeResponse() as never);
+    try {
+      const provider = createAmazonLocationRouteProvider({ region: 'ap-northeast-1', timeoutMs: 50 });
+      await expect(provider.getRoute(input)).resolves.toMatchObject({ status: 'ok' });
+      expect(send).toHaveBeenCalledWith(expect.any(CalculateRoutesCommand), expect.objectContaining({ abortSignal: expect.any(AbortSignal) }));
+      const command = send.mock.calls[0]?.[0] as CalculateRoutesCommand | undefined;
+      expect(command?.input).toMatchObject({ Origin: [139.7671, 35.6812], Destination: [139.7454, 35.6586],
+        TravelMode: 'Transit', DepartureTime: input.departAt });
+    } finally { send.mockRestore(); }
   });
 
   it('rejects a returned departure earlier than the requested departure', async () => {
@@ -233,6 +256,48 @@ describe('AmazonLocationRouteProvider normalization', () => {
         durationMinutes: 10, warnings: ['DURATION_MISMATCH'], legs: [{ durationMinutes: 10 }]
       }
     });
+  });
+
+  it('accepts subsecond schedule rounding without understating the route or leg duration', async () => {
+    const { provider } = testProvider({ Routes: [{ Summary: { Duration: 600 }, Legs: [{
+      Type: 'Transit', TravelMode: 'Subway', TransitLegDetails: {
+        Departure: { Time: '2026-10-02T05:00:00.000000001Z' },
+        Arrival: { Time: '2026-10-02T05:10:00.500000001Z' },
+        Summary: { TravelOnly: { Duration: 601 }, Overview: { Duration: 601 } }
+      }
+    }] }] });
+    await expect(provider.getRoute(input)).resolves.toMatchObject({ status: 'degraded', data: {
+      durationMinutes: 601 / 60, legs: [{ durationMinutes: 601 / 60 }]
+    } });
+  });
+
+  it('rounds a fractional travel time and transfer wait upward even when AWS integer summaries round down', async () => {
+    const response = { Routes: [{ Summary: { Duration: 1_200 }, Legs: [
+      { Type: 'Transit', TravelMode: 'Bus', TransitLegDetails: {
+        Departure: { Time: '2026-10-02T05:00:00Z' }, Arrival: { Time: '2026-10-02T05:10:00.500000000Z' },
+        Summary: { TravelOnly: { Duration: 600 }, Overview: { Duration: 600 } }
+      } },
+      { Type: 'Transit', TravelMode: 'CityTrain', TransitLegDetails: {
+        Departure: { Time: '2026-10-02T05:10:01Z' }, Arrival: { Time: '2026-10-02T05:20:01Z' },
+        Summary: { TravelOnly: { Duration: 600 }, Overview: { Duration: 600 } }
+      } }
+    ] }] };
+    const { provider } = testProvider(response);
+    await expect(provider.getRoute(input)).resolves.toMatchObject({ status: 'degraded', data: {
+      durationMinutes: 1_202 / 60, legs: [{ durationMinutes: 601 / 60 }, { durationMinutes: 10 }]
+    } });
+  });
+
+  it('checks the arrival deadline at nanosecond precision', async () => {
+    const { provider } = testProvider({ Routes: [{ Summary: { Duration: 600 }, Legs: [{
+      Type: 'Transit', TravelMode: 'Subway', TransitLegDetails: {
+        Departure: { Time: '2026-10-02T05:00:00Z' }, Arrival: { Time: '2026-10-02T05:10:00.000000002Z' },
+        Summary: { TravelOnly: { Duration: 600 }, Overview: { Duration: 600 } }
+      }
+    }] }] });
+    await expect(provider.getRoute({ origin: input.origin, destination: input.destination, mode: 'transit',
+      arriveBy: '2026-10-02T05:10:00.000000001Z' }))
+      .resolves.toMatchObject({ status: 'unavailable', data: null, code: 'PLANNING_TIME_UNSATISFIED' });
   });
 
   it('rejects an unexplained difference between the full leg duration and travel timestamps', async () => {

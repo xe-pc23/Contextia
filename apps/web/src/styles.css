@@ -110,6 +110,8 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .cards { list-style: none; padding: 0; margin: 0 0 16px; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
 .recommendation-card { height: 100%; border: 1px solid var(--line); border-radius: 12px; padding: 16px; background: var(--surface); }
 .recommendation-card .place, .recommendation-card .route { font-size: 14px; color: var(--ink); }
+.recommendation-card .route p { margin: 0 0 4px; }
+.route-attributions { margin: 0 0 12px; padding-left: 18px; font-size: 12px; }
 .action { display: inline-block; margin-top: 4px; color: var(--accent); font-weight: 600; }
 
 .diagnostics { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }

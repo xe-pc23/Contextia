@@ -46,8 +46,8 @@ chatは推薦所有者の検証を最初に行い、未期限切れのsnapshot�
 
 `packages/config`がstage/Region/table/model・provider予算・TTLを環境変数から検証する。model IDをコードへ固定しない。設定不備は503、healthは独立して動作する。`pnpm build`はNode 24向け`dist/handler.cjs`を生成し、CDKもruntime入口をbundleする。
 
-現在のruntimeはB Phase 1のDynamoDB/Places V2/Open-Meteo/Bedrock decide factoriesと、今回のDynamoDB冪等性adapter修正を接続済み。B Phase 2のGeocode・Routes adapters、Bedrock followUp、repositoryのconversationは未実装。このためroute依存の候補はunavailable、chatは503になる。認証付き5ケースsmokeの完了にはB Phase 2の取り込みが必要。DynamoDB Local検証をAWS/live完了とは扱わない。
+現在のruntimeはDynamoDB/Places V2/Geocode/Routes/Open-Meteo/Bedrock decide・followUpを接続済み。短い会話も所有者・期限・ターン数をDynamoDB transactionで検証する。認証付き5ケースとchatのAWS dev smokeは未実施。ローカル検証をAWS/live完了とは扱わない。
 
-Bへの追加要求: atomic commitで最新notificationFrequencyを再計算・条件確認する（現transactionのprofile条件はnotificationsEnabled/timezoneのみ）。preferences変更と配信が競合する場合のcap保証はこの修正が必要。ownerのdev deploy、実provider/別ユーザー/preview quota smoke、AWS MCP証跡は未実施。
+atomic commitは評価時のnotificationFrequencyをprofile条件に含める。評価中に頻度が変わった場合は旧上限で保存せずsupersededとし、次の評価で新しい上限を計算する。ownerのdev deploy、実provider/別ユーザー/preview quota smokeは未実施。
 
 JSONログはrequest ID・route分類・HTTP status・mode・errorCodeだけ。tokens、claims、body、query、raw pathやprivate contextを出力しない。

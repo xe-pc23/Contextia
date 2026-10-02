@@ -122,10 +122,13 @@ export async function enrichCandidates(input: {
     if (relevant.some(candidate => candidate.providerNeeds.includes('places-near-destination'))) {
       calls.push(nearby(destination).then(result => { enrichment.places.push({ need: 'places-near-destination', anchorKey: event.id, result }); }));
     }
-    if (relevant.some(candidate => candidate.providerNeeds.includes('route-to-next-event'))) {
-      calls.push(route({ origin: point, destination, mode: policy.eventRouteMode,
-        arriveBy: new Date(Date.parse(event.startAt) - defaultDetectorPolicy.arrivalBufferMinutes * 60_000).toISOString()
-      }).then(result => { enrichment.routes.push({ need: 'route-to-next-event', anchorKey: event.id, result }); }));
+    const transitCandidate = relevant.find(candidate => candidate.providerNeeds.includes('route-to-next-event'));
+    if (transitCandidate) {
+      const arriveBy = typeof transitCandidate.facts.routeArriveBy === 'string'
+        ? transitCandidate.facts.routeArriveBy
+        : new Date(Date.parse(event.startAt) - defaultDetectorPolicy.arrivalBufferMinutes * 60_000).toISOString();
+      calls.push(route({ origin: point, destination, mode: policy.eventRouteMode, arriveBy })
+        .then(result => { enrichment.routes.push({ need: 'route-to-next-event', anchorKey: event.id, arriveBy, result }); }));
     }
     return calls;
   }));
@@ -142,8 +145,10 @@ export async function enrichCandidates(input: {
       .sort((a, b) => Number(b.isOpen === true) - Number(a.isOpen === true) || (a.distanceMeters ?? Infinity) - (b.distanceMeters ?? Infinity))
       .slice(0, policy.maxRoutePlaces);
     const target = event?.location?.trim() ? destinations.get(event.id) : point;
-    const end = Math.min(evaluationAt.getTime() + defaultDetectorPolicy.maximumFreeTimeMinutes * 60_000,
+    const fallbackEnd = Math.min(evaluationAt.getTime() + defaultDetectorPolicy.maximumFreeTimeMinutes * 60_000,
       event ? Date.parse(event.startAt) : Infinity) - (event ? defaultDetectorPolicy.arrivalBufferMinutes * 60_000 : 0);
+    const end = typeof candidate.facts.returnDeadlineAt === 'string'
+      ? Date.parse(candidate.facts.returnDeadlineAt) : fallbackEnd;
     return pool.map(place => ({ place, target, deadline: new Date(end).toISOString() }));
   });
   const uniqueTasks = [...new Map(tasks.map(task => [JSON.stringify([task.place.placeId, task.target, task.deadline]), task])).values()];
@@ -153,7 +158,7 @@ export async function enrichCandidates(input: {
     enrichment.routes.push({ need: 'route-to-place-candidates', anchorKey: place.placeId, result: outward });
     if (target) {
       const returning = await route({ origin: position, destination: target, mode: 'pedestrian', arriveBy });
-      enrichment.routes.push({ need: 'route-to-place-candidates', anchorKey: place.placeId, result: returning });
+      enrichment.routes.push({ need: 'route-to-place-candidates', anchorKey: place.placeId, arriveBy, result: returning });
     }
   });
 

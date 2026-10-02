@@ -72,12 +72,17 @@ describe('notify result', () => {
   });
 
   it('renders route facts in the scenario timezone', () => {
-    const item = { ...recommendationItem(1), place: null, route: { mode: 'transit' as const, durationMinutes: 34, departAt: '2026-10-01T06:10:00Z', arriveAt: '2026-10-01T06:44:00Z', transfers: 1 }, action: { type: 'TRANSIT' as const, url: null } };
+    const item = { ...recommendationItem(1), place: null, route: { mode: 'transit' as const, durationMinutes: 34,
+      departAt: '2026-10-01T06:10:00Z', arriveAt: '2026-10-01T06:44:00Z', transfers: 1,
+      attributions: [{ type: 'Disclaimer' as const, text: 'Transit terms', url: 'https://example.com/terms' }] },
+      action: { type: 'TRANSIT' as const, url: null } };
     const html = success({ ...notifyResult(1), recommendations: [item] });
     expect(html).toContain('公共交通 34分');
     expect(html).toContain('15:10 発 → 15:44 着');
     expect(html).toContain('乗換1回');
     expect(html).toContain('経路を開く（リンクなし）');
+    expect(html).toContain('href="https://example.com/terms"');
+    expect(html).toContain('Transit terms');
   });
 
   it('escapes response text', () => {

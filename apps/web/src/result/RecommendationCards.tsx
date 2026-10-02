@@ -14,11 +14,18 @@ function ActionLink({ action }: { action: ApiRecommendationItem['action'] }) {
 function RouteSummary({ route, timeZone }: { route: NonNullable<ApiRecommendationItem['route']>; timeZone: string }) {
   const times = route.departAt && route.arriveAt ? `${formatClock(route.departAt, timeZone)} 発 → ${formatClock(route.arriveAt, timeZone)} 着` : null;
   return (
-    <p className="route">
-      経路: {routeModeLabels[route.mode]} {Math.round(route.durationMinutes)}分
-      {times ? `（${times}）` : null}
-      {route.transfers === undefined ? null : ` 乗換${route.transfers}回`}
-    </p>
+    <div className="route">
+      <p>経路: {routeModeLabels[route.mode]} {Math.round(route.durationMinutes)}分
+        {times ? `（${times}）` : null}
+        {route.transfers === undefined ? null : ` 乗換${route.transfers}回`}</p>
+      {route.attributions?.length ? (
+        <ul className="route-attributions" aria-label="経路データの提供元情報">
+          {route.attributions.map((attribution, index) => <li key={`${attribution.text}-${index}`}>
+            {attribution.url ? <a href={attribution.url} target="_blank" rel="noopener noreferrer">{attribution.text}</a> : attribution.text}
+          </li>)}
+        </ul>
+      ) : null}
+    </div>
   );
 }
 
