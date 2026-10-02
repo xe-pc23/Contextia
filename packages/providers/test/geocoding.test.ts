@@ -89,10 +89,37 @@ describe('Geocoding destination guards', () => {
     expect(normalize([item({ PlaceType: 'Locality' })])).toMatchObject({ code: 'GEOCODE_AMBIGUOUS' });
     expect(normalize([item({ Position: [135.5, 34.7] })])).toMatchObject({ code: 'GEOCODE_OUT_OF_AREA', data: null });
   });
-  it('deduplicates matching IDs and fails closed for conflicting or malformed competitors', () => {
+  it.each([
+    ['low-scoring locality', item({ PlaceId: 'locality', PlaceType: 'Locality', MatchScores: { Overall: 0.3 } })],
+    ['missing score', item({ PlaceId: 'no-score', MatchScores: undefined })],
+    ['overlong title', item({ PlaceId: 'bad-title', Title: 'x'.repeat(201), MatchScores: { Overall: 0.2 } })],
+    ['blank title', item({ PlaceId: 'blank-title', Title: ' ', MatchScores: { Overall: 0.2 } })],
+    ['invalid coordinates', item({ PlaceId: 'bad-position', Position: [200, 35], MatchScores: { Overall: 0.2 } })],
+    ['unscored malformed entry', { PlaceId: 'malformed' }]
+  ])('preserves the confident destination alongside a %s in either order', (_label, alternative) => {
+    for (const values of [[item(), alternative], [alternative, item()]]) {
+      const result = normalize(values);
+      expect(['ok', 'degraded']).toContain(result.status);
+      expect(result.data).toEqual([{ provider: 'amazon-location', placeId: 'tokyo-station', name: '東京駅',
+        latitude: 35.6812, longitude: 139.7671, confidence: 0.95 }]);
+    }
+  });
+  it.each([
+    [item({ PlaceId: 'locality', PlaceType: 'Locality', MatchScores: { Overall: 0.9 } }), 'GEOCODE_AMBIGUOUS'],
+    [item({ PlaceId: 'bad-title', Title: ' ', MatchScores: { Overall: 0.9 } }), 'INVALID_RESPONSE'],
+    [item({ PlaceId: 'bad-position', Position: [200, 35], MatchScores: { Overall: 1 } }), 'INVALID_RESPONSE']
+  ])('rejects excluded candidates with a competitive measured score', (alternative, code) => {
+    for (const values of [[item(), alternative], [alternative, item()]]) {
+      expect(normalize(values)).toMatchObject({ data: null, code });
+    }
+  });
+  it('accepts an excluded candidate exactly at the score-gap boundary', () => {
+    expect(normalize([item({ MatchScores: { Overall: 0.9 } }), item({ PlaceId: 'locality', PlaceType: 'Locality', MatchScores: { Overall: 0.8 } })])).toMatchObject({ status: 'ok' });
+  });
+  it('deduplicates matching IDs and fails closed for conflicting destinations or entirely malformed results', () => {
     expect(normalize([item(), item()])).toMatchObject({ status: 'ok', data: [expect.any(Object)] });
     expect(normalize([item(), item({ Position: [139.8, 35.7] })])).toMatchObject({ status: 'error', code: 'INVALID_RESPONSE' });
-    expect(normalize([item(), { PlaceId: 'malformed' }])).toMatchObject({ status: 'error', data: null });
+    expect(normalize([{ PlaceId: 'malformed' }])).toMatchObject({ status: 'error', data: null });
     expect(normalize([item({ Position: [200, 35] })])).toMatchObject({ status: 'error', data: null });
   });
   it('keeps the distance policy configurable and rejects invalid policy', () => {

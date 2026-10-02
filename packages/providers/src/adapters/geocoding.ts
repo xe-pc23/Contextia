@@ -30,6 +30,7 @@ export const GeocodingInputSchema = z.strictObject({
   persistenceIntent: z.enum(['single-use', 'storage'])
 });
 const ResponseSchema = z.object({ ResultItems: z.array(z.unknown()).max(100) }).passthrough();
+const ScoreSchema = z.object({ MatchScores: z.object({ Overall: z.number().min(0).max(1) }) });
 const ItemSchema = z.object({
   PlaceId: z.string().min(1).max(500),
   Title: z.string().trim().min(1).max(200),
@@ -64,13 +65,25 @@ export function normalizeGeocodingResults(
   if (!parsed.success) return { status: 'error', data: null, code: 'INVALID_RESPONSE' };
   if (parsed.data.ResultItems.length === 0) return { status: 'unavailable', data: null, code: 'GEOCODE_NOT_FOUND' };
   const matches = new Map<string, GeocodedPlace>();
+  const excluded: { reason: 'invalid' | 'broad' | 'unscored'; confidence: number | undefined }[] = [];
+  const exclude = (raw: unknown, reason: 'invalid' | 'broad' | 'unscored') => {
+    const score = ScoreSchema.safeParse(raw);
+    excluded.push({ reason, confidence: score.success ? score.data.MatchScores.Overall : undefined });
+  };
   for (const raw of parsed.data.ResultItems) {
     const item = ItemSchema.safeParse(raw);
-    if (!item.success) return { status: 'error', data: null, code: 'INVALID_RESPONSE' };
+    if (!item.success) {
+      exclude(raw, 'invalid');
+      continue;
+    }
     const confidence = item.data.MatchScores?.Overall;
-    if (confidence === undefined) return { status: 'unavailable', data: null, code: 'GEOCODE_LOW_CONFIDENCE' };
+    if (confidence === undefined) {
+      exclude(raw, 'unscored');
+      continue;
+    }
     if (!DESTINATION_TYPES.has(item.data.PlaceType)) {
-      return { status: 'unavailable', data: null, code: 'GEOCODE_AMBIGUOUS' };
+      exclude(raw, 'broad');
+      continue;
     }
     const [longitude, latitude] = item.data.Position;
     const normalized = GeocodedPlaceSchema.safeParse({
@@ -78,7 +91,10 @@ export function normalizeGeocodingResults(
       latitude, longitude, confidence,
       ...(item.data.Distance === undefined ? {} : { distanceMeters: item.data.Distance })
     });
-    if (!normalized.success) return { status: 'error', data: null, code: 'INVALID_RESPONSE' };
+    if (!normalized.success) {
+      exclude(raw, 'invalid');
+      continue;
+    }
     const previous = matches.get(normalized.data.placeId);
     if (previous !== undefined && (previous.latitude !== latitude || previous.longitude !== longitude || previous.name !== normalized.data.name)) {
       return { status: 'error', data: null, code: 'INVALID_RESPONSE' };
@@ -87,7 +103,17 @@ export function normalizeGeocodingResults(
   }
   const ranked = [...matches.values()].sort((left, right) => right.confidence - left.confidence);
   const best = ranked[0];
-  if (best === undefined || best.confidence < policy.minConfidence) {
+  if (best === undefined) {
+    if (excluded.some(value => value.reason === 'invalid')) return { status: 'error', data: null, code: 'INVALID_RESPONSE' };
+    if (excluded.some(value => value.reason === 'broad')) return { status: 'unavailable', data: null, code: 'GEOCODE_AMBIGUOUS' };
+    return { status: 'unavailable', data: null, code: 'GEOCODE_LOW_CONFIDENCE' };
+  }
+  // Ignore unrankable/low-quality rows, but never silently choose past a measured competitor.
+  const competitive = excluded.filter(value => value.confidence !== undefined
+    && best.confidence - value.confidence < policy.minScoreGap - Number.EPSILON);
+  if (competitive.some(value => value.reason === 'invalid')) return { status: 'error', data: null, code: 'INVALID_RESPONSE' };
+  if (competitive.length > 0) return { status: 'unavailable', data: null, code: 'GEOCODE_AMBIGUOUS' };
+  if (best.confidence < policy.minConfidence) {
     return { status: 'unavailable', data: null, code: 'GEOCODE_LOW_CONFIDENCE' };
   }
   const runnerUp = ranked[1];
@@ -97,7 +123,9 @@ export function normalizeGeocodingResults(
   if (input.biasPosition !== undefined && distanceMeters(input.biasPosition, best) > policy.maxBiasDistanceMeters) {
     return { status: 'unavailable', data: null, code: 'GEOCODE_OUT_OF_AREA' };
   }
-  return { status: 'ok', data: [best] };
+  return excluded.some(value => value.reason === 'invalid')
+    ? { status: 'degraded', data: [best], code: 'INVALID_ITEMS' }
+    : { status: 'ok', data: [best] };
 }
 
 export interface AmazonLocationGeocodeRequest {

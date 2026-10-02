@@ -549,3 +549,75 @@ describe('BedrockRecommendationModel followUp', () => {
     expect(JSON.stringify(result)).not.toContain('secret account details');
   });
 });
+
+describe('Bedrock geocoded destination references', () => {
+  const destination = { ...place, placeId: 'geocoded-destination', name: 'Tokyo Station' };
+  const destinationCard = { ...recommendation, place: destination };
+  const destinationDecision = { ...notifyDecision, recommendations: [destinationCard] };
+  const destinationReply = { reply: '目的地への経路です。', recommendations: [destinationCard] };
+
+  function destinationInput(): RecommendationModelInput {
+    return modelInput({
+      candidates: [{
+        type: 'UPCOMING_EVENT_TRANSIT', confidence: 0.9, anchorKey: 'event-1',
+        requiredSignals: ['location', 'calendar', 'time', 'transit'],
+        providerNeeds: ['geocode-event-location', 'route-to-next-event'], facts: { eventId: 'event-1' }
+      }],
+      enrichment: {
+        ...emptyEnrichment,
+        geocoding: [{ eventId: 'event-1', result: { status: 'ok', data: [{ ...destination, confidence: 0.95 }] } }],
+        routes: [{ need: 'route-to-next-event', anchorKey: 'event-1', result: { status: 'ok', data: route } }]
+      }
+    });
+  }
+
+  it.each(['ok', 'degraded'] as const)('accepts a destination card from %s Geocode in the transit decision without nearby Places', async status => {
+    const input = destinationInput();
+    input.enrichment.geocoding[0]!.result = { status, data: [{ ...destination, confidence: 0.95 }] };
+    const fake = fakeClient([response(destinationDecision), response(destinationDecision)]);
+
+    await expect(model(fake.client).decide(input)).resolves.toMatchObject({ status: 'ok', data: destinationDecision });
+    expect(fake.requests).toHaveLength(1);
+    expect(fake.requests[0]!.messages[0]!.content[0]!.text).toContain('geocoded-destination');
+  });
+
+  it.each(['ok', 'degraded'] as const)('accepts fresh %s Geocode references in follow-up without original or saved cards', async status => {
+    const input = destinationInput();
+    input.enrichment.geocoding[0]!.result = { status, data: [{ ...destination, confidence: 0.95 }] };
+    const fake = fakeClient([response(destinationReply), response(destinationReply)]);
+
+    await expect(model(fake.client).followUp(followUpInput({ recommendations: [], enrichment: input.enrichment })))
+      .resolves.toMatchObject({ status: 'ok', data: destinationReply });
+    expect(fake.requests).toHaveLength(1);
+  });
+
+  it.each([
+    { name: 'unknown ID', place: { ...destination, placeId: 'invented-place' } },
+    { name: 'changed name', place: { ...destination, name: 'Invented Station' } },
+    { name: 'changed latitude', place: { ...destination, latitude: 34.6 } },
+    { name: 'changed longitude', place: { ...destination, longitude: 135.5 } },
+    { name: 'changed distance', place: { ...destination, distanceMeters: 1 } }
+  ])('rejects $name against the Geocode source in decisions and follow-up', async ({ place: invalidPlace }) => {
+    const card = { ...destinationCard, place: invalidPlace };
+    const invalidDecision = { ...destinationDecision, recommendations: [card] };
+    const invalidReply = { ...destinationReply, recommendations: [card] };
+    const input = destinationInput();
+
+    await expect(model(fakeClient([response(invalidDecision), response(invalidDecision)]).client).decide(input))
+      .resolves.toMatchObject({ status: 'error', code: 'INVALID_MODEL_OUTPUT', data: null });
+    await expect(model(fakeClient([response(invalidReply), response(invalidReply)]).client)
+      .followUp(followUpInput({ recommendations: [], enrichment: input.enrichment })))
+      .resolves.toMatchObject({ status: 'error', code: 'INVALID_MODEL_OUTPUT', data: null });
+  });
+
+  it.each(['unavailable', 'timeout', 'error', 'not_requested'] as const)('does not authorize a destination from %s Geocode', async status => {
+    const input = destinationInput();
+    input.enrichment.geocoding[0]!.result = { status, data: null };
+
+    await expect(model(fakeClient([response(destinationDecision), response(destinationDecision)]).client).decide(input))
+      .resolves.toMatchObject({ status: 'error', code: 'INVALID_MODEL_OUTPUT', data: null });
+    await expect(model(fakeClient([response(destinationReply), response(destinationReply)]).client)
+      .followUp(followUpInput({ recommendations: [], enrichment: input.enrichment })))
+      .resolves.toMatchObject({ status: 'error', code: 'INVALID_MODEL_OUTPUT', data: null });
+  });
+});

@@ -210,9 +210,14 @@ function followUpRequestFor(
 }
 
 function candidatePlaces(enrichment: ProviderEnrichment): ProviderPlace[] {
-  return enrichment.places.flatMap(({ result }) =>
-    result.status === 'ok' || result.status === 'degraded' ? result.data : []
-  );
+  return [
+    ...enrichment.places.flatMap(({ result }) =>
+      result.status === 'ok' || result.status === 'degraded' ? result.data : []
+    ),
+    ...enrichment.geocoding.flatMap(({ result }) =>
+      result.status === 'ok' || result.status === 'degraded' ? result.data : []
+    )
+  ];
 }
 
 function candidateRoutes(enrichment: ProviderEnrichment): RouteSummary[] {
