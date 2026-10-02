@@ -1,50 +1,47 @@
-# API — Phase 1（D、進行中）
+# API — Phase 2-D
 
-`pnpm dev:api`をルートから実行すると`http://127.0.0.1:3001/health`を確認できる。Lambdaの`src/handler.ts`とローカルHTTP serverは同じrequest handlerを使用する。
+Lambdaの入口は`src/runtime.ts`。`src/handler.ts`は認証・HTTP・契約検証、`application`は注入されたdomain/provider portsを使う。`pnpm dev:api`のlocalhost serverはhealth確認用で、JWT authorizerがないため保護routeは401になる。
 
-## ルート
+## HTTP routes
 
-| ルート | 認証 | 現在の動作 |
-|---|---|---|
-| `GET /health` | なし | `{status:"ok", version}`。外部provider・DynamoDB・認証にアクセスしない |
-| `POST /v1/context/evaluate` | Cognito JWT（API Gatewayのauthorizer） | 下記の入口検証のあと、注入された評価serviceを実行。未注入なら`503 EVALUATION_UNAVAILABLE` |
-| その他 | — | `404 NOT_FOUND` |
+| Route | 動作 |
+|---|---|
+| `GET /health` | 外部呼出なしのlivenessとbuild ID |
+| `GET /v1/me` | JWT所有者のprofile。未作成は404 |
+| `PUT /v1/me/preferences` | 全preferencesをZod検証して保存。初回profileも作成 |
+| `GET /v1/recommendations` | 所有者の履歴。limit既定20、上限50、opaque cursor |
+| `GET /v1/recommendations/{recommendationId}` | 所有者かつ未期限切れの推薦。未存在・別ユーザーは404 |
+| `POST /v1/context/evaluate` | 全5 detectorの評価。任意のUUID `Idempotency-Key` |
+| `POST /v1/recommendations/{recommendationId}/chat` | 推薦単位の短いfollow-up。最大8 user turns、固定2時間TTL |
 
-`/v1/context/evaluate`の入口:
+health以外はAPI Gateway Cognito JWT authorizerと`token_use=access`が必要。userIdはJWTの`sub`だけを使う。evaluateのsimulation/previewはWeb client、real/proactiveはMobile clientだけに許可する。他の保護routeは両clientに許可する。body上限256KiB、全request/responseをcontractsで検証する。
 
-1. JWT authorizerのclaimsから`sub`と`client_id`を読む。`token_use=access`以外（ID tokenなど）は401。
-2. bodyは256 KiBまで（超過は413）。JSONでなければ400。
-3. `ContextEvaluateRequestSchema`で検証し、違反は400 `VALIDATION_ERROR`と`details[].path`。
-4. `simulation/preview`はWeb（Scenario Console）clientだけ、`real/proactive`はMobile clientだけに許可し、それ以外は403。client IDはCDKがLambda環境変数`WEB_CLIENT_ID`/`MOBILE_CLIENT_ID`に渡し、未設定なら常に403（fail closed）。
-5. `HandlerOptions.evaluate`に評価serviceが注入されていれば実行し、`200 {requestId, data: EvaluationResult}`を返す。`PROFILE_NOT_FOUND`は404、`STATE_UNAVAILABLE`は503、それ以外の例外は内部メッセージを出さず500 `INTERNAL_ERROR`。
-6. 本番の`handler`はまだ評価serviceを注入しない（B の adapter が未実装のため）。推薦を作らず503を返す。
+## 評価と保存
 
-## 評価service（`src/application/evaluateContext.ts`）
+`profile/state -> hard guards -> candidate generation -> provider needsの和集合 -> enrichment -> refineCandidates -> 採用候補 -> model -> GetPlace(Storage) -> 保存`の順。同じrequest-start server時刻をquota・dedup・TTLに、simulationのscenarioTimeをprovider/modelの状況時刻に使う。
 
-`createEvaluateContext(deps)`は外部依存をすべて注入で受け取る。domain（A）は`src/application/evaluationDomain.ts`の`EvaluationDomain`、provider（B）は`@contextia/providers`のportsを使う。
+Places/Weather/Geocodeは独立並列。geocode後に目的地Places/event route、その後に活動用の往路・復路を取得する。同一パラメータの呼出をrequest内で共有し、route対象は既定6 places・同時4・enrichment全体7秒。Places 2.5秒、Weather 2秒、Routes 3秒、model 7秒。実adapterのabortに加えてapplicationがdeadlineを設ける。部分失敗は該当候補へ反映し、他候補を継続する。供給していない移動時間・place・websiteを返さない。
 
-1. 1回だけ取得したサーバー時刻で、profile・state を読み、事前ガードを実行する。simulationの時だけ`preferencesOverride`を適用する。
-2. previewも含めて context snapshot（calendar IDはハッシュ化、24時間TTL）と fingerprint を保存する。
-3. proactiveでガードされたら provider・Bedrock を呼ばずに silent。候補なしは`NO_CANDIDATE`。
-4. 候補ごとにtrigger/anchorガードを実行。previewは候補を残し、`wouldSuppress`の診断だけを返す。
-5. `places-near-current`だけPlaces（`single-use`、2.5秒timeout）を呼ぶ。未接続のweather/routes/geocodingは`unavailable`/`PROVIDER_NOT_CONNECTED`と報告し、値を作らない。
-6. モデル（7秒timeout）の出力をZodで検証し、入力にないplace ID・routeを参照したら`error`として silent にする。
-7. proactive notify は`recordProactiveDelivery`で原子的に再確認してから推薦を保存する。previewは日次枠を消費しない。
-8. 応答のplaceはprovider正規化データ、保存するplaceは`GetPlace(storage)`の結果だけ。推薦は7日TTL。
+モデルはtriggerを選択する契約ではないため、refinement後の最高confidence候補を先に確定し、同点はAのregistry順を維持する。その候補のeligible/unverified place IDsと関連routesを渡す。fixtureのfree-timeとearly-arrivalは条件が重なり、全registryでは同点のFREE_TIME_NEARBYが選ばれることがある。各detectorのfixture評価と、全registryでモデル・返却・保存triggerが一致する評価を別々に検証する。
 
-## A の domain との接続（`src/composition/evaluationDomain.ts`）
+選択したplaceだけ`GetPlace(storage)`で再取得する。Storageが失敗したら推薦・quotaを保存しない。返却カードと履歴/cache/chatのplace fields・website actionはStorage由来の正規化値だけ。探索のSingleUse候補一覧を保存しない。
 
-`createEvaluationDomain()`はA（`@contextia/domain`）の`evaluateDeliveryGuards`・`normalizeDetectorContext`・`stepGoalRestDetector`を`EvaluationDomain`に合わせる。両方のガードに同じリクエスト開始時刻を渡し、timezoneは有効なpreferencesのものを使う。
+proactiveはBの`commitProactiveRecommendation`で推薦本体・ID pointer・quota/anchorを原子的に保存する。previewはsnapshot/処理fingerprintと推薦履歴を保存し、quota/通知済みanchorを変えない。`wouldSuppress`で診断し、同じpreviewも再評価する。実通知送信はPhase 3。
 
-- `STEP_GOAL_REST`のanchor窓はAの方針どおり「同じローカル日」。Bの`recordProactiveDelivery`は秒数しか受け取らないため、「ローカルの0時からの経過秒」を渡す（DST切替日は切替幅だけずれうる）。
-- fingerprintはサーバー処理時刻とそろったときだけAのガードに渡す（時刻なしで渡すと同一contextの再実行で例外になる）。`UserState`にはまだ時刻がない（issue #5）ため、評価serviceはfingerprintが一致したときだけ`latestContext`のsnapshotを読み、サービスが書いた`createdAt`（サーバー時刻、シミュレーションの`capturedAt`ではない）を補う。これでproactiveの重複はBedrockより前に止まり、previewでも`DUPLICATE_CONTEXT`を診断できる。snapshotが期限切れならfingerprintを古いものとして外し、読めなければ`STATE_UNAVAILABLE`で止める。portに時刻が加われば追加の読み込みはしない。
+STEP_GOAL_RESTの同じIANA local-day抑止は、local date開始の実UTC instantからの経過秒+1をBのseconds portへ渡す。DSTの23/25時間日とmidnightを含む。現在/未来のanchorが保持上限を超える状態はfail closedにする。サーバー処理時刻はBの`latestContextProcessedAt`を使い、legacy rowだけsnapshotのcreatedAtを補う。
 
-既知の制約: 重複判定に必要なサーバー処理時刻が`UserState`にない（issue #5）。上記のsnapshot読み込みで補っている。モデルはtriggerを返さないため、Phase 1では最も確度の高い候補のtriggerを採用する。
+## 冪等性・chat
 
-ローカルserverにはJWT authorizerがないため、評価ルートは401になる。
+冪等性hashはuser/operation/全正規化inputをSHA-256にし、通知fingerprintと分ける。同じkey/bodyは保存結果だけを再生して新しいHTTP requestIdを付け、provider/model/quotaを再実行しない。異なるbody・処理中は409。claim/cacheは1時間の論理TTLと所有者をrepositoryで検証する。
 
-## ログ
+chatは推薦所有者の検証を最初に行い、未期限切れのsnapshot・Storage-backed cards・conversationだけをモデルへ渡す。snapshot欠落/期限切れはcontext=null。現snapshot契約はscenarioTimeを保持しないためsimulationもcontext=nullとし、状況時刻を作らない。appendはrepositoryが所有者・8 turns・expiryを原子的に再確認する。
 
-JSONログにはrequest ID、route分類、HTTP status、評価mode、エラーコードだけを記録する。token、claims、body、query、raw pathは記録しない。
+## Runtime設定と残る依存
 
-`pnpm build`はNode.js 24向けの`dist/handler.cjs`も生成する。CDKは`NodejsFunction`で同じhandlerをbundleする。
+`packages/config`がstage/Region/table/model・provider予算・TTLを環境変数から検証する。model IDをコードへ固定しない。設定不備は503、healthは独立して動作する。`pnpm build`はNode 24向け`dist/handler.cjs`を生成し、CDKもruntime入口をbundleする。
+
+現在のruntimeはB Phase 1のDynamoDB/Places V2/Open-Meteo/Bedrock decide factoriesを接続済み。B Phase 2のGeocode・Routes adapters、Bedrock followUp、repositoryのidempotency/conversationは未実装。このため実APIの該当経路はunavailable/503になる。doublesによるapplication/HTTPテストをlive完了とは扱わない。
+
+Bへの追加要求: atomic commitで最新notificationFrequencyを再計算・条件確認する（現transactionのprofile条件はnotificationsEnabled/timezoneのみ）。preferences変更と配信が競合する場合のcap保証はこの修正が必要。ownerのdev deploy、実provider/別ユーザー/preview quota smoke、AWS MCP証跡は未実施。
+
+JSONログはrequest ID・route分類・HTTP status・mode・errorCodeだけ。tokens、claims、body、query、raw pathやprivate contextを出力しない。

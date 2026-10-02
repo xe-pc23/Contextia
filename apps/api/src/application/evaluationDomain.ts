@@ -1,4 +1,4 @@
-import type { CandidateOpportunity, ContextInput, DeliveryMode, UserPreferences } from '@contextia/contracts';
+import type { CandidateEvidence, CandidateOpportunity, ContextInput, DeliveryMode, UserPreferences } from '@contextia/contracts';
 import type { DeliveryGuardCode, UserState } from '@contextia/providers';
 
 /**
@@ -28,6 +28,7 @@ export interface GuardCheck {
   maxDailyNotifications: number;
   /** Trigger/anchor window for the repository's atomic delivery recheck, matching the domain policy. */
   anchorDedupSeconds: number;
+  timezone: string;
 }
 
 export interface DetectInput {
@@ -39,4 +40,5 @@ export interface DetectInput {
 export interface EvaluationDomain {
   checkDeliveryGuards(input: GuardCheckInput): GuardCheck;
   detectCandidates(input: DetectInput): Promise<CandidateOpportunity[]>;
+  refineCandidates(input: DetectInput & { candidates: CandidateOpportunity[]; evidence: CandidateEvidence }): CandidateOpportunity[];
 }

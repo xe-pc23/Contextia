@@ -401,6 +401,16 @@ CONDITION notificationsSentToday < maxAllowed
 
 Handle date rollover explicitly.
 
+### Phase 2-D application connection
+
+The API invokes B's `commitProactiveRecommendation` for a single transaction containing recommendation, ID pointer, daily count and anchor. Preview writes snapshot/processing fingerprint and history only; it never calls the proactive commit. The user-local day comes from the same request-start instant and IANA preference timezone throughout the request. The context fingerprint uses capturedAt in real mode and scenarioTime in simulation; its processing timestamp always comes from the server.
+
+The seconds-based repository port receives elapsed real UTC seconds since the start of the local date plus one for STEP_GOAL_REST, including 23/25-hour DST days and an anchor recorded exactly at midnight. D checks that bounded anchor retention has room for every observed current-day/future anchor and at least the daily cap; otherwise it fails closed. A future B port may express this as an explicit local-day policy. **B's current profile transaction condition checks notificationsEnabled/timezone but not a concurrent notificationFrequency change.** Latest-frequency cap recalculation and conditional checking remain a B integration requirement; D does not claim that race is covered.
+
+Idempotency and conversation application services are connected to the existing ports. One-hour idempotency completion supplies only Storage-backed selected place data and excludes the HTTP requestId. Chat uses a fixed two-hour conversation expiry, bounded by recommendation expiry, with an atomic eight-user-turn limit. Owned/expired recommendation checks happen before profile/history/model access. Expired or absent snapshots provide context=null; simulation snapshots also provide null because the current snapshot port does not retain scenarioTime. No scenario clock or current location is reconstructed from missing data.
+
+B Phase 1 still returns `NOT_IMPLEMENTED` for idempotency/conversation operations and Bedrock followUp. These layouts and D doubles do not prove persistence on AWS; B Phase 2 adapter implementation and owner dev smoke are required.
+
 ## 13. Data minimization table
 
 | Data | Stored? | Retention |

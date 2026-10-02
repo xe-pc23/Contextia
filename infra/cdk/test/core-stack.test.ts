@@ -41,8 +41,8 @@ describe.each(stages)('%s core stack', (stage) => {
 
   it('runs the API on Node.js 24 with JSON logs and client IDs for preview authorization', () => {
     template.hasResourceProperties('AWS::Lambda::Function', {
-      FunctionName: `contextia-${stage}-api`, Runtime: 'nodejs24.x', Timeout: 20,
-      Environment: { Variables: Match.objectLike({ CONTEXTIA_STAGE: stage, BUILD_ID: 'abc123', WEB_CLIENT_ID: Match.anyValue(), MOBILE_CLIENT_ID: Match.anyValue() }) },
+      FunctionName: `contextia-${stage}-api`, Runtime: 'nodejs24.x', Timeout: 28, MemorySize: 512,
+      Environment: { Variables: Match.objectLike({ CONTEXTIA_STAGE: stage, BUILD_ID: 'abc123', WEB_CLIENT_ID: Match.anyValue(), MOBILE_CLIENT_ID: Match.anyValue(), TABLE_NAME: Match.anyValue(), BEDROCK_MODEL_ID: { Ref: 'BedrockModelId' }, CONVERSATION_TTL_SECONDS: '7200' }) },
       LoggingConfig: Match.objectLike({ LogFormat: 'JSON' })
     });
     template.hasResourceProperties('AWS::Logs::LogGroup', { LogGroupName: `/aws/lambda/contextia-${stage}-api`, RetentionInDays: isDev ? 7 : 30 });
@@ -53,13 +53,17 @@ describe.each(stages)('%s core stack', (stage) => {
     template.hasResourceProperties('AWS::ApiGatewayV2::Api', {
       Name: `contextia-${stage}-http-api`, ProtocolType: 'HTTP',
       CorsConfiguration: Match.objectLike({
-        AllowHeaders: ['authorization', 'content-type', 'accept'],
+        AllowHeaders: ['authorization', 'content-type', 'accept', 'idempotency-key'],
+        AllowMethods: Match.arrayWith(['PUT']),
         AllowOrigins: isDev ? Match.arrayWith(localOrigins) : [Match.anyValue()]
       })
     });
-    template.resourceCountIs('AWS::ApiGatewayV2::Route', 2);
+    template.resourceCountIs('AWS::ApiGatewayV2::Route', 7);
     template.hasResourceProperties('AWS::ApiGatewayV2::Route', { RouteKey: 'GET /health', AuthorizationType: 'NONE' });
     template.hasResourceProperties('AWS::ApiGatewayV2::Route', { RouteKey: 'POST /v1/context/evaluate', AuthorizationType: 'JWT', AuthorizerId: Match.anyValue() });
+    for (const route of ['GET /v1/me', 'PUT /v1/me/preferences', 'GET /v1/recommendations', 'GET /v1/recommendations/{recommendationId}', 'POST /v1/recommendations/{recommendationId}/chat']) {
+      template.hasResourceProperties('AWS::ApiGatewayV2::Route', { RouteKey: route, AuthorizationType: 'JWT', AuthorizerId: Match.anyValue() });
+    }
     template.hasResourceProperties('AWS::ApiGatewayV2::Authorizer', {
       Name: `contextia-${stage}-cognito`, AuthorizerType: 'JWT',
       JwtConfiguration: { Audience: [Match.anyValue(), Match.anyValue()], Issuer: Match.anyValue() }
@@ -138,6 +142,41 @@ describe.each(stages)('%s core stack', (stage) => {
       const statements = (policy as { Properties: { PolicyDocument: { Statement: { Action: unknown }[] } } }).Properties.PolicyDocument.Statement;
       for (const statement of statements) expect([statement.Action].flat()).not.toContain('*');
     }
+  });
+
+  it('restricts runtime provider/model access to the stage table and explicit provider resources', () => {
+    template.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: { Statement: Match.arrayWith([
+        Match.objectLike({ Action: ['dynamodb:GetItem', 'dynamodb:Query', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:ConditionCheckItem'], Resource: Match.anyValue() }),
+        Match.objectLike({ Action: ['geo-places:SearchNearby', 'geo-places:GetPlace', 'geo-places:Geocode'], Resource: Match.anyValue() }),
+        Match.objectLike({ Action: 'geo-routes:CalculateRoutes', Resource: Match.anyValue() }),
+        Match.objectLike({ Action: 'bedrock:InvokeModel', Resource: { Ref: 'BedrockModelResources' } })
+      ]) }
+    });
+    template.hasParameter('BedrockModelResources', { Type: 'CommaDelimitedList', AllowedPattern: Match.anyValue(), Default: Match.absent() });
+  });
+
+  it('issues only a referrer-restricted, expiring map key and hides its lookup response from logs', () => {
+    template.hasResource('AWS::Location::APIKey', { DeletionPolicy: 'Retain', Properties: Match.objectLike({
+      KeyName: `contextia-${stage}-web-map`, NoExpiry: false, ExpireTime: { Ref: 'MapKeyExpireTime' }, ForceDelete: Match.absent(),
+      Restrictions: { AllowActions: ['geo-maps:GetTile'], AllowResources: Match.anyValue(), AllowReferers: isDev ? Match.arrayWith(localOrigins.map(origin => `${origin}/*`)) : [Match.anyValue()] }
+    }) });
+    const lookup = Object.values(template.findResources('Custom::AWS'))[0];
+    expect(JSON.stringify(lookup)).toContain('describeKey');
+    expect(JSON.stringify(lookup)).toContain('logApiResponseData');
+    expect(JSON.stringify(lookup)).toContain('false');
+  });
+
+  it('limits GitHub deployment to this repository and the stage-specific bootstrap roles', () => {
+    const roles = template.findResources('AWS::IAM::Role', { Properties: { RoleName: isDev ? 'GitHubDevDeployRole' : 'GitHubProdDeployRole' } });
+    const policy = JSON.stringify(Object.values(roles)[0]);
+    expect(policy).toContain('sts:AssumeRoleWithWebIdentity');
+    expect(policy).toContain(`repo:xe-pc23/Contextia:environment:${stage}`);
+    if (!isDev) expect(policy).not.toContain('feature/*');
+    template.hasResourceProperties('AWS::IAM::Policy', { PolicyDocument: { Statement: Match.arrayWith([
+      Match.objectLike({ Action: 'sts:AssumeRole', Resource: Match.anyValue() })
+    ]) } });
+    expect(JSON.stringify(template.toJSON())).toContain(isDev ? 'ctiadev' : 'ctiaprod');
   });
 });
 

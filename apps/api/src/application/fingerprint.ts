@@ -18,7 +18,7 @@ export function hashCalendarId(id: string): string {
  * step bucket, next event key and mode. The result contains no raw PII.
  */
 export function contextFingerprint(context: ContextInput): string {
-  const at = Date.parse(context.scenarioTime ?? context.capturedAt);
+  const at = Date.parse(context.mode === 'simulation' ? context.scenarioTime ?? context.capturedAt : context.capturedAt);
   const nextEvent = context.calendar
     .filter(event => !event.allDay && Date.parse(event.endAt) >= at)
     .sort((a, b) => Date.parse(a.startAt) - Date.parse(b.startAt))[0];

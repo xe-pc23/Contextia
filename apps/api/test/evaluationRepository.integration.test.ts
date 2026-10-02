@@ -4,7 +4,7 @@ import { getScenarioInput } from '@contextia/test-fixtures';
 import { DynamoDbStateRepository } from '@contextia/providers';
 import type { DynamoDbClient, DynamoDbItem, DynamoDbRequest, DynamoDbTransactionItem, DynamoDbUpdateInput, PlacesProvider } from '@contextia/providers';
 import { createEvaluateContext } from '../src/application/evaluateContext.js';
-import { createEvaluationDomain } from '../src/composition/evaluationDomain.js';
+import { createEvaluationDomain, phase1Detectors } from '../src/composition/evaluationDomain.js';
 
 const nowStart = new Date('2026-10-01T05:10:00.000Z');
 const preferences = {
@@ -34,9 +34,9 @@ function cancellation(): Error {
 class MemoryDynamoDb implements DynamoDbClient {
   private readonly items = new Map<string, Record<string, unknown>>();
 
-  constructor() {
+  constructor(profilePreferences = preferences) {
     this.items.set(key('USER#user-1', 'PROFILE'), {
-      PK: 'USER#user-1', SK: 'PROFILE', entityType: 'UserProfile', preferences,
+      PK: 'USER#user-1', SK: 'PROFILE', entityType: 'UserProfile', preferences: profilePreferences,
       createdAt: nowStart.toISOString(), updatedAt: nowStart.toISOString(), schemaVersion: 1
     });
   }
@@ -126,7 +126,7 @@ class MemoryDynamoDb implements DynamoDbClient {
     const pointerPut = puts.find(item => item.Item.entityType === 'RecommendationRef');
     const expectedCount = Number(values[':max']);
     const conditionHolds = profileCheck !== undefined && profilePreferences?.notificationsEnabled === true
-      && profilePreferences.timezone === 'Asia/Tokyo'
+      && 'ConditionCheck' in profileCheck && profilePreferences.timezone === profileCheck.ConditionCheck.ExpressionAttributeValues?.[':timezone']
       && state !== undefined && state.latestContextEvaluationId === values[':evaluationId']
       && state.latestContextFingerprint === values[':fingerprint']
       && (!sameDay || Number(state.notificationsSentToday ?? 0) < expectedCount)
@@ -151,9 +151,9 @@ class MemoryDynamoDb implements DynamoDbClient {
   }
 }
 
-function setup() {
+function setup(profilePreferences = preferences) {
   let now = nowStart;
-  const database = new MemoryDynamoDb();
+  const database = new MemoryDynamoDb(profilePreferences);
   const state = new DynamoDbStateRepository({ client: database, tableName: 'contextia-test', timeoutMs: 100 });
   const input = getScenarioInput('step-goal');
   const places: PlacesProvider = {
@@ -161,7 +161,7 @@ function setup() {
     getPlace: vi.fn(async request => ({ status: 'ok' as const, data: { persistenceIntent: request.persistenceIntent, place } }))
   };
   const evaluate = createEvaluateContext({
-    domain: createEvaluationDomain(), state,
+    domain: createEvaluationDomain({ detectors: phase1Detectors }), state,
     places,
     model: { decide: vi.fn(async () => ({ status: 'ok' as const, data: decision })) },
     clock: () => now,
@@ -194,5 +194,32 @@ describe('context evaluation with DynamoDB adapter', () => {
     expect(first).toMatchObject({ decision: 'notify', delivery: { mode: 'preview', wouldSuppress: false } });
     expect(second).toMatchObject({ decision: 'notify', delivery: { mode: 'preview', wouldSuppress: true, guardCodes: ['DUPLICATE_CONTEXT'] } });
     expect(database.state).toMatchObject({ notificationDay: '2026-10-01', notificationsSentToday: 0, recentAnchors: {} });
+  });
+
+  it('allows only one concurrent proactive transaction, counter increment and history pointer', async () => {
+    const { evaluate, input, database } = setup();
+    const context = { ...input, mode: 'real' as const, deliveryMode: 'proactive' as const, location: { ...input.location, source: 'gps' as const } };
+    const results = await Promise.allSettled([evaluate({ userId: 'user-1', context }), evaluate({ userId: 'user-1', context })]);
+    expect(results.filter(result => result.status === 'fulfilled' && result.value.decision === 'notify')).toHaveLength(1);
+    expect(database.state?.notificationsSentToday).toBe(1);
+    expect(database.recommendations).toHaveLength(1);
+    expect(database.pointers).toHaveLength(1);
+  });
+
+  it.each([
+    ['2026-03-08T05:00:00.000Z', '2026-03-09T03:59:59.000Z', '2026-03-09T04:00:00.000Z'],
+    ['2026-11-01T04:00:00.000Z', '2026-11-02T04:59:59.000Z', '2026-11-02T05:00:00.000Z']
+  ])('retains the daily step anchor across a 23/25-hour day from %s', async (start, end, nextDay) => {
+    const { evaluate, input, database, setNow } = setup({ ...preferences, timezone: 'America/New_York' });
+    const contextAt = (instant: string) => ({ ...input, mode: 'real' as const, deliveryMode: 'proactive' as const, capturedAt: instant,
+      location: { ...input.location, source: 'gps' as const, capturedAt: instant } });
+    setNow(new Date(start));
+    expect((await evaluate({ userId: 'user-1', context: contextAt(start) })).decision).toBe('notify');
+    setNow(new Date(end));
+    expect(await evaluate({ userId: 'user-1', context: contextAt(end) })).toMatchObject({ decision: 'silent', delivery: { guardCodes: ['RECENT_SAME_TRIGGER'] } });
+    setNow(new Date(nextDay));
+    expect((await evaluate({ userId: 'user-1', context: contextAt(nextDay) })).decision).toBe('notify');
+    expect(database.state?.notificationsSentToday).toBe(1);
+    expect(database.recommendations).toHaveLength(2);
   });
 });

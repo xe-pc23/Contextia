@@ -2,7 +2,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EXPECTED_AWS_ACCOUNT, EXPECTED_AWS_REGION, parseDeploymentConfig } from '@contextia/config';
-import { cdkArgs, parseCdkInvocations } from './cdk-command.js';
+import { cdkArgs, deploymentParameters, parseCdkInvocations, requireProductionMain } from './cdk-command.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 
@@ -14,15 +14,23 @@ function awsText(args: string[]): string {
 
 try {
   for (const invocation of parseCdkInvocations(process.argv.slice(2))) {
-    const isDiff = invocation.action === 'diff';
-    const account = isDiff
+    const live = invocation.action !== 'synth';
+    const deploying = invocation.action === 'deploy';
+    if (deploying && invocation.stage === 'prod') {
+      const branch = process.env.GITHUB_ACTIONS === 'true' ? '' : execFileSync('git', ['symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8', cwd: root }).trim();
+      requireProductionMain(process.env, branch);
+    }
+    const parameters = deploying ? deploymentParameters(process.env) : [];
+    const account = live
       ? awsText(['sts', 'get-caller-identity', '--query', 'Account', '--output', 'text'])
       : process.env.CDK_DEFAULT_ACCOUNT ?? process.env.AWS_ACCOUNT_ID ?? EXPECTED_AWS_ACCOUNT;
-    const region = process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION ?? (isDiff
+    const region = process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION ?? (live
       ? execFileSync('aws', ['configure', 'get', 'region'], { encoding: 'utf8', timeout: 5_000 }).trim()
       : process.env.CDK_DEFAULT_REGION ?? EXPECTED_AWS_REGION);
-    const config = parseDeploymentConfig({ stage: invocation.stage, account, region, buildId: process.env.BUILD_ID });
-    const result = spawnSync('pnpm', cdkArgs(invocation, join(root, 'cdk.out', invocation.stage)), {
+    const head = deploying ? execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', cwd: root }).trim() : undefined;
+    if (deploying && process.env.BUILD_ID && process.env.BUILD_ID !== head) throw new Error('Build marker must match deployed HEAD');
+    const config = parseDeploymentConfig({ stage: invocation.stage, account, region, buildId: process.env.BUILD_ID ?? head });
+    const result = spawnSync('pnpm', [...cdkArgs(invocation, join(root, 'cdk.out', invocation.stage)), ...parameters], {
       cwd: root,
       stdio: 'inherit',
       env: {

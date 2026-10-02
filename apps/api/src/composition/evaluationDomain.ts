@@ -1,4 +1,7 @@
-import { defaultDeliveryPolicy, evaluateDeliveryGuards, normalizeDetectorContext, stepGoalRestDetector } from '@contextia/domain';
+import {
+  defaultDeliveryPolicy, detectCandidates, evaluateDeliveryGuards, localDate, normalizeDetectorContext,
+  phase2Detectors, refineCandidates, stepGoalRestDetector
+} from '@contextia/domain';
 import type { DeliveryGuardState, DeliveryPolicy, TriggerDetector } from '@contextia/domain';
 import type { EvaluationDomain, GuardUserState } from '../application/evaluationDomain.js';
 
@@ -27,19 +30,21 @@ export function toGuardState(state: PersistedUserState | null): DeliveryGuardSta
   };
 }
 
-/** Wall-clock seconds elapsed in the local day; on DST transition days this can differ by the shift. */
+/** Actual elapsed seconds since the first instant of the IANA local date, including DST transitions. */
 export function secondsSinceLocalMidnight(now: Date, timezone: string): number {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: timezone, hourCycle: 'h23', hour: '2-digit', minute: '2-digit', second: '2-digit'
-  }).formatToParts(now);
-  const part = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find(value => value.type === type)?.value ?? Number.NaN);
-  const seconds = part('hour') * 3600 + part('minute') * 60 + part('second');
-  if (!Number.isFinite(seconds)) throw new RangeError('Unable to resolve local time of day');
-  return seconds;
+  const day = localDate(now, timezone);
+  let lower = now.getTime() - 48 * 3600 * 1000;
+  let upper = now.getTime();
+  while (lower + 1 < upper) {
+    const middle = Math.floor((lower + upper) / 2);
+    if (localDate(new Date(middle), timezone) < day) lower = middle;
+    else upper = middle;
+  }
+  return Math.floor((now.getTime() - upper) / 1000);
 }
 
 export function createEvaluationDomain(options: { detectors?: readonly TriggerDetector[]; policy?: DeliveryPolicy } = {}): EvaluationDomain {
-  const detectors = options.detectors ?? phase1Detectors;
+  const detectors = options.detectors ?? phase2Detectors;
   const policy = options.policy ?? defaultDeliveryPolicy;
   return {
     checkDeliveryGuards(input) {
@@ -52,17 +57,22 @@ export function createEvaluationDomain(options: { detectors?: readonly TriggerDe
       const window = input.opportunity ? policy.anchorDedupByTrigger[input.opportunity.type] : undefined;
       // A local-day anchor becomes "notified since local midnight" for the seconds-based repository recheck.
       const anchorDedupSeconds = window === 'local-day'
-        ? Math.max(1, secondsSinceLocalMidnight(input.now, result.timezone))
+        // Repository uses a strict cutoff; include an anchor recorded exactly at local midnight.
+        ? secondsSinceLocalMidnight(input.now, result.timezone) + 1
         : window ?? policy.anchorDedupSeconds;
       return {
         shouldEvaluate: result.shouldEvaluate, guardCodes: result.guardCodes,
-        notificationDay: result.notificationDay, maxDailyNotifications: result.maxDailyNotifications, anchorDedupSeconds
+        notificationDay: result.notificationDay, maxDailyNotifications: result.maxDailyNotifications, anchorDedupSeconds,
+        timezone: result.timezone
       };
     },
     async detectCandidates({ context, preferences, now }) {
       const detectorContext = normalizeDetectorContext({ context, preferences, clock: { now: () => now }, profileTimezone: preferences.timezone });
-      const found = await Promise.all(detectors.map(detector => detector.detect(detectorContext)));
-      return found.flat();
+      return detectCandidates(detectorContext, detectors);
+    },
+    refineCandidates({ context, preferences, now, candidates, evidence }) {
+      const detectorContext = normalizeDetectorContext({ context, preferences, clock: { now: () => now }, profileTimezone: preferences.timezone });
+      return refineCandidates({ context: detectorContext, candidates, evidence }).candidates;
     }
   };
 }
