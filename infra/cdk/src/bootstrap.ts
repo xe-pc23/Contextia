@@ -64,6 +64,7 @@ export function stageBootstrapTemplate(stage: 'dev' | 'prod') {
   const roleResources = [`arn:aws:iam::${account}:role/${prefix}-*`, `arn:aws:iam::${account}:role/${githubRole}`];
   const stageTags = { StringEquals: { 'aws:ResourceTag/project': 'contextia', 'aws:ResourceTag/stage': stage } };
   const policies: Statement[] = [
+    allow(['ssm:GetParameter', 'ssm:GetParameters'], [arn('ssm', `parameter/cdk-bootstrap/${qualifier}/version`)]),
     allow(operations('iam', ['CreateRole', 'DeleteRole', 'GetRole', 'UpdateRole', 'UpdateRoleDescription', 'UpdateAssumeRolePolicy', 'PutRolePolicy', 'DeleteRolePolicy', 'GetRolePolicy', 'ListRolePolicies', 'ListAttachedRolePolicies', 'TagRole', 'UntagRole']), roleResources),
     allow(operations('iam', ['AttachRolePolicy', 'DetachRolePolicy']), roleResources, { ArnEquals: { 'iam:PolicyARN': 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole' } }),
     allow(['iam:PassRole'], [roleResources[0] as string], { StringEquals: { 'iam:PassedToService': 'lambda.amazonaws.com' } }),

@@ -25,4 +25,9 @@ describe.each(['dev', 'prod'] as const)('%s stage bootstrap', stage => {
     const actions = policies.flatMap(policy => policy.PolicyDocument.Statement.flatMap(statement => statement.Action));
     expect(actions.some(action => action.includes('*'))).toBe(false);
   });
+  it('lets CloudFormation resolve only the selected bootstrap SSM version parameter', () => {
+    const role = JSON.stringify(stageBootstrapTemplate(stage).Resources.CloudFormationExecutionRole);
+    expect(role).toContain('ssm:GetParameters');
+    expect(role).toContain(`/cdk-bootstrap/${stage === 'dev' ? 'ctiadev' : 'ctiaprod'}/version`);
+  });
 });
