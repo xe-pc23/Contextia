@@ -112,13 +112,13 @@ export class ContextiaCoreStack extends Stack {
 
     // The owner bootstraps the GitHub OIDC provider and stage-specific CDK roles first.
     const oidcProvider = `arn:${this.partition}:iam::${target.account}:oidc-provider/token.actions.githubusercontent.com`;
-    const repositorySubject = 'repo:xe-pc23/Contextia';
+    // GitHub's immutable subject prefix, verified through the repository OIDC settings.
+    const repositorySubject = 'repo:xe-pc23@208585459/Contextia@1395735696';
     const deployRole = new Role(this, 'GitHubDeployRole', {
       roleName: isDev ? 'GitHubDevDeployRole' : 'GitHubProdDeployRole',
       assumedBy: new FederatedPrincipal(oidcProvider, {
         StringEquals: { 'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com',
-          ...(!isDev ? { 'token.actions.githubusercontent.com:sub': `${repositorySubject}:environment:prod` } : {}) },
-        ...(isDev ? { StringLike: { 'token.actions.githubusercontent.com:sub': [`${repositorySubject}:environment:dev`, `${repositorySubject}:ref:refs/heads/feature/*`] } } : {})
+          'token.actions.githubusercontent.com:sub': `${repositorySubject}:environment:${target.stage}` }
       }, 'sts:AssumeRoleWithWebIdentity')
     });
     const qualifier = isDev ? 'ctiadev' : 'ctiaprod';
@@ -182,7 +182,7 @@ export class ContextiaCoreStack extends Stack {
       assumedBy: new ServicePrincipal('lambda.amazonaws.com')
     });
     logs.grantWrite(apiRole);
-    apiRole.addToPolicy(new PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:Query', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:ConditionCheckItem'], resources: [table.tableArn] }));
+    apiRole.addToPolicy(new PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:Query', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem', 'dynamodb:ConditionCheckItem'], resources: [table.tableArn] }));
     apiRole.addToPolicy(new PolicyStatement({ actions: ['geo-places:SearchNearby', 'geo-places:GetPlace', 'geo-places:Geocode'], resources: [`arn:${this.partition}:geo-places:${target.region}::provider/default`] }));
     apiRole.addToPolicy(new PolicyStatement({ actions: ['geo-routes:CalculateRoutes'], resources: [`arn:${this.partition}:geo-routes:${target.region}::provider/default`] }));
     apiRole.addToPolicy(new PolicyStatement({ actions: ['bedrock:InvokeModel'], resources: modelResources.valueAsList }));
@@ -207,7 +207,7 @@ export class ContextiaCoreStack extends Stack {
         BEDROCK_STRUCTURED_OUTPUT: 'true',
         WEATHER_ENDPOINT: 'https://api.open-meteo.com/v1/forecast',
         STATE_TIMEOUT_MS: '1500', PLACES_TIMEOUT_MS: '2500', WEATHER_TIMEOUT_MS: '2000', ROUTES_TIMEOUT_MS: '3000', MODEL_TIMEOUT_MS: '7000',
-        ENRICHMENT_TIMEOUT_MS: '7000', MAX_ROUTE_PLACES: '6', ROUTE_CONCURRENCY: '4', EVENT_ROUTE_MODE: 'transit',
+        ENRICHMENT_TIMEOUT_MS: '7000', EVALUATION_TIMEOUT_MS: '20000', MAX_ROUTE_PLACES: '6', ROUTE_CONCURRENCY: '4', EVENT_ROUTE_MODE: 'transit',
         CONTEXT_TTL_SECONDS: '86400', RECOMMENDATION_TTL_SECONDS: '604800', CONVERSATION_TTL_SECONDS: '7200', IDEMPOTENCY_TTL_SECONDS: '3600'
       },
       depsLockFilePath: join(root, 'pnpm-lock.yaml'),

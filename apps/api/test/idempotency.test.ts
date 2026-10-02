@@ -15,7 +15,7 @@ const cached = EvaluationResultSchema.parse({ evaluationId: 'eval-cached', recom
 });
 
 const existing = (responsePointer: string | null = cached.evaluationId, expiresAt = NOW.getTime() / 1000 + 3600) => ({
-  status: 'existing' as const, record: { key, requestHash: evaluationRequestHash('user-1', context), responsePointer, expiresAt, createdAt: NOW.toISOString() }
+  status: 'existing' as const, record: { key, claimId: 'ad0c96a2-5b29-4be3-9208-d4e76265ec0a', requestHash: evaluationRequestHash('user-1', context), responsePointer, expiresAt, createdAt: NOW.toISOString() }
 });
 describe('evaluation idempotency', () => {
   it('scopes the canonical hash to the user and every input field', () => {
@@ -46,9 +46,9 @@ describe('evaluation idempotency', () => {
     expect(state.commitProactiveRecommendation).not.toHaveBeenCalled();
     expect(state.getIdempotencyResponse).toHaveBeenCalledWith(expect.objectContaining({ userId: 'user-1', nowEpochSeconds: NOW.getTime() / 1000 }));
   });
-  it.each([existing(null), existing(cached.evaluationId, NOW.getTime() / 1000)])('refuses pending or expired records', async data => {
+  it.each([[existing(null), 'IDEMPOTENCY_IN_PROGRESS'], [existing(cached.evaluationId, NOW.getTime() / 1000), 'STATE_UNAVAILABLE']] as const)('refuses pending or inconsistently expired records', async (data, code) => {
     const state = repository(); state.claimIdempotency.mockResolvedValue(ok(data));
-    await expect(claimEvaluation({ state, userId: 'user-1', context, key, now: NOW, ttlSeconds: 3600 })).rejects.toMatchObject({ code: 'IDEMPOTENCY_IN_PROGRESS' });
+    await expect(claimEvaluation({ state, userId: 'user-1', context, key, now: NOW, ttlSeconds: 3600 })).rejects.toMatchObject({ code });
   });
   it('refuses a reused key with a different request and a cache pointing at another result', async () => {
     const state = repository(); state.claimIdempotency.mockResolvedValue(ok(existing()));

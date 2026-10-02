@@ -26,6 +26,7 @@ export function composeRuntime(env: Record<string, string | undefined>, log: (en
     placesTimeoutMs: config.placesTimeoutMs, weatherTimeoutMs: config.weatherTimeoutMs,
     routesTimeoutMs: config.routesTimeoutMs, modelTimeoutMs: config.modelTimeoutMs,
     enrichmentTimeoutMs: config.enrichmentTimeoutMs, maxRoutePlaces: config.maxRoutePlaces,
+    evaluationTimeoutMs: config.evaluationTimeoutMs,
     routeConcurrency: config.routeConcurrency, eventRouteMode: config.eventRouteMode,
     contextTtlSeconds: config.contextTtlSeconds, recommendationTtlSeconds: config.recommendationTtlSeconds,
     idempotencyTtlSeconds: config.idempotencyTtlSeconds

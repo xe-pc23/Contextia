@@ -239,7 +239,12 @@ Implemented in Phase 2-D: BucketDeployment inside `contextia-{stage}-core`; cred
 
 ### Owner bootstrap and parameters
 
-Before the first deployment, the owner must create the account's GitHub OIDC provider (`token.actions.githubusercontent.com`, audience `sts.amazonaws.com`) and protect the GitHub environments. **Prod environment deployment branches must allow only `main`**; require owner review where available. GitHub's environment OIDC subject omits the branch, so this environment setting is essential in addition to the workflow and script main checks. Dev trust allows only this repository's dev environment or feature branch subjects; prod trust accepts only `repo:xe-pc23/Contextia:environment:prod`.
+Before the first deployment, the owner must create the account's GitHub OIDC provider (`token.actions.githubusercontent.com`, audience `sts.amazonaws.com`) and protect the GitHub environments. **Prod environment deployment branches must allow only `main`**; require owner review where available. GitHub's environment OIDC subject omits the branch, so this environment setting is essential in addition to the workflow and script main checks. The repository OIDC API confirmed `use_immutable_subject=true` and `sub_claim_prefix=repo:xe-pc23@208585459/Contextia@1395735696` on 2026-10-02. Each CDK role uses StringEquals for exactly this prefix plus `:environment:dev` or `:environment:prod`. Dev no longer trusts feature-branch subjects. See [GitHub's AWS OIDC guidance](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-aws).
+
+The workflow's credential-free `authorize` job fails if prod is requested outside
+main or by anyone other than the repository owner. Deploy requires both
+authorization and validation, so an invalid dispatch is visibly failed rather
+than reported as a successful skipped deployment.
 
 Core stacks now use separate CDK bootstrap qualifiers: `ctiadev` and `ctiaprod`. The owner bootstraps both in `634512763705/ap-northeast-1` with stage-appropriate CloudFormation execution policies and inspects the change before deployment. Existing `hnb659fds` bootstrap resources are not reused or modified automatically. Each GitHub role can assume only its stage's CDK deploy/file-publishing roles and read that stage's core outputs. Initial core deployment is performed by the owner because it creates the GitHub roles themselves. No bootstrap or IAM change has been performed by D.
 

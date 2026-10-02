@@ -8,6 +8,7 @@ import { phase2Detectors } from '@contextia/domain';
 import { createEvaluateContext, defaultEvaluationPolicy } from '../src/application/evaluateContext.js';
 import { createEvaluationDomain } from '../src/composition/evaluationDomain.js';
 import { publicPlace, publicRoute } from '../src/application/references.js';
+import { createRequestHandler } from '../src/handler.js';
 import { NOW, ok, repository } from './support/repository.js';
 
 const samePoint = (a: { latitude: number; longitude: number }, b: { latitude: number; longitude: number }) => a.latitude === b.latitude && a.longitude === b.longitude;
@@ -50,7 +51,7 @@ function setup(fixture: ScenarioFixture, primaryOnly = false) {
   }) };
   let sequence = 0;
   const domain = createEvaluationDomain(primaryOnly ? { detectors: phase2Detectors.filter(value => value.type === fixture.primaryTrigger) } : {});
-  const evaluate = createEvaluateContext({ state, places, geocoding, weather, routes, model, domain, clock: () => NOW, newId: prefix => `${prefix}-${++sequence}` });
+  const evaluate = createEvaluateContext({ state, idempotency: state, places, geocoding, weather, routes, model, domain, clock: () => NOW, newId: prefix => `${prefix}-${++sequence}` });
   return { state, places, geocoding, weather, routes, model, evaluate, order, failStorage: () => { storageFailure = true; } };
 }
 
@@ -133,6 +134,22 @@ describe('Phase 2: five fixtures through the same evaluation pipeline', () => {
     const { evaluate, state } = setup(fixture, true);
     state.commitProactiveRecommendation.mockResolvedValue(ok({ recorded: false, guardCodes: [] }));
     await expect(evaluate({ userId: 'user-1', context: { ...fixture.context, mode: 'real', deliveryMode: 'proactive', location: { ...fixture.context.location, source: 'gps' } } })).rejects.toMatchObject({ code: 'STATE_UNAVAILABLE' });
+  });
+
+  it('returns 409 and releases the claim when the transaction explicitly reports a superseded evaluation', async () => {
+    const fixture = scenarios.find(value => value.id === 'step-goal');
+    if (!fixture) throw new Error('Missing fixture');
+    const { evaluate, state, model } = setup(fixture, true);
+    state.commitProactiveRecommendation.mockResolvedValue(ok({ recorded: false, guardCodes: [], reason: 'superseded' }));
+    const context = { ...fixture.context, mode: 'real', deliveryMode: 'proactive', location: { ...fixture.context.location, source: 'gps' } };
+    const handle = createRequestHandler({ version: 'test', log: vi.fn(), clients: { webClientId: 'web', mobileClientId: 'mobile' }, evaluate });
+    const response = await handle({ method: 'POST', path: '/v1/context/evaluate', requestId: 'req-conflict', claims: { sub: 'user-1', clientId: 'mobile' },
+      body: JSON.stringify(context), idempotencyKey: '1b055bc1-60ee-4f8a-9c80-39427850be5e' });
+    expect(response.statusCode).toBe(409);
+    expect(JSON.parse(response.body)).toMatchObject({ error: { code: 'EVALUATION_SUPERSEDED' } });
+    expect(state.releaseIdempotency).toHaveBeenCalledOnce();
+    expect(state.completeIdempotency).not.toHaveBeenCalled();
+    expect(model.decide).toHaveBeenCalledOnce();
   });
 
   it('uses the specified 1km/30-place discovery bound', () => {

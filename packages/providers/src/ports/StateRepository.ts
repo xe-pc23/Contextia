@@ -58,9 +58,10 @@ export interface ProactiveDeliveryWrite {
   maxRecentAnchors: number;
 }
 export type DeliveryGuardCode = Extract<GuardCode, 'NOTIFICATIONS_DISABLED' | 'DAILY_CAP_REACHED' | 'DUPLICATE_CONTEXT' | 'RECENT_SAME_TRIGGER'>;
-export type DeliveryWriteResult = { recorded: true } | { recorded: false; guardCodes: DeliveryGuardCode[] };
+export type DeliveryWriteResult = { recorded: true } | { recorded: false; guardCodes: DeliveryGuardCode[]; reason?: 'superseded' };
 export interface IdempotencyRecord {
   key: string;
+  claimId: string;
   requestHash: string;
   responsePointer: string | null;
   createdAt: string;
@@ -96,7 +97,9 @@ export interface StateRepository {
   recordProactiveDelivery(input: { userId: string; delivery: ProactiveDeliveryWrite }): Promise<ProviderResult<DeliveryWriteResult>>;
   claimIdempotency(input: { userId: string; record: IdempotencyRecord; nowEpochSeconds: number }): Promise<ProviderResult<IdempotencyClaim>>;
   // The adapter stores a short-lived response reference; referenced selected places must have Storage intent.
-  completeIdempotency(input: { userId: string; key: string; requestHash: string; result: EvaluationResult; storagePlaces: StoragePlace[]; expiresAt: number }): Promise<ProviderResult<null>>;
+  completeIdempotency(input: { userId: string; key: string; claimId: string; requestHash: string; result: EvaluationResult; storagePlaces: StoragePlace[]; expiresAt: number }): Promise<ProviderResult<null>>;
+  // Release only this pending claim; never delete a completed or replacement claim.
+  releaseIdempotency(input: { userId: string; key: string; claimId: string; requestHash: string }): Promise<ProviderResult<null>>;
   getIdempotencyResponse(input: OwnedRead & { key: string; requestHash: string }): Promise<ProviderResult<EvaluationResult | null>>;
   getConversation(input: OwnedRead & { recommendationId: string }): Promise<ProviderResult<ConversationRecord | null>>;
   // Enforce ownership, one conversation, max user turns and expiry atomically.

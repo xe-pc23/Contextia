@@ -37,6 +37,7 @@ export function repository() {
     commitProactiveRecommendation: vi.fn<StateRepository['commitProactiveRecommendation']>(async () => ok({ recorded: true })),
     claimIdempotency: vi.fn<StateRepository['claimIdempotency']>(async () => ok({ status: 'claimed' })),
     completeIdempotency: vi.fn<StateRepository['completeIdempotency']>(async () => ok(null)),
+    releaseIdempotency: vi.fn<StateRepository['releaseIdempotency']>(async () => ok(null)),
     getIdempotencyResponse: vi.fn<StateRepository['getIdempotencyResponse']>(async () => ok(null)),
     getConversation: vi.fn<StateRepository['getConversation']>(async () => ok(null)),
     appendConversationTurn: vi.fn<StateRepository['appendConversationTurn']>(async input => ok({

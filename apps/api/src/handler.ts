@@ -124,7 +124,9 @@ function apiFailure(cause: ApiFailure, requestId: string): Outcome {
     INVALID_CURSOR: { status: 400, message: 'Pagination cursor is invalid.' },
     CHAT_LIMIT_REACHED: { status: 429, message: 'This conversation has reached its message limit.' },
     IDEMPOTENCY_CONFLICT: { status: 409, message: 'This idempotency key belongs to a different request.' },
-    IDEMPOTENCY_IN_PROGRESS: { status: 409, message: 'This evaluation is still in progress.' }
+    IDEMPOTENCY_IN_PROGRESS: { status: 409, message: 'This evaluation is still in progress.' },
+    EVALUATION_SUPERSEDED: { status: 409, message: 'A newer evaluation or preference update superseded this evaluation.' },
+    EVALUATION_TIMEOUT: { status: 503, message: 'The evaluation deadline was exceeded.' }
   };
   const value = mapping[cause.code];
   return error(value.status, requestId, cause.code, value.message);

@@ -352,6 +352,7 @@ Example:
   "PK": "IDEMPOTENCY#abc",
   "SK": "KEY#550e8400-e29b-41d4-a716-446655440000",
   "entityType": "Idempotency",
+  "claimId": "a21378cb-5364-408f-991a-52620764ae67",
   "requestHash": "sha256:...",
   "responsePointer": "eval_123",
   "expiresAt": 1790758800,
@@ -367,6 +368,15 @@ TTL:
 - 1 hour is sufficient.
 
 A newly claimed key may have an absent/null `responsePointer` while evaluation is in progress. Claim the key atomically with its request hash. On completion, the pointer identifies a user-owned `USER#{userId} / EVALUATION_RESULT#{evaluationId}` item containing the normalized evaluation result and the same logical expiry. Exclude the HTTP envelope's request ID; each replay receives its own request ID. Complete the result and pointer atomically, and verify ownership, request hash and expiry before replay. If the cached result contains selected places, their persisted fields must come from Storage-intent `GetPlace`; SingleUse enrichments are transient. This storage layout supports the Phase 2 idempotency port; no repository adapter is implemented in Phase 0.
+
+Phase 2-D implements this adapter. `claimId` is a UUID unique to each claim;
+`attribute_not_exists(PK) OR expiresAt <= now` allows atomic reclamation of expired
+records before TTL deletion. Completion checks claimId, requestHash, pending
+pointer and expiry, then writes the result and pointer in one transaction. A
+conditional delete releases only the matching pending claim. Completed or
+replacement claims cannot be deleted/completed by a stale request. Discovery
+place facts that differ from the supplied Storage result are rejected before
+cache persistence.
 
 ## 11. Access patterns and indexes
 
@@ -409,7 +419,7 @@ The seconds-based repository port receives elapsed real UTC seconds since the st
 
 Idempotency and conversation application services are connected to the existing ports. One-hour idempotency completion supplies only Storage-backed selected place data and excludes the HTTP requestId. Chat uses a fixed two-hour conversation expiry, bounded by recommendation expiry, with an atomic eight-user-turn limit. Owned/expired recommendation checks happen before profile/history/model access. Expired or absent snapshots provide context=null; simulation snapshots also provide null because the current snapshot port does not retain scenarioTime. No scenario clock or current location is reconstructed from missing data.
 
-B Phase 1 still returns `NOT_IMPLEMENTED` for idempotency/conversation operations and Bedrock followUp. These layouts and D doubles do not prove persistence on AWS; B Phase 2 adapter implementation and owner dev smoke are required.
+B Phase 1 still returns `NOT_IMPLEMENTED` for conversation operations and Bedrock followUp. D's review fix implements idempotency claim/complete/replay/release and corrects unused proactive transaction expression attributes. Both same-day and rollover commits, one delivery under concurrency, and idempotency ownership/expiry/CAS were verified with a temporary DynamoDB Local database. This does not prove persistence or IAM on AWS; the remaining B Phase 2 adapters and owner dev smoke are required.
 
 ## 13. Data minimization table
 

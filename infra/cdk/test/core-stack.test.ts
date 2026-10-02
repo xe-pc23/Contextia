@@ -147,7 +147,7 @@ describe.each(stages)('%s core stack', (stage) => {
   it('restricts runtime provider/model access to the stage table and explicit provider resources', () => {
     template.hasResourceProperties('AWS::IAM::Policy', {
       PolicyDocument: { Statement: Match.arrayWith([
-        Match.objectLike({ Action: ['dynamodb:GetItem', 'dynamodb:Query', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:ConditionCheckItem'], Resource: Match.anyValue() }),
+        Match.objectLike({ Action: ['dynamodb:GetItem', 'dynamodb:Query', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem', 'dynamodb:ConditionCheckItem'], Resource: Match.anyValue() }),
         Match.objectLike({ Action: ['geo-places:SearchNearby', 'geo-places:GetPlace', 'geo-places:Geocode'], Resource: Match.anyValue() }),
         Match.objectLike({ Action: 'geo-routes:CalculateRoutes', Resource: Match.anyValue() }),
         Match.objectLike({ Action: 'bedrock:InvokeModel', Resource: { Ref: 'BedrockModelResources' } })
@@ -171,8 +171,10 @@ describe.each(stages)('%s core stack', (stage) => {
     const roles = template.findResources('AWS::IAM::Role', { Properties: { RoleName: isDev ? 'GitHubDevDeployRole' : 'GitHubProdDeployRole' } });
     const policy = JSON.stringify(Object.values(roles)[0]);
     expect(policy).toContain('sts:AssumeRoleWithWebIdentity');
-    expect(policy).toContain(`repo:xe-pc23/Contextia:environment:${stage}`);
-    if (!isDev) expect(policy).not.toContain('feature/*');
+    expect(policy).toContain(`repo:xe-pc23@208585459/Contextia@1395735696:environment:${stage}`);
+    expect(policy).not.toContain('feature/*');
+    expect(policy).not.toContain('StringLike');
+    expect(policy).not.toContain(`:environment:${isDev ? 'prod' : 'dev'}`);
     template.hasResourceProperties('AWS::IAM::Policy', { PolicyDocument: { Statement: Match.arrayWith([
       Match.objectLike({ Action: 'sts:AssumeRole', Resource: Match.anyValue() })
     ]) } });

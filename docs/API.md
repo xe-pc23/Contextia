@@ -734,6 +734,29 @@ Idempotency-Key: <uuid>
 
 Server stores a short-lived idempotency record for mutating evaluation requests.
 
+The record is scoped to the authenticated user, operation and normalized request
+hash. An unexpired completed key replays the same evaluation with a fresh HTTP
+request ID; a different request returns `409 IDEMPOTENCY_CONFLICT`, and an active
+pending claim returns `409 IDEMPOTENCY_IN_PROGRESS`. Logically expired keys are
+reclaimed atomically without waiting for DynamoDB TTL deletion.
+
+Failures before the first persistence write release only the request's pending
+claim, permitting a retry with the same key. An explicitly rejected proactive
+transaction also permits release. A write with an uncertain outcome keeps its
+claim reserved; it must not be blindly retried and potentially delivered twice.
+
+An evaluation superseded by a concurrent context/preference transaction returns
+`409 EVALUATION_SUPERSEDED`. This is a conflict, not a transient failure to retry
+automatically. The existing response/guard schemas are unchanged; no synthetic
+guard code is added. Unclassified storage failures still return `503
+STATE_UNAVAILABLE`.
+
+The evaluation shares one monotonic 20-second budget across all stages, including
+result persistence and idempotency completion. Exhaustion returns `503
+EVALUATION_TIMEOUT`; no later pipeline stage is started. Pre-write claim cleanup
+has a separate maximum two-second budget. In-flight adapter calls retain their
+own bounded timeout/abort.
+
 Additionally compute:
 ```text
 contextFingerprint = hash(
@@ -758,7 +781,7 @@ Exact hashing details may evolve, but the fingerprint must not contain raw PII.
 | 401 | missing/invalid token |
 | 403 | authenticated but not authorized |
 | 404 | missing/expired/not owned |
-| 409 | idempotency conflict where applicable |
+| 409 | idempotency conflict/in-progress, or superseded evaluation |
 | 429 | throttled |
 | 500 | unexpected internal failure |
 | 502 | critical upstream failure |

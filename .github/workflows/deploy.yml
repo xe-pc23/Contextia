@@ -10,11 +10,31 @@ on:
 permissions:
   contents: read
 jobs:
+  authorize:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Authorize deployment request
+        shell: bash
+        env:
+          REQUESTED_STAGE: ${{ inputs.stage }}
+          REQUESTED_REF: ${{ github.ref }}
+          REQUESTED_ACTOR: ${{ github.actor }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+        run: |
+          case "$REQUESTED_STAGE" in
+            dev) ;;
+            prod)
+              if [ "$REQUESTED_REF" != 'refs/heads/main' ] || [ "$REQUESTED_ACTOR" != "$REPOSITORY_OWNER" ]; then
+                echo '::error::Production requires main and the repository owner.'
+                exit 1
+              fi
+              ;;
+            *) echo '::error::Unknown deployment stage.'; exit 1 ;;
+          esac
   validate:
     uses: ./.github/workflows/validate.yml
   deploy:
-    needs: validate
-    if: inputs.stage == 'dev' || (github.ref == 'refs/heads/main' && github.actor == github.repository_owner)
+    needs: [authorize, validate]
     environment: ${{ inputs.stage }}
     concurrency:
       group: contextia-deploy-${{ inputs.stage }}

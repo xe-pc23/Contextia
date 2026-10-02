@@ -393,6 +393,13 @@ Suggested provider timeout budget:
 - Routes: 3.0 s
 - Bedrock: 7.0 s
 
+Phase 2-D additionally applies a shared monotonic 20-second evaluation deadline to
+repository reads, enrichment, model, selected Storage lookups, recommendation
+writes and idempotency completion. Later stages do not start after exhaustion.
+Pending-claim cleanup before a write has at most two extra seconds. The deployed
+Lambda retains a 28-second hard timeout to leave room for bounded in-flight
+adapter calls; the application budget follows the 15–20-second target below.
+
 Overall Lambda timeout: 15–20 s.
 
 ## 8. Trigger architecture
@@ -626,6 +633,13 @@ Restrict GitHub OIDC role by:
 - branch/environment where possible
 
 Prod role must not be assumable from arbitrary feature branches.
+
+The repository uses immutable GitHub OIDC subjects. Both roles require the exact
+verified prefix `repo:xe-pc23@208585459/Contextia@1395735696` and their respective
+`:environment:dev` / `:environment:prod` suffix, with audience `sts.amazonaws.com`.
+There is no feature-branch subject alternative. GitHub Environment protection
+must restrict prod to main. Invalid prod dispatches fail an authorization job
+before the credentialed deploy job can run.
 
 ## 15. Coding agent → AWS connection
 

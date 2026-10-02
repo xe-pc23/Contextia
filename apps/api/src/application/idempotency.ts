@@ -1,11 +1,14 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { EvaluationResultSchema } from '@contextia/contracts';
 import type { ContextInput, EvaluationResult } from '@contextia/contracts';
 import type { StateRepository, StoragePlace } from '@contextia/providers';
 import { ApiFailure } from './apiFailure.js';
 
-export type IdempotencyRepository = Pick<StateRepository, 'claimIdempotency' | 'completeIdempotency' | 'getIdempotencyResponse'>;
-type Claim = { replay: EvaluationResult } | { complete(result: EvaluationResult, storagePlaces: StoragePlace[]): Promise<EvaluationResult> };
+export type IdempotencyRepository = Pick<StateRepository, 'claimIdempotency' | 'completeIdempotency' | 'getIdempotencyResponse' | 'releaseIdempotency'>;
+type Claim = { replay: EvaluationResult } | {
+  complete(result: EvaluationResult, storagePlaces: StoragePlace[]): Promise<EvaluationResult>;
+  release(): Promise<void>;
+};
 
 function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical);
@@ -26,15 +29,18 @@ export async function claimEvaluation(input: {
   const nowEpochSeconds = Math.floor(now.getTime() / 1000);
   const requestHash = evaluationRequestHash(userId, context);
   const expiresAt = nowEpochSeconds + input.ttlSeconds;
+  const claimId = randomUUID();
   const result = await state.claimIdempotency({
-    userId, nowEpochSeconds, record: { key, requestHash, responsePointer: null, createdAt: now.toISOString(), expiresAt }
+    userId, nowEpochSeconds, record: { key, claimId, requestHash, responsePointer: null, createdAt: now.toISOString(), expiresAt }
   });
   if (result.status !== 'ok' && result.status !== 'degraded') throw new ApiFailure('STATE_UNAVAILABLE');
   if (result.data.status === 'conflict') throw new ApiFailure('IDEMPOTENCY_CONFLICT');
   if (result.data.status === 'existing') {
     const record = result.data.record;
     if (record.requestHash !== requestHash || record.key !== key) throw new ApiFailure('IDEMPOTENCY_CONFLICT');
-    if (record.expiresAt <= nowEpochSeconds || !record.responsePointer) throw new ApiFailure('IDEMPOTENCY_IN_PROGRESS');
+    // Expired records must be reclaimed atomically by the repository, never treated as pending.
+    if (record.expiresAt <= nowEpochSeconds) throw new ApiFailure('STATE_UNAVAILABLE');
+    if (!record.responsePointer) throw new ApiFailure('IDEMPOTENCY_IN_PROGRESS');
     const cached = await state.getIdempotencyResponse({ userId, key, requestHash, nowEpochSeconds });
     if (cached.status !== 'ok' && cached.status !== 'degraded') throw new ApiFailure('STATE_UNAVAILABLE');
     if (!cached.data) throw new ApiFailure('IDEMPOTENCY_IN_PROGRESS');
@@ -44,9 +50,13 @@ export async function claimEvaluation(input: {
   }
   return {
     async complete(result, storagePlaces) {
-      const completed = await state.completeIdempotency({ userId, key, requestHash, result, storagePlaces, expiresAt });
+      const completed = await state.completeIdempotency({ userId, key, claimId, requestHash, result, storagePlaces, expiresAt });
       if (completed.status !== 'ok' && completed.status !== 'degraded') throw new ApiFailure('STATE_UNAVAILABLE');
       return result;
+    },
+    async release() {
+      const released = await state.releaseIdempotency({ userId, key, claimId, requestHash });
+      if (released.status !== 'ok' && released.status !== 'degraded') throw new ApiFailure('STATE_UNAVAILABLE');
     }
   };
 }
