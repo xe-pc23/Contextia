@@ -1,7 +1,7 @@
 import { CandidateOpportunitySchema } from '@contextia/contracts';
 import type { CandidateOpportunity, DetectorPolicy } from '@contextia/contracts';
 import { localDate } from '../context/timezone.js';
-import { calendarWindow, evaluationMillis, hasEventLocation, MINUTE_MS } from './calendar.js';
+import { activityDeadlines, calendarWindow, evaluationMillis, hasEventLocation, MINUTE_MS } from './calendar.js';
 import type { DetectorContext } from './detectorContext.js';
 
 export function generateUpcomingEventTransitCandidates(input: DetectorContext, policy: Readonly<DetectorPolicy>): CandidateOpportunity[] {
@@ -14,7 +14,10 @@ export function generateUpcomingEventTransitCandidates(input: DetectorContext, p
     type: 'UPCOMING_EVENT_TRANSIT', confidence: 1, anchorKey: event.id,
     requiredSignals: ['time', 'location', 'calendar', 'transit'],
     providerNeeds: ['geocode-event-location', 'route-to-next-event'],
-    facts: { eventId: event.id, eventStartAt: event.startAt, minutesUntilEvent }
+    facts: {
+      eventId: event.id, eventStartAt: event.startAt, minutesUntilEvent,
+      routeArriveBy: new Date(Date.parse(event.startAt) - policy.arrivalBufferMinutes * MINUTE_MS).toISOString()
+    }
   })];
 }
 
@@ -26,6 +29,7 @@ export function generateFreeTimeNearbyCandidates(input: DetectorContext, policy:
     window.nextEvent ? Date.parse(window.nextEvent.startAt) : Number.POSITIVE_INFINITY);
   const availableMinutes = (end - now) / MINUTE_MS;
   if (availableMinutes < policy.minimumGapMinutes) return [];
+  const deadlines = activityDeadlines(input, policy, window.nextEvent);
   const day = localDate(input.evaluationAt, input.timezone);
   // Request optional weather/routing to improve assessment; missing results do not erase the gap.
   const providerNeeds: CandidateOpportunity['providerNeeds'] = ['places-near-current', 'weather-current', 'route-to-place-candidates'];
@@ -35,7 +39,11 @@ export function generateFreeTimeNearbyCandidates(input: DetectorContext, policy:
     anchorKey: `gap:${JSON.stringify([window.previousEventId ?? null, window.nextEvent?.id ?? null, window.previousEventId === undefined ? day : null])}`,
     requiredSignals: ['time', 'location', 'calendar', 'places', 'preferences'],
     providerNeeds,
-    facts: { availableMinutes, gapEndsAt: new Date(end).toISOString(), nextEventId: window.nextEvent?.id ?? null }
+    facts: {
+      availableMinutes, gapEndsAt: new Date(end).toISOString(), nextEventId: window.nextEvent?.id ?? null,
+      activityDeadlineAt: new Date(deadlines.activityDeadlineAt).toISOString(),
+      returnDeadlineAt: new Date(deadlines.returnDeadlineAt).toISOString()
+    }
   })];
 }
 
@@ -53,7 +61,7 @@ export function generateWeatherAdaptationCandidates(input: DetectorContext): Can
 export function generateEarlyArrivalDetourCandidates(input: DetectorContext, policy: Readonly<DetectorPolicy>): CandidateOpportunity[] {
   const window = calendarWindow(input);
   const event = window.nextTimedEvent;
-  if (window.busy || !event || !hasEventLocation(event) || window.ambiguousIds.has(event.id)) return [];
+  if (window.timedBusy || !event || !hasEventLocation(event) || window.ambiguousIds.has(event.id)) return [];
   const availableMinutes = (Date.parse(event.startAt) - evaluationMillis(input)) / MINUTE_MS;
   if (availableMinutes < policy.minimumEarlyArrivalMinutes || availableMinutes > policy.upcomingEventHorizonMinutes) return [];
   return [CandidateOpportunitySchema.parse({

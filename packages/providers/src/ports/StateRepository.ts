@@ -48,6 +48,7 @@ export interface ProactiveDeliveryWrite {
   recommendationId: string;
   notificationDay: string;
   notificationsEnabled: boolean;
+  notificationFrequency: UserPreferences['notificationFrequency'];
   maxDailyNotifications: number;
   contextFingerprint: string;
   triggerType: TriggerType;

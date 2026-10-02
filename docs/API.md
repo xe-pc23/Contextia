@@ -313,7 +313,12 @@ Request:
           "durationMinutes": 34,
           "departAt": "2026-09-30T15:10:00+09:00",
           "arriveAt": "2026-09-30T15:44:00+09:00",
-          "transfers": 1
+          "transfers": 1,
+          "attributions": [{
+            "type": "Disclaimer",
+            "text": "Transit terms",
+            "url": "https://example.com/terms"
+          }]
         },
         "action": {
           "type": "TRANSIT",
@@ -713,6 +718,11 @@ type RecommendationItem = {
     departAt?: string;
     arriveAt?: string;
     transfers?: number;
+    attributions?: Array<{
+      text: string;
+      url?: string;
+      type?: "Disclaimer" | "Tariff";
+    }>;
   } | null;
   action: {
     type: "MAP" | "WEBSITE" | "TRANSIT" | "NONE";

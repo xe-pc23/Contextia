@@ -6,10 +6,15 @@ export const PlaceSchema = GeoPointSchema.extend({
   provider: z.literal('amazon-location'), placeId: OpaqueIdSchema, name: z.string().min(1),
   distanceMeters: z.number().nonnegative().optional()
 });
+export const RouteAttributionSchema = z.strictObject({
+  text: z.string().min(1), url: z.url({ protocol: /^https?$/ }).optional(),
+  type: z.enum(['Disclaimer', 'Tariff']).optional()
+});
 export const RecommendationRouteSchema = z.strictObject({
   mode: RouteModeSchema, durationMinutes: z.number().nonnegative(),
   departAt: TimestampSchema.optional(), arriveAt: TimestampSchema.optional(),
-  transfers: z.number().int().nonnegative().optional()
+  transfers: z.number().int().nonnegative().optional(),
+  attributions: z.array(RouteAttributionSchema).max(30).optional()
 });
 export const ActionSchema = z.strictObject({
   type: z.enum(['MAP', 'WEBSITE', 'TRANSIT', 'NONE']),

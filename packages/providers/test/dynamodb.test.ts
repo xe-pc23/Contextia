@@ -36,6 +36,7 @@ const delivery: ProactiveDeliveryWrite = {
   recommendationId: 'rec-1',
   notificationDay: '2026-10-01',
   notificationsEnabled: true,
+  notificationFrequency: 'normal',
   maxDailyNotifications: 3,
   contextFingerprint: 'sha256:current',
   triggerType: 'FREE_TIME_NEARBY',
@@ -373,6 +374,19 @@ describe('DynamoDbStateRepository', () => {
     });
     expect(pointer?.ConditionExpression).toContain('attribute_not_exists');
     expect(stateUpdate).toBeDefined();
+    const profileCheck = request.input.TransactItems.find(item => 'ConditionCheck' in item);
+    if (!profileCheck || !('ConditionCheck' in profileCheck)) throw new Error('Expected profile condition');
+    expect(profileCheck.ConditionCheck.ConditionExpression).toContain('#notificationFrequency = :frequency');
+    expect(profileCheck.ConditionCheck.ExpressionAttributeValues).toMatchObject({ ':frequency': 'normal' });
+  });
+
+  it('suppresses a stale evaluation after notification frequency changes', async () => {
+    const fake = fakeClient([{ Item: storedProfile('user-1', { ...preferences, notificationFrequency: 'low' }) }]);
+    const result = await repository(fake.client).commitProactiveRecommendation({
+      userId: 'user-1', recommendation: recommendation(), delivery
+    });
+    expect(result).toMatchObject({ status: 'ok', data: { recorded: false, reason: 'superseded' } });
+    expect(fake.requests.map(request => request.operation)).toEqual(['get']);
   });
 
   it('classifies a confirmed atomic conditional race without persisting the recommendation', async () => {

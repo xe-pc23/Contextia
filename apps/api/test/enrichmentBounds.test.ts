@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { CandidateOpportunity, ProviderResult, RouteSummary } from '@contextia/contracts';
 import type { PlacesProvider, RouteProvider } from '@contextia/providers';
-import { getScenarioInput } from '@contextia/test-fixtures';
+import { freeTime, getScenarioInput, upcomingTransit } from '@contextia/test-fixtures';
 import { enrichCandidates } from '../src/application/enrichCandidates.js';
 import { defaultEvaluationPolicy } from '../src/application/evaluateContext.js';
 import { NOW, ok, place, preferences } from './support/repository.js';
@@ -14,6 +14,46 @@ function places(): PlacesProvider {
   return { searchNearby: vi.fn(async () => ok(pool)), getPlace: vi.fn() };
 }
 describe('provider orchestration bounds', () => {
+  it('uses the transit candidate planning deadline and records the actual route request', async () => {
+    const event = upcomingTransit.context.calendar[0];
+    if (!event) throw new Error('upcoming-transit fixture needs an event');
+    const fixtureRoute = upcomingTransit.providers.routes.data?.[0];
+    if (!fixtureRoute) throw new Error('upcoming-transit fixture needs a route');
+    const routeArriveBy = '2026-10-01T15:47:00+09:00';
+    const transitCandidate: CandidateOpportunity = {
+      type: 'UPCOMING_EVENT_TRANSIT', confidence: 1, anchorKey: event.id,
+      requiredSignals: ['time', 'location', 'calendar', 'transit'],
+      providerNeeds: ['geocode-event-location', 'route-to-next-event'],
+      facts: { eventId: event.id, routeArriveBy }
+    };
+    const routes = { getRoute: vi.fn<RouteProvider['getRoute']>(async () => ok(fixtureRoute)) };
+    const result = await enrichCandidates({ context: upcomingTransit.context,
+      evaluationAt: new Date(upcomingTransit.context.scenarioTime ?? upcomingTransit.context.capturedAt), preferences: upcomingTransit.preferences,
+      candidates: [transitCandidate], providers: {
+        places: places(), routes, geocoding: { geocode: vi.fn(async () => upcomingTransit.providers.geocoding) }
+      }, policy: defaultEvaluationPolicy });
+    expect(routes.getRoute).toHaveBeenCalledWith(expect.objectContaining({ arriveBy: routeArriveBy }));
+    expect(result.enrichment.routes[0]?.arriveBy).toBe(routeArriveBy);
+  });
+  it('uses the activity candidate return deadline for the journey to the next event', async () => {
+    const event = freeTime.context.calendar[0];
+    if (!event) throw new Error('free-time fixture needs an event');
+    const returnDeadlineAt = '2026-10-01T15:42:00+09:00';
+    const activityCandidate: CandidateOpportunity = {
+      type: 'FREE_TIME_NEARBY', confidence: 0.75, anchorKey: 'gap',
+      requiredSignals: ['time', 'location', 'calendar', 'places', 'preferences'],
+      providerNeeds: ['places-near-current', 'route-to-place-candidates', 'geocode-event-location'],
+      facts: { nextEventId: event.id, activityDeadlineAt: returnDeadlineAt, returnDeadlineAt }
+    };
+    const routes = { getRoute: vi.fn<RouteProvider['getRoute']>(async () => ({ status: 'unavailable', data: null })) };
+    await enrichCandidates({ context: freeTime.context,
+      evaluationAt: new Date(freeTime.context.scenarioTime ?? freeTime.context.capturedAt), preferences: freeTime.preferences,
+      candidates: [activityCandidate], providers: {
+        places: { searchNearby: vi.fn(async () => freeTime.providers.places), getPlace: vi.fn() },
+        routes, geocoding: { geocode: vi.fn(async () => freeTime.providers.geocoding) }
+      }, policy: defaultEvaluationPolicy });
+    expect(routes.getRoute).toHaveBeenCalledWith(expect.objectContaining({ arriveBy: new Date(returnDeadlineAt).toISOString() }));
+  });
   it('limits route places and concurrent calls while retaining both travel directions', async () => {
     let running = 0; let maximum = 0; let sequence = 0;
     const routes = { getRoute: vi.fn<RouteProvider['getRoute']>(async request => {

@@ -15,12 +15,17 @@ export function publicRoute(route: RouteSummary): RecommendationRoute {
     mode: route.mode, durationMinutes: route.durationMinutes,
     ...(route.departAt === undefined ? {} : { departAt: route.departAt }),
     ...(route.arriveAt === undefined ? {} : { arriveAt: route.arriveAt }),
-    ...(route.transfers === undefined ? {} : { transfers: route.transfers })
+    ...(route.transfers === undefined ? {} : { transfers: route.transfers }),
+    ...(route.attributions === undefined ? {} : { attributions: route.attributions })
   });
 }
 
 export function suppliedPlaces(enrichment: ProviderEnrichment): Map<string, ProviderPlace> {
-  return new Map(enrichment.places.flatMap(entry => entry.result.data ?? []).map(place => [place.placeId, place]));
+  // The model also receives confirmed event destinations from Geocode. Prefer richer Places data on duplicate IDs.
+  return new Map<string, ProviderPlace>([
+    ...enrichment.geocoding.flatMap(entry => entry.result.data ?? []).map(place => [place.placeId, place] as const),
+    ...enrichment.places.flatMap(entry => entry.result.data ?? []).map(place => [place.placeId, place] as const)
+  ]);
 }
 
 export function suppliedRoutes(enrichment: ProviderEnrichment): RouteSummary[] {

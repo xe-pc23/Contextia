@@ -332,7 +332,8 @@ export function createEvaluateContext(deps: EvaluationDependencies): EvaluateCon
         if (activeKeys.size > policy.maxRecentAnchors || policy.maxRecentAnchors < chosen.guard.maxDailyNotifications) throw new EvaluationFailure('STATE_UNAVAILABLE');
         const committed = await deadline.run(() => deps.state.commitProactiveRecommendation({ userId, recommendation, delivery: {
           deliveryMode: 'proactive', evaluationId, recommendationId, notificationDay: chosen.guard.notificationDay,
-          notificationsEnabled: preferences.notificationsEnabled, maxDailyNotifications: chosen.guard.maxDailyNotifications,
+          notificationsEnabled: preferences.notificationsEnabled, notificationFrequency: preferences.notificationFrequency,
+          maxDailyNotifications: chosen.guard.maxDailyNotifications,
           contextFingerprint: fingerprint, triggerType: chosen.candidate.type, anchorKey: chosen.candidate.anchorKey,
           at: now.toISOString(), contextDedupSeconds: policy.contextDedupSeconds, anchorDedupSeconds: chosen.guard.anchorDedupSeconds,
           maxRecentAnchors: policy.maxRecentAnchors

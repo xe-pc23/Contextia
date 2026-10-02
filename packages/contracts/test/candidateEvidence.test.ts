@@ -22,6 +22,18 @@ describe('transient candidate evidence', () => {
     expect(CandidateEvidenceSchema.parse(raw).routes[0]?.result.status).toBe('timeout');
   });
 
+  it('validates the arrival-planning timestamp as transient route provenance', () => {
+    const entry = { need: 'route-to-next-event', anchorKey: 'event-1', arriveBy: '2026-10-01T15:50:00+09:00', result: { status: 'timeout', data: null } };
+    expect(CandidateEvidenceSchema.parse({ routes: [entry] }).routes[0]?.arriveBy).toBe(entry.arriveBy);
+    expect(CandidateEvidenceSchema.safeParse({ routes: [{ ...entry, arriveBy: 'not-a-time' }] }).success).toBe(false);
+  });
+
+  it('enforces the current-place anchor while retaining an opaque destination-event anchor', () => {
+    const result = { status: 'not_requested', data: null };
+    expect(CandidateEvidenceSchema.safeParse({ places: [{ need: 'places-near-current', anchorKey: 'different-key', result }] }).success).toBe(false);
+    expect(CandidateEvidenceSchema.safeParse({ places: [{ need: 'places-near-destination', anchorKey: 'opaque:event', result }] }).success).toBe(true);
+  });
+
   it('rejects raw upstream fields and noncanonical operations', () => {
     expect(CandidateEvidenceSchema.safeParse({ rawSdkResponse: {} }).success).toBe(false);
     expect(CandidateEvidenceSchema.safeParse({

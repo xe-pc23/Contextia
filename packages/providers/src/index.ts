@@ -13,3 +13,7 @@ export { AmazonLocationPlacesProvider, createAmazonLocationPlacesProvider } from
 export type { AmazonLocationGetPlaceRequest, AmazonLocationPlacesAdapterOptions, AmazonLocationPlacesClient, AmazonLocationPlacesConfig, AmazonLocationSearchNearbyRequest } from './adapters/places.js';
 export { OpenMeteoWeatherProvider, createOpenMeteoWeatherProvider } from './adapters/weather.js';
 export type { OpenMeteoWeatherAdapterOptions, OpenMeteoWeatherConfig, ProviderClock, WeatherHttpClient, WeatherHttpResponse } from './adapters/weather.js';
+export { AmazonLocationGeocodingProvider, createAmazonLocationGeocodingProvider, defaultGeocodingPolicy } from './adapters/geocoding.js';
+export type { AmazonLocationGeocodeRequest, AmazonLocationGeocodingAdapterOptions, AmazonLocationGeocodingClient, AmazonLocationGeocodingConfig, GeocodingPolicy } from './adapters/geocoding.js';
+export { AmazonLocationRouteProvider, createAmazonLocationRouteProvider } from './adapters/routes.js';
+export type { AmazonLocationCalculateRoutesRequest, AmazonLocationRoutesAdapterOptions, AmazonLocationRoutesClient, AmazonLocationRoutesConfig } from './adapters/routes.js';

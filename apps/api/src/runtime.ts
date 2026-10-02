@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import type { APIGatewayProxyEventV2, APIGatewayProxyEventV2WithJWTAuthorizer } from 'aws-lambda';
 import { parseApiRuntimeConfig } from '@contextia/config';
 import {
-  createAmazonLocationPlacesProvider, createBedrockRecommendationModel,
+  createAmazonLocationGeocodingProvider, createAmazonLocationPlacesProvider, createAmazonLocationRouteProvider,
+  createBedrockRecommendationModel,
   createDynamoDbStateRepository, createOpenMeteoWeatherProvider
 } from '@contextia/providers';
 import { createLambdaHandler } from './handler.js';
@@ -18,6 +19,8 @@ export function composeRuntime(env: Record<string, string | undefined>, log: (en
   const config = parseApiRuntimeConfig(env);
   const state = createDynamoDbStateRepository({ region: config.region, tableName: config.tableName, timeoutMs: config.stateTimeoutMs });
   const places = createAmazonLocationPlacesProvider({ region: config.region, timeoutMs: config.placesTimeoutMs });
+  const geocoding = createAmazonLocationGeocodingProvider({ region: config.region, timeoutMs: config.placesTimeoutMs });
+  const routes = createAmazonLocationRouteProvider({ region: config.region, timeoutMs: config.routesTimeoutMs });
   const weather = createOpenMeteoWeatherProvider({ endpoint: config.weatherEndpoint, timeoutMs: config.weatherTimeoutMs });
   const model = createBedrockRecommendationModel({ region: config.modelRegion, modelId: config.modelId, timeoutMs: config.modelTimeoutMs, structuredOutput: config.structuredOutput });
   const clock = () => new Date();
@@ -37,9 +40,8 @@ export function composeRuntime(env: Record<string, string | undefined>, log: (en
     account: createAccountServices(state, clock),
     chat: createChatWithRecommendation({ state, places, model, clock, newId, modelTimeoutMs: config.modelTimeoutMs,
       placesTimeoutMs: config.placesTimeoutMs, conversationTtlSeconds: config.conversationTtlSeconds }),
-    evaluate: createEvaluateContext({ state, idempotency: state, places, weather, model,
+    evaluate: createEvaluateContext({ state, idempotency: state, places, geocoding, routes, weather, model,
       domain: createEvaluationDomain(), clock, newId, policy })
-    // Geocoding/Routes are optional ports until lane B supplies its Phase 2 adapters.
   };
 }
 

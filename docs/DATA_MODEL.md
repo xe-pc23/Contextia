@@ -301,7 +301,7 @@ Example:
 ```json
 {
   "PK": "RECOMMENDATION#rec_123",
-  "SK": "CHAT#2026-09-30T05:20:00.000Z#msg_1",
+  "SK": "CHAT#2026-09-30T05:20:00.000Z#msg_1#0",
   "entityType": "ChatMessage",
   "userId": "abc",
   "role": "user",
@@ -318,6 +318,8 @@ TTL:
 - no permanent chat history.
 
 Assistant messages also retain the selected, normalized recommendation cards needed to resolve references in the next follow-up turn. User messages do not contain cards. Persisted place fields must come from Storage-intent `GetPlace`, as for the initial recommendation; never store a SingleUse candidate list. Repository reads return owned, unexpired conversation DTOs with these cards, not raw DynamoDB items.
+
+The repository stores each user/assistant pair in one transaction with a condition on the owner's unexpired recommendation pointer and an atomic conversation turn count. The `#0`/`#1` suffix orders the pair. Conversation expiry is fixed when created and bounded by the recommendation expiry; a later chat turn does not extend it. A logically expired metadata item may be replaced before DynamoDB TTL cleanup. Reads filter messages by conversation ID and reject incomplete pairs.
 
 ## 9. DEVICE item
 
@@ -415,11 +417,11 @@ Handle date rollover explicitly.
 
 The API invokes B's `commitProactiveRecommendation` for a single transaction containing recommendation, ID pointer, daily count and anchor. Preview writes snapshot/processing fingerprint and history only; it never calls the proactive commit. The user-local day comes from the same request-start instant and IANA preference timezone throughout the request. The context fingerprint uses capturedAt in real mode and scenarioTime in simulation; its processing timestamp always comes from the server.
 
-The seconds-based repository port receives elapsed real UTC seconds since the start of the local date plus one for STEP_GOAL_REST, including 23/25-hour DST days and an anchor recorded exactly at midnight. D checks that bounded anchor retention has room for every observed current-day/future anchor and at least the daily cap; otherwise it fails closed. A future B port may express this as an explicit local-day policy. **B's current profile transaction condition checks notificationsEnabled/timezone but not a concurrent notificationFrequency change.** Latest-frequency cap recalculation and conditional checking remain a B integration requirement; D does not claim that race is covered.
+The seconds-based repository port receives elapsed real UTC seconds since the start of the local date plus one for STEP_GOAL_REST, including 23/25-hour DST days and an anchor recorded exactly at midnight. D checks that bounded anchor retention has room for every observed current-day/future anchor and at least the daily cap; otherwise it fails closed. A future B port may express this as an explicit local-day policy. The proactive transaction now conditions on the notification frequency used to calculate the cap. If the profile frequency changed during evaluation, the write is rejected as superseded; the next evaluation uses the new cap.
 
 Idempotency and conversation application services are connected to the existing ports. One-hour idempotency completion supplies only Storage-backed selected place data and excludes the HTTP requestId. Chat uses a fixed two-hour conversation expiry, bounded by recommendation expiry, with an atomic eight-user-turn limit. Owned/expired recommendation checks happen before profile/history/model access. Expired or absent snapshots provide context=null; simulation snapshots also provide null because the current snapshot port does not retain scenarioTime. No scenario clock or current location is reconstructed from missing data.
 
-B Phase 1 still returns `NOT_IMPLEMENTED` for conversation operations and Bedrock followUp. D's review fix implements idempotency claim/complete/replay/release and corrects unused proactive transaction expression attributes. Both same-day and rollover commits, one delivery under concurrency, and idempotency ownership/expiry/CAS were verified with a temporary DynamoDB Local database. This does not prove persistence or IAM on AWS; the remaining B Phase 2 adapters and owner dev smoke are required.
+B Phase 2 conversation operations and Bedrock followUp are integrated with D's application service. D's review fix implements idempotency claim/complete/replay/release and corrects unused proactive transaction expression attributes. Both same-day and rollover commits, one delivery under concurrency, and idempotency ownership/expiry/CAS were verified with a temporary DynamoDB Local database. Conversation tests use a mocked DynamoDB client; owner dev smoke is still required to verify live persistence and IAM.
 
 ## 13. Data minimization table
 

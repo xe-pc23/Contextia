@@ -40,6 +40,7 @@ import { z } from 'zod';
 import type {
   ContextReference,
   ContextSnapshot,
+  ConversationMessage,
   ConversationRecord,
   DeliveryWriteResult,
   IdempotencyRecord,
@@ -83,6 +84,7 @@ export interface DynamoDbQueryInput extends DynamoDbExpressionOptions {
   FilterExpression?: string;
   Limit?: number;
   ScanIndexForward?: boolean;
+  ConsistentRead?: boolean;
   ExclusiveStartKey?: DynamoDbKey;
 }
 export type DynamoDbTransactionItem =
@@ -196,7 +198,9 @@ const RecommendationPointerSchema = z.object({
 }).passthrough();
 const DeliveryInputSchema = z.strictObject({
   deliveryMode: z.literal('proactive'), evaluationId: z.string().min(1), recommendationId: z.string().min(1),
-  notificationDay: z.iso.date(), notificationsEnabled: z.boolean(), maxDailyNotifications: z.number().int().min(1).max(100),
+  notificationDay: z.iso.date(), notificationsEnabled: z.boolean(),
+  notificationFrequency: UserPreferencesSchema.shape.notificationFrequency,
+  maxDailyNotifications: z.number().int().min(1).max(100),
   contextFingerprint: z.string().min(1).max(256), triggerType: TriggerTypeSchema, anchorKey: z.string().min(1).max(512),
   at: TimestampSchema, contextDedupSeconds: z.number().int().nonnegative().max(86_400),
   anchorDedupSeconds: z.number().int().nonnegative().max(31 * 86_400), maxRecentAnchors: z.number().int().min(1).max(500)
@@ -222,6 +226,31 @@ const EvaluationItemSchema = z.strictObject({
 });
 const IdempotencyOwnerSchema = z.strictObject({
   userId: UserIdSchema, key: z.uuid(), claimId: z.uuid(), requestHash: z.string().regex(/^[a-f0-9]{64}$/)
+});
+const ConversationItemSchema = z.object({
+  PK: z.string(), SK: z.literal('CONVERSATION'), entityType: z.literal('Conversation'),
+  userId: UserIdSchema, recommendationId: z.string().min(1), conversationId: z.string().min(1),
+  turnCount: z.number().int().min(1).max(8), expiresAt: PositiveEpochSchema,
+  createdAt: TimestampSchema, updatedAt: TimestampSchema, schemaVersion: z.literal(1)
+}).passthrough();
+const ChatMessageBaseSchema = z.object({
+  PK: z.string(), SK: z.string(), entityType: z.literal('ChatMessage'),
+  userId: UserIdSchema, recommendationId: z.string().min(1), conversationId: z.string().min(1),
+  messageId: z.string().min(1), content: z.string().min(1), expiresAt: PositiveEpochSchema,
+  createdAt: TimestampSchema, updatedAt: TimestampSchema, schemaVersion: z.literal(1)
+});
+const ChatMessageItemSchema = z.discriminatedUnion('role', [
+  ChatMessageBaseSchema.extend({ role: z.literal('user') }),
+  ChatMessageBaseSchema.extend({ role: z.literal('assistant'), recommendations: z.array(StorageCardSchema).max(3) })
+]);
+const ConversationOwnerSchema = z.strictObject({
+  userId: UserIdSchema, recommendationId: z.string().min(1), nowEpochSeconds: PositiveEpochSchema
+});
+const AppendConversationSchema = ConversationOwnerSchema.extend({
+  conversationId: z.string().min(1), messageId: z.string().min(1),
+  userMessage: z.string().min(1).max(1000), reply: z.string().min(1).max(4000),
+  recommendations: z.array(StorageCardSchema).max(3), at: TimestampSchema,
+  expiresAt: PositiveEpochSchema, maxUserTurns: z.number().int().min(1).max(8)
 });
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -287,6 +316,10 @@ function contextSortKey(reference: ContextReference): string {
 
 function recommendationSortKey(recommendation: Pick<RecommendationWrite, 'createdAt' | 'id'>): string {
   return `RECOMMENDATION#${canonicalTimestamp(recommendation.createdAt)}#${recommendation.id}`;
+}
+
+function chatSortKey(conversationId: string, at: string, messageId: string, role: 'user' | 'assistant'): string {
+  return `CHAT#${conversationId}#${canonicalTimestamp(at)}#${messageId}#${role === 'user' ? '0' : '1'}`;
 }
 
 function invalidRequest<T>(): ProviderResult<T> {
@@ -395,7 +428,7 @@ function toSnapshot(raw: unknown, expectedPK: string, expectedSK: string): Conte
   };
 }
 
-function projectStorageRecommendations(items: RecommendationWrite['recommendations']): ApiRecommendationItemSchemaType[] | null {
+function projectStorageRecommendations(items: readonly unknown[]): ApiRecommendationItemSchemaType[] | null {
   const projected: ApiRecommendationItemSchemaType[] = [];
   for (const item of items) {
     const parsedItem = StorageCardSchema.safeParse(item);
@@ -815,6 +848,9 @@ export class DynamoDbStateRepository implements StateRepository {
       if (!profile.preferences.notificationsEnabled) {
         return available('ok', { recorded: false, guardCodes: ['NOTIFICATIONS_DISABLED'] }, elapsedSince(startedAt));
       }
+      if (profile.preferences.notificationFrequency !== delivery.notificationFrequency) {
+        return available('ok', { recorded: false, guardCodes: [], reason: 'superseded' }, elapsedSince(startedAt));
+      }
       if (localDateFor(delivery.at, profile.preferences.timezone) !== delivery.notificationDay) return invalidRequest();
 
       const stateResponse = await this.send({ operation: 'get', input: {
@@ -835,11 +871,12 @@ export class DynamoDbStateRepository implements StateRepository {
       await this.send({ operation: 'transactWrite', input: { TransactItems: [
         { ConditionCheck: {
           TableName: this.tableName, Key: { PK: pk, SK: 'PROFILE' },
-          ConditionExpression: '#preferences.#notificationsEnabled = :enabled AND #preferences.#timezone = :timezone',
+          ConditionExpression: '#preferences.#notificationsEnabled = :enabled AND #preferences.#timezone = :timezone AND #preferences.#notificationFrequency = :frequency',
           ExpressionAttributeNames: {
-            '#preferences': 'preferences', '#notificationsEnabled': 'notificationsEnabled', '#timezone': 'timezone'
+            '#preferences': 'preferences', '#notificationsEnabled': 'notificationsEnabled', '#timezone': 'timezone',
+            '#notificationFrequency': 'notificationFrequency'
           },
-          ExpressionAttributeValues: { ':enabled': true, ':timezone': profile.preferences.timezone }
+          ExpressionAttributeValues: { ':enabled': true, ':timezone': profile.preferences.timezone, ':frequency': delivery.notificationFrequency }
         } },
         { Update: stateUpdate },
         { Put: { TableName: this.tableName, Item: items.targetItem, ConditionExpression: 'attribute_not_exists(PK)' } },
@@ -969,6 +1006,9 @@ export class DynamoDbStateRepository implements StateRepository {
       if (!profile.preferences.notificationsEnabled) {
         return available('ok', { recorded: false, guardCodes: ['NOTIFICATIONS_DISABLED'] }, elapsedSince(startedAt));
       }
+      if (profile.preferences.notificationFrequency !== value.notificationFrequency) {
+        return available('ok', { recorded: false, guardCodes: [] }, elapsedSince(startedAt));
+      }
       if (localDateFor(value.at, profile.preferences.timezone) !== value.notificationDay) return invalidRequest();
 
       const stateResponse = await this.send({ operation: 'get', input: { TableName: this.tableName, Key: { PK: pk, SK: 'STATE' }, ConsistentRead: true } });
@@ -998,11 +1038,12 @@ export class DynamoDbStateRepository implements StateRepository {
       await this.send({ operation: 'transactWrite', input: { TransactItems: [
         { ConditionCheck: {
           TableName: this.tableName, Key: { PK: pk, SK: 'PROFILE' },
-          ConditionExpression: '#preferences.#notificationsEnabled = :enabled AND #preferences.#timezone = :timezone',
+          ConditionExpression: '#preferences.#notificationsEnabled = :enabled AND #preferences.#timezone = :timezone AND #preferences.#notificationFrequency = :frequency',
           ExpressionAttributeNames: {
-            '#preferences': 'preferences', '#notificationsEnabled': 'notificationsEnabled', '#timezone': 'timezone'
+            '#preferences': 'preferences', '#notificationsEnabled': 'notificationsEnabled', '#timezone': 'timezone',
+            '#notificationFrequency': 'notificationFrequency'
           },
-          ExpressionAttributeValues: { ':enabled': true, ':timezone': profile.preferences.timezone }
+          ExpressionAttributeValues: { ':enabled': true, ':timezone': profile.preferences.timezone, ':frequency': value.notificationFrequency }
         } },
         { Update: stateUpdate },
         { Update: {
@@ -1143,8 +1184,153 @@ export class DynamoDbStateRepository implements StateRepository {
       return mapFailure(error, elapsedSince(startedAt));
     }
   }
-  async getConversation(input: OwnedRead & { recommendationId: string }): Promise<ProviderResult<ConversationRecord | null>> { return this.unsupported(input); }
-  async appendConversationTurn(input: OwnedRead & { recommendationId: string; conversationId: string; messageId: string; userMessage: string; reply: string; recommendations: StorageRecommendationItem[]; at: string; expiresAt: number; maxUserTurns: number }): Promise<ProviderResult<ConversationRecord>> { return this.unsupported(input); }
+  async getConversation(input: OwnedRead & { recommendationId: string }): Promise<ProviderResult<ConversationRecord | null>> {
+    const startedAt = performance.now();
+    const parsed = ConversationOwnerSchema.safeParse(input);
+    if (!parsed.success) return invalidRequest();
+    const { userId, recommendationId, nowEpochSeconds } = parsed.data;
+    const pk = `RECOMMENDATION#${recommendationId}`;
+    try {
+      const response = await this.send({ operation: 'get', input: {
+        TableName: this.tableName, Key: { PK: pk, SK: 'CONVERSATION' }, ConsistentRead: true
+      } });
+      const raw = itemFromResponse(response);
+      if (raw === undefined) return available('ok', null, elapsedSince(startedAt));
+      const record = mapRecord(raw);
+      if (record === null) return invalidStoredData();
+      if (record.userId !== userId || (typeof record.expiresAt === 'number' && record.expiresAt <= nowEpochSeconds)) {
+        return available('ok', null, elapsedSince(startedAt));
+      }
+      const stored = ConversationItemSchema.safeParse(raw);
+      if (!stored.success || stored.data.PK !== pk || stored.data.recommendationId !== recommendationId) return invalidStoredData();
+      const query = await this.send({ operation: 'query', input: {
+        TableName: this.tableName,
+        KeyConditionExpression: '#pk = :pk AND begins_with(#sk, :prefix)',
+        ExpressionAttributeNames: { '#pk': 'PK', '#sk': 'SK' },
+        ExpressionAttributeValues: { ':pk': pk, ':prefix': `CHAT#${stored.data.conversationId}#` },
+        Limit: 17, ScanIndexForward: true, ConsistentRead: true
+      } });
+      const queried = QueryResponseSchema.safeParse(query);
+      if (!queried.success || queried.data.LastEvaluatedKey !== undefined) return invalidStoredData();
+      const messages: ConversationMessage[] = [];
+      for (const rawMessage of queried.data.Items ?? []) {
+        const message = ChatMessageItemSchema.safeParse(rawMessage);
+        if (!message.success || message.data.PK !== pk || message.data.userId !== userId
+          || message.data.recommendationId !== recommendationId
+          || message.data.conversationId !== stored.data.conversationId
+          || message.data.expiresAt !== stored.data.expiresAt
+          || message.data.SK !== chatSortKey(message.data.conversationId, message.data.createdAt,
+            message.data.messageId, message.data.role)) return invalidStoredData();
+        const base = { id: message.data.SK, content: message.data.content, createdAt: message.data.createdAt };
+        if (message.data.role === 'user') messages.push({ ...base, role: 'user' });
+        else {
+          const recommendations = projectStorageRecommendations(message.data.recommendations);
+          if (recommendations === null) return invalidStoredData();
+          messages.push({ ...base, role: 'assistant', recommendations });
+        }
+      }
+      if (messages.length !== stored.data.turnCount * 2
+        || messages.some((message, index) => message.role !== (index % 2 === 0 ? 'user' : 'assistant'))) return invalidStoredData();
+      return available('ok', {
+        conversationId: stored.data.conversationId, recommendationId, turnCount: stored.data.turnCount,
+        expiresAt: stored.data.expiresAt, messages
+      }, elapsedSince(startedAt));
+    } catch (error: unknown) {
+      return mapFailure(error, elapsedSince(startedAt));
+    }
+  }
+
+  async appendConversationTurn(input: OwnedRead & { recommendationId: string; conversationId: string; messageId: string; userMessage: string; reply: string; recommendations: StorageRecommendationItem[]; at: string; expiresAt: number; maxUserTurns: number }): Promise<ProviderResult<ConversationRecord>> {
+    const startedAt = performance.now();
+    const parsed = AppendConversationSchema.safeParse(input);
+    if (!parsed.success || parsed.data.expiresAt <= parsed.data.nowEpochSeconds
+      || parsed.data.expiresAt > parsed.data.nowEpochSeconds + 7_200) return invalidRequest();
+    const value = parsed.data;
+    const pk = `RECOMMENDATION#${value.recommendationId}`;
+    const metadataKey = { PK: pk, SK: 'CONVERSATION' };
+    const canonicalAt = canonicalTimestamp(value.at);
+    const userMessage = toDynamoItem({ ...metadataKey, SK: chatSortKey(value.conversationId, value.at, value.messageId, 'user'),
+      entityType: 'ChatMessage', userId: value.userId, recommendationId: value.recommendationId,
+      conversationId: value.conversationId, messageId: value.messageId, role: 'user', content: value.userMessage,
+      expiresAt: value.expiresAt, createdAt: canonicalAt, updatedAt: canonicalAt, schemaVersion: 1 });
+    const assistantMessage = toDynamoItem({ ...metadataKey, SK: chatSortKey(value.conversationId, value.at, value.messageId, 'assistant'),
+      entityType: 'ChatMessage', userId: value.userId, recommendationId: value.recommendationId,
+      conversationId: value.conversationId, messageId: value.messageId, role: 'assistant', content: value.reply,
+      recommendations: value.recommendations, expiresAt: value.expiresAt,
+      createdAt: canonicalAt, updatedAt: canonicalAt, schemaVersion: 1 });
+    if (userMessage === null || assistantMessage === null) return invalidRequest();
+    try {
+      const response = await this.send({ operation: 'get', input: {
+        TableName: this.tableName, Key: metadataKey, ConsistentRead: true
+      } });
+      const raw = itemFromResponse(response);
+      const rawRecord = raw === undefined ? null : mapRecord(raw);
+      if (raw !== undefined && rawRecord === null) return invalidStoredData();
+      const expired = rawRecord !== null && typeof rawRecord.expiresAt === 'number'
+        && rawRecord.expiresAt <= value.nowEpochSeconds;
+      const existing = rawRecord === null || expired ? null : ConversationItemSchema.safeParse(rawRecord);
+      if (existing !== null && !existing.success) return invalidStoredData();
+      if (existing?.success) {
+        if (existing.data.PK !== pk || existing.data.userId !== value.userId
+          || existing.data.recommendationId !== value.recommendationId
+          || existing.data.conversationId !== value.conversationId
+          || existing.data.expiresAt !== value.expiresAt) {
+          return unavailable('error', elapsedSince(startedAt), 'CONVERSATION_CONFLICT');
+        }
+        if (existing.data.turnCount >= value.maxUserTurns) {
+          return unavailable('error', elapsedSince(startedAt), 'TURN_LIMIT_REACHED');
+        }
+      }
+      const metadataWrite: DynamoDbTransactionItem = existing?.success
+        ? { Update: { TableName: this.tableName, Key: metadataKey,
+          UpdateExpression: 'SET #turnCount = #turnCount + :one, #updatedAt = :at',
+          ConditionExpression: '#userId = :userId AND #recommendationId = :recommendationId AND #conversationId = :conversationId AND #expiresAt = :expiresAt AND #expiresAt > :now AND #turnCount < :max',
+          ExpressionAttributeNames: { '#userId': 'userId', '#recommendationId': 'recommendationId', '#conversationId': 'conversationId',
+            '#expiresAt': 'expiresAt', '#turnCount': 'turnCount', '#updatedAt': 'updatedAt' },
+          ExpressionAttributeValues: { ':one': 1, ':at': canonicalAt, ':userId': value.userId,
+            ':recommendationId': value.recommendationId, ':conversationId': value.conversationId,
+            ':expiresAt': value.expiresAt, ':now': value.nowEpochSeconds, ':max': value.maxUserTurns }
+        } }
+        : { Put: { TableName: this.tableName, Item: toDynamoItem({ ...metadataKey,
+          entityType: 'Conversation', userId: value.userId, recommendationId: value.recommendationId,
+          conversationId: value.conversationId, turnCount: 1, expiresAt: value.expiresAt,
+          createdAt: canonicalAt, updatedAt: canonicalAt, schemaVersion: 1 })!,
+          ConditionExpression: 'attribute_not_exists(PK) OR #expiresAt <= :now',
+          ExpressionAttributeNames: { '#expiresAt': 'expiresAt' }, ExpressionAttributeValues: { ':now': value.nowEpochSeconds }
+        } };
+      await this.send({ operation: 'transactWrite', input: { TransactItems: [
+        { ConditionCheck: { TableName: this.tableName,
+          Key: { PK: userKey(value.userId), SK: `RECOMMENDATION_REF#${value.recommendationId}` },
+          ConditionExpression: '#recommendationId = :recommendationId AND #expiresAt > :now AND #expiresAt >= :expiresAt',
+          ExpressionAttributeNames: { '#recommendationId': 'recommendationId', '#expiresAt': 'expiresAt' },
+          ExpressionAttributeValues: { ':recommendationId': value.recommendationId, ':now': value.nowEpochSeconds, ':expiresAt': value.expiresAt }
+        } },
+        metadataWrite,
+        { Put: { TableName: this.tableName, Item: userMessage, ConditionExpression: 'attribute_not_exists(PK)' } },
+        { Put: { TableName: this.tableName, Item: assistantMessage, ConditionExpression: 'attribute_not_exists(PK)' } }
+      ] } });
+      const updated = await this.getConversation({ userId: value.userId,
+        recommendationId: value.recommendationId, nowEpochSeconds: value.nowEpochSeconds });
+      if ((updated.status !== 'ok' && updated.status !== 'degraded') || updated.data === null) return invalidStoredData();
+      return available('ok', updated.data, elapsedSince(startedAt));
+    } catch (error: unknown) {
+      if (errorName(error) === 'TransactionCanceledException' || errorName(error) === 'ConditionalCheckFailedException') {
+        try {
+          const response = await this.send({ operation: 'get', input: {
+            TableName: this.tableName, Key: metadataKey, ConsistentRead: true
+          } });
+          const stored = ConversationItemSchema.safeParse(itemFromResponse(response));
+          if (stored.success && stored.data.userId === value.userId
+            && stored.data.conversationId === value.conversationId
+            && stored.data.turnCount >= value.maxUserTurns) {
+            return unavailable('error', elapsedSince(startedAt), 'TURN_LIMIT_REACHED');
+          }
+        } catch { /* Preserve the original conditional conflict. */ }
+        return unavailable('error', elapsedSince(startedAt), 'CONVERSATION_CONFLICT');
+      }
+      return mapFailure(error, elapsedSince(startedAt));
+    }
+  }
   async upsertDevice(input: { userId: string; device: DeviceRegistration }): Promise<ProviderResult<null>> { return this.unsupported(input); }
   async listDevices(input: { userId: string }): Promise<ProviderResult<DeviceRegistration[]>> { return this.unsupported(input); }
   async deleteDevice(input: { userId: string; deviceId: string }): Promise<ProviderResult<null>> { return this.unsupported(input); }

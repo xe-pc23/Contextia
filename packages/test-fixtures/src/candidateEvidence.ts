@@ -38,9 +38,10 @@ export function getScenarioEvidence(fixture: ScenarioFixture): CandidateEvidence
   }
   const routes = fixture.providers.routes;
   if (needs.has('route-to-next-event') && event) {
+    const planning = fixture.eventRouteArriveBy === undefined ? {} : { arriveBy: fixture.eventRouteArriveBy };
     if (routes.status === 'ok' || routes.status === 'degraded') {
-      for (const route of routes.data) evidence.routes.push({ need: 'route-to-next-event', anchorKey: event.id, result: routeResult(routes, route) });
-    } else evidence.routes.push({ need: 'route-to-next-event', anchorKey: event.id, result: routeFailure(routes) });
+      for (const route of routes.data) evidence.routes.push({ need: 'route-to-next-event', anchorKey: event.id, ...planning, result: routeResult(routes, route) });
+    } else evidence.routes.push({ need: 'route-to-next-event', anchorKey: event.id, ...planning, result: routeFailure(routes) });
   }
   if (needs.has('route-to-place-candidates')) {
     const places = fixture.providers.places.data ?? [];
