@@ -3,7 +3,7 @@ import { z } from 'zod';
 import {
   ChatRequestSchema, ChatResponseSchema, ContextEvaluateRequestSchema, ContextEvaluateResponseSchema,
   EvaluationHeadersSchema, GetMeResponseSchema, GetRecommendationResponseSchema, ListRecommendationsResponseSchema,
-  RecommendationParamsSchema, RecommendationsQuerySchema, UpdatePreferencesRequestSchema, UpdatePreferencesResponseSchema
+  ProfileWriteHeadersSchema, RecommendationParamsSchema, RecommendationsQuerySchema, UpdatePreferencesRequestSchema, UpdatePreferencesResponseSchema
 } from '@contextia/contracts';
 import type { ContextEvaluateRequest, ContextEvaluateResponse, ErrorResponse, HealthResponse } from '@contextia/contracts';
 import { EvaluationFailure } from './application/evaluateContext.js';
@@ -50,7 +50,7 @@ export type AuthClaims = { sub: string; clientId: string };
 
 export type ApiRequest = {
   method: string; path: string; requestId: string; body?: string | null; claims?: AuthClaims | null;
-  query?: Record<string, string | undefined>; idempotencyKey?: string; demoFault?: string;
+  query?: Record<string, string | undefined>; idempotencyKey?: string; demoFault?: string; ifNoneMatch?: string;
 };
 
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
@@ -125,6 +125,7 @@ async function evaluate(request: ApiRequest, clients: ClientConfig, evaluateCont
 function apiFailure(cause: ApiFailure, requestId: string): Outcome {
   const mapping: Record<ApiFailure['code'], { status: number; message: string }> = {
     PROFILE_NOT_FOUND: { status: 404, message: 'No profile exists for this user.' },
+    PROFILE_EXISTS: { status: 412, message: 'A profile already exists for this user.' },
     RECOMMENDATION_NOT_FOUND: { status: 404, message: 'Recommendation not found.' },
     STATE_UNAVAILABLE: { status: 503, message: 'User state is temporarily unavailable.' },
     MODEL_UNAVAILABLE: { status: 503, message: 'Recommendation chat is temporarily unavailable.' },
@@ -164,9 +165,11 @@ async function accountRoute(request: ApiRequest, route: RouteName, options: Hand
       ? error(413, requestId, 'PAYLOAD_TOO_LARGE', 'Request body is too large.')
       : error(400, requestId, 'VALIDATION_ERROR', 'Request body must be a JSON object.');
     if (route === 'preferences') {
+      const headers = ProfileWriteHeadersSchema.safeParse(request.ifNoneMatch === undefined ? {} : { ifNoneMatch: request.ifNoneMatch });
+      if (!headers.success) return error(400, requestId, 'VALIDATION_ERROR', 'Profile write headers are invalid.');
       const parsed = UpdatePreferencesRequestSchema.safeParse(body.value);
       if (!parsed.success) return error(400, requestId, 'VALIDATION_ERROR', 'Preferences are invalid.');
-      return { response: json(200, UpdatePreferencesResponseSchema.parse({ requestId, data: await options.account.putPreferences(userId, parsed.data) })) };
+      return { response: json(200, UpdatePreferencesResponseSchema.parse({ requestId, data: await options.account.putPreferences(userId, parsed.data, headers.data.ifNoneMatch === '*') })) };
     }
     const parsed = ChatRequestSchema.safeParse(body.value);
     if (!parsed.success) return error(400, requestId, 'VALIDATION_ERROR', 'Chat message is invalid.');
@@ -238,7 +241,8 @@ export function createLambdaHandler(options: HandlerOptions): (event: APIGateway
     ...(() => {
       const key = Object.entries(event.headers).find(([name]) => name.toLowerCase() === 'idempotency-key')?.[1];
       const demoFault = Object.entries(event.headers).find(([name]) => name.toLowerCase() === 'x-contextia-demo-fault')?.[1];
-      return { ...(key === undefined ? {} : { idempotencyKey: key }), ...(demoFault === undefined ? {} : { demoFault }) };
+      const ifNoneMatch = Object.entries(event.headers).find(([name]) => name.toLowerCase() === 'if-none-match')?.[1];
+      return { ...(key === undefined ? {} : { idempotencyKey: key }), ...(demoFault === undefined ? {} : { demoFault }), ...(ifNoneMatch === undefined ? {} : { ifNoneMatch }) };
     })()
   });
 }

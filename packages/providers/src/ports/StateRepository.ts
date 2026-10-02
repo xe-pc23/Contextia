@@ -84,7 +84,7 @@ export interface ConversationRecord {
 // Domain-shaped DTOs only: no PK/SK, DynamoDB AttributeValue, SDK responses or error bodies.
 export interface StateRepository {
   getProfile(input: { userId: string }): Promise<ProviderResult<Profile | null>>;
-  putPreferences(input: { userId: string; preferences: UserPreferences; at: string }): Promise<ProviderResult<null>>;
+  putPreferences(input: { userId: string; preferences: UserPreferences; at: string; createOnly?: boolean }): Promise<ProviderResult<null>>;
   getState(input: OwnedRead): Promise<ProviderResult<UserState | null>>;
   writeContextSnapshot(input: { userId: string; snapshot: ContextSnapshot; fingerprint: string; processedAt: string; notificationDay: string }): Promise<ProviderResult<null>>;
   getContextSnapshot(input: OwnedRead & { reference: ContextReference }): Promise<ProviderResult<ContextSnapshot | null>>;

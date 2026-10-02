@@ -7,6 +7,8 @@ import { MAX_BODY_BYTES, claimsFromEvent, createLambdaHandler, createRequestHand
 import type { AuthClaims, ClientConfig, RequestLog } from '../src/handler.js';
 import { EvaluationFailure } from '../src/application/evaluateContext.js';
 import type { EvaluateContext } from '../src/application/evaluateContext.js';
+import { createAccountServices } from '../src/application/account.js';
+import { NOW, preferences, repository } from './support/repository.js';
 
 const clients: ClientConfig = { webClientId: 'web-client', mobileClientId: 'mobile-client' };
 const preview = getScenarioInput('step-goal');
@@ -149,5 +151,13 @@ describe('Lambda event mapping', () => {
     const faultEvent = { ...event(accessClaims, JSON.stringify(preview)), headers: { 'X-Contextia-Demo-Fault': 'weather' } };
     expect((await createLambdaHandler({ version: 'test', clients, stage: 'prod', log: vi.fn() })(faultEvent)).statusCode).toBe(403);
     expect((await createLambdaHandler({ version: 'test', clients, stage: 'dev', log: vi.fn() })(faultEvent)).statusCode).toBe(503);
+  });
+  it('maps a mixed-case profile precondition into conditional creation', async () => {
+    const state = repository();
+    const input = event(accessClaims, JSON.stringify(preferences));
+    const handle = createLambdaHandler({ version: 'test', clients, log: vi.fn(), account: createAccountServices(state, () => NOW) });
+    const response = await handle({ ...input, rawPath: '/v1/me/preferences', headers: { 'If-None-Match': '*' }, requestContext: { ...input.requestContext, http: { ...input.requestContext.http, method: 'PUT' } } });
+    expect(response.statusCode).toBe(200);
+    expect(state.putPreferences).toHaveBeenCalledWith({ userId: 'user-1', preferences, at: NOW.toISOString(), createOnly: true });
   });
 });

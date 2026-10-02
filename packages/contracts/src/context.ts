@@ -53,5 +53,10 @@ export type LocationContext = z.infer<typeof LocationContextSchema>;
 export type CalendarEventContext = z.infer<typeof CalendarEventContextSchema>;
 export type ActivityContext = z.infer<typeof ActivityContextSchema>;
 export type UserPreferences = z.infer<typeof UserPreferencesSchema>;
+/** A fresh schema-validated starting profile; clients display only preferences acknowledged by the API. */
+export function createDefaultUserPreferences(): UserPreferences {
+  return UserPreferencesSchema.parse({ interests: ['cafe', 'park'], stepGoal: 10_000,
+    notificationFrequency: 'normal', notificationsEnabled: true, locale: 'ja-JP', timezone: 'Asia/Tokyo' });
+}
 export type ContextInput = z.infer<typeof ContextInputSchema>;
 export type ScenarioContextInput = z.infer<typeof ScenarioContextInputSchema>;

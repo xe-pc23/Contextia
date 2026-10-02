@@ -185,10 +185,91 @@ describe('profile, preferences and recommendation navigation', () => {
     expect(test.controller.getSnapshot().saveResult).toMatchObject({ kind: 'http-error', status: 503 });
   });
   it('does not create fabricated settings when profile retrieval fails', async () => {
-    const test = setup(); test.client.getProfile.mockResolvedValue({ kind: 'http-error', status: 404, code: 'PROFILE_NOT_FOUND', requestId: 'req-error' });
+    const test = setup(); test.client.getProfile.mockResolvedValue({ kind: 'http-error', status: 503, code: 'STATE_UNAVAILABLE', requestId: 'req-error' });
     await test.controller.loadProfile(); await test.controller.savePreferences(profile.preferences);
     expect(test.controller.getSnapshot().profile.data).toBeNull();
     expect(test.client.updatePreferences).not.toHaveBeenCalled();
+  });
+  it('initializes only a missing profile and displays the server result', async () => {
+    const test = setup();
+    const stored = { ...profile, preferences: { ...profile.preferences, stepGoal: 9000 } };
+    test.client.getProfile.mockResolvedValueOnce({ kind: 'http-error', status: 404, code: 'PROFILE_NOT_FOUND', requestId: 'req-missing' }).mockResolvedValueOnce(success(stored));
+    await test.controller.loadProfile();
+    expect(test.client.updatePreferences).toHaveBeenCalledOnce();
+    expect(test.client.updatePreferences.mock.calls[0]?.[0]).toMatchObject({ interests: ['cafe', 'park'], stepGoal: 10000, timezone: 'Asia/Tokyo' });
+    expect(test.client.updatePreferences.mock.calls[0]?.[2]).toBe(true);
+    expect(test.controller.getSnapshot().profile).toEqual({ status: 'ready', data: stored });
+  });
+  it('reads the existing profile if another client wins the initial creation race', async () => {
+    const test = setup();
+    test.client.getProfile.mockResolvedValueOnce({ kind: 'http-error', status: 404, code: 'PROFILE_NOT_FOUND', requestId: 'req' }).mockResolvedValueOnce(success(profile));
+    test.client.updatePreferences.mockResolvedValue({ kind: 'http-error', status: 412, code: 'PROFILE_EXISTS', requestId: 'req' });
+    await test.controller.loadProfile();
+    expect(test.controller.getSnapshot().profile).toEqual({ status: 'ready', data: profile });
+    expect(test.client.updatePreferences).toHaveBeenCalledOnce();
+  });
+  it.each(['created', 'existing'])('shows a failed read-back after initial profile %s without inventing settings', async outcome => {
+    const test = setup();
+    const failure = { kind: 'http-error' as const, status: 503, code: 'STATE_UNAVAILABLE', requestId: 'req' };
+    test.client.getProfile.mockResolvedValueOnce({ kind: 'http-error', status: 404, code: 'PROFILE_NOT_FOUND', requestId: 'req' }).mockResolvedValueOnce(failure);
+    if (outcome === 'existing') test.client.updatePreferences.mockResolvedValue({ kind: 'http-error', status: 412, code: 'PROFILE_EXISTS', requestId: 'req' });
+    await test.controller.loadProfile();
+    expect(test.client.getProfile).toHaveBeenCalledTimes(2);
+    expect(test.client.updatePreferences).toHaveBeenCalledOnce();
+    expect(test.controller.getSnapshot().profile).toMatchObject({ status: 'error', data: null, error: failure });
+  });
+  it('does not treat another 412 error as an initial-profile race', async () => {
+    const test = setup();
+    const failure = { kind: 'http-error' as const, status: 412, code: 'OTHER_PRECONDITION', requestId: 'req' };
+    test.client.getProfile.mockResolvedValue({ kind: 'http-error', status: 404, code: 'PROFILE_NOT_FOUND', requestId: 'req' });
+    test.client.updatePreferences.mockResolvedValue(failure);
+    await test.controller.loadProfile();
+    expect(test.client.getProfile).toHaveBeenCalledOnce();
+    expect(test.client.updatePreferences).toHaveBeenCalledOnce();
+    expect(test.controller.getSnapshot().profile).toMatchObject({ status: 'error', data: null, error: failure });
+  });
+  it.each([
+    { kind: 'http-error' as const, status: 404, code: 'NOT_FOUND', requestId: 'req' },
+    { kind: 'http-error' as const, status: 401, code: 'UNAUTHORIZED', requestId: 'req' },
+    { kind: 'network-error' as const }, { kind: 'invalid-response' as const }
+  ])('does not initialize on another profile failure: $kind', async failure => {
+    const test = setup(); test.client.getProfile.mockResolvedValue(failure);
+    await test.controller.loadProfile();
+    expect(test.client.updatePreferences).not.toHaveBeenCalled();
+    expect(test.controller.getSnapshot().profile).toMatchObject({ status: 'error', data: null, error: failure });
+  });
+  it('shows failed initialization without inventing saved preferences or retrying', async () => {
+    const test = setup();
+    test.client.getProfile.mockResolvedValue({ kind: 'http-error', status: 404, code: 'PROFILE_NOT_FOUND', requestId: 'req' });
+    test.client.updatePreferences.mockResolvedValue({ kind: 'network-error' });
+    await test.controller.loadProfile();
+    expect(test.client.getProfile).toHaveBeenCalledOnce();
+    expect(test.client.updatePreferences).toHaveBeenCalledOnce();
+    expect(test.controller.getSnapshot().profile).toMatchObject({ status: 'error', data: null, error: { kind: 'network-error' } });
+  });
+  it('keeps one initialization in flight and blocks evaluation until it finishes', async () => {
+    const test = setup(); const pending = deferred<BackendOutcome<typeof profile>>();
+    test.client.getProfile.mockReturnValueOnce(pending.promise);
+    const loading = test.controller.loadProfile(); await test.controller.loadProfile(); await test.controller.evaluate();
+    expect(test.client.getProfile).toHaveBeenCalledOnce(); expect(test.collect).not.toHaveBeenCalled();
+    pending.resolve(success(profile)); await loading;
+  });
+  it('does not initialize from an old missing-profile response after logout and reactivation', async () => {
+    const test = setup(); const pending = deferred<BackendOutcome<typeof profile>>();
+    test.client.getProfile.mockReturnValueOnce(pending.promise);
+    const loading = test.controller.loadProfile(); test.controller.dispose(); test.controller.activate();
+    pending.resolve({ kind: 'http-error', status: 404, code: 'PROFILE_NOT_FOUND', requestId: 'req' }); await loading;
+    expect(test.client.updatePreferences).not.toHaveBeenCalled();
+    expect(test.controller.getSnapshot().profile.status).toBe('idle');
+  });
+  it('does not read back or restore a profile after logout during initialization', async () => {
+    const test = setup(); const pending = deferred<BackendOutcome<{ updated: true }>>();
+    test.client.getProfile.mockResolvedValueOnce({ kind: 'http-error', status: 404, code: 'PROFILE_NOT_FOUND', requestId: 'req' });
+    test.client.updatePreferences.mockReturnValue(pending.promise);
+    const loading = test.controller.loadProfile();
+    await vi.waitFor(() => expect(test.client.updatePreferences).toHaveBeenCalledOnce());
+    test.controller.dispose(); test.controller.activate(); pending.resolve(success({ updated: true })); await loading;
+    expect(test.client.getProfile).toHaveBeenCalledOnce(); expect(test.controller.getSnapshot().profile.status).toBe('idle');
   });
   it('discards an older detail response and aborts it when another ID is opened', async () => {
     const test = setup(); const older = deferred<BackendOutcome<RecommendationHistoryItem>>();

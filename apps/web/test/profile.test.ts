@@ -24,6 +24,7 @@ describe('Web profile bootstrap', () => {
     });
     expect(calls.map(call => call.url)).toEqual(['https://api.example.com/v1/me', 'https://api.example.com/v1/me/preferences']);
     expect(calls[1]?.init?.method).toBe('PUT');
+    expect(new Headers(calls[1]?.init?.headers).get('if-none-match')).toBe('*');
     expect(JSON.parse(String(calls[1]?.init?.body))).toMatchObject({ interests: ['cafe', 'park'], stepGoal: 10000, timezone: 'Asia/Tokyo' });
   });
   it.each([401, 403, 404, 500])('does not overwrite preferences after status %s with another error', async status => {
@@ -33,5 +34,17 @@ describe('Web profile bootstrap', () => {
   });
   it('rejects a malformed successful response', async () => {
     await expect(ensureWebProfile('https://api.example.com', 'token', async () => Response.json({ private: 'not a profile' }))).rejects.toThrow();
+  });
+  it('reads the winning profile after a conditional creation conflict', async () => {
+    let calls = 0;
+    await ensureWebProfile('https://api.example.com', 'token', async () => {
+      calls++;
+      return calls === 1
+        ? Response.json({ requestId: 'req', error: { code: 'PROFILE_NOT_FOUND', message: 'Missing' } }, { status: 404 })
+        : calls === 2
+          ? Response.json({ requestId: 'req', error: { code: 'PROFILE_EXISTS', message: 'Existing' } }, { status: 412 })
+          : Response.json({ requestId: 'req', data: { userId: 'user', preferences: { interests: ['museum'], stepGoal: 9000, notificationFrequency: 'low', notificationsEnabled: false, locale: 'ja-JP', timezone: 'Asia/Tokyo' } } });
+    });
+    expect(calls).toBe(3);
   });
 });

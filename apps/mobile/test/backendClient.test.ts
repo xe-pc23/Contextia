@@ -10,6 +10,13 @@ function setup(response: () => Response | Promise<Response>, token: () => Promis
 }
 
 describe('mobile API URL and request boundary', () => {
+  it('requests absent-profile initialization only when explicitly selected', async () => {
+    const { client, fetch } = setup(() => json({ requestId: 'req', data: { updated: true } }));
+    await client.updatePreferences(profile.preferences, undefined, true);
+    await client.updatePreferences(profile.preferences);
+    expect(new Headers(fetch.mock.calls[0]?.[1]?.headers).get('if-none-match')).toBe('*');
+    expect(new Headers(fetch.mock.calls[1]?.[1]?.headers).has('if-none-match')).toBe(false);
+  });
   it.each(['http://api.example.test', 'http://localhost:3001', 'https://user:password@example.test', 'https://example.test?key=x', 'https://example.test#x', 'https://example.test/v1', 'not a url'])('rejects %s', value => expect(apiBaseUrl(value)).toBeNull());
   it('accepts a HTTPS stage path', () => expect(apiBaseUrl('https://api.example.test/dev')).toBe('https://api.example.test/dev/'));
   it('sends a fresh bearer token and the privacy-minimized real input once', async () => {

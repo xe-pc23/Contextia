@@ -53,7 +53,7 @@ describe.each(stages)('%s core stack', (stage) => {
     template.hasResourceProperties('AWS::ApiGatewayV2::Api', {
       Name: `contextia-${stage}-http-api`, ProtocolType: 'HTTP',
       CorsConfiguration: Match.objectLike({
-        AllowHeaders: ['authorization', 'content-type', 'accept', 'idempotency-key', ...(stage === 'dev' ? ['x-contextia-demo-fault'] : [])],
+        AllowHeaders: ['authorization', 'content-type', 'accept', 'idempotency-key', 'if-none-match', ...(stage === 'dev' ? ['x-contextia-demo-fault'] : [])],
         AllowMethods: Match.arrayWith(['PUT']),
         AllowOrigins: isDev ? Match.arrayWith(localOrigins) : [Match.anyValue()]
       })

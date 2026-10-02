@@ -221,7 +221,7 @@ export class ContextiaCoreStack extends Stack {
       corsPreflight: {
         allowOrigins: browserOrigins,
         allowMethods: [CorsHttpMethod.GET, CorsHttpMethod.PUT, CorsHttpMethod.POST, CorsHttpMethod.OPTIONS],
-        allowHeaders: ['authorization', 'content-type', 'accept', 'idempotency-key', ...(isDev ? ['x-contextia-demo-fault'] : [])],
+        allowHeaders: ['authorization', 'content-type', 'accept', 'idempotency-key', 'if-none-match', ...(isDev ? ['x-contextia-demo-fault'] : [])],
         maxAge: Duration.hours(1)
       }
     });

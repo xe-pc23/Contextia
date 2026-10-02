@@ -18,6 +18,7 @@ export const HealthResponseSchema = z.strictObject({ status: z.literal('ok'), ve
 export const ProfileSchema = z.strictObject({ userId: OpaqueIdSchema, preferences: UserPreferencesSchema });
 export const GetMeResponseSchema = responseEnvelopeSchema(ProfileSchema);
 export const UpdatePreferencesRequestSchema = UserPreferencesSchema;
+export const ProfileWriteHeadersSchema = z.strictObject({ ifNoneMatch: z.literal('*').optional() });
 export const UpdatePreferencesResponseSchema = responseEnvelopeSchema(z.strictObject({ updated: z.literal(true) }));
 export const ContextEvaluateRequestSchema = ContextInputSchema;
 export const DemoFaultSchema = z.enum(['weather', 'routes']);

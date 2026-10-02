@@ -1,4 +1,4 @@
-import { UserPreferencesSchema } from '@contextia/contracts';
+import { createDefaultUserPreferences, UserPreferencesSchema } from '@contextia/contracts';
 import type { EvaluationResult, ListRecommendationsResponse, Profile, RecommendationHistoryItem } from '@contextia/contracts';
 import type { BackendClient, BackendFailure, BackendOutcome } from '../api/backendClient';
 import { OperationTimeout, withTimeout } from '../async/withTimeout';
@@ -90,7 +90,15 @@ export class MobileController {
     if (!this.active || this.state.profile.status === 'loading' || this.state.saving) return;
     const lifetime = this.lifetime;
     this.patch({ profile: { status: 'loading', data: this.state.profile.data } });
-    const result = await this.call(signal => this.options.client.getProfile(signal));
+    const result = await this.call(async signal => {
+      const existing = await this.options.client.getProfile(signal);
+      if (signal.aborted || !this.current(lifetime)) return { kind: 'cancelled' };
+      if (existing.kind !== 'http-error' || existing.status !== 404 || existing.code !== 'PROFILE_NOT_FOUND') return existing;
+      const initialized = await this.options.client.updatePreferences(createDefaultUserPreferences(), signal, true);
+      if (signal.aborted || !this.current(lifetime)) return { kind: 'cancelled' };
+      if (initialized.kind !== 'success' && !(initialized.kind === 'http-error' && initialized.status === 412 && initialized.code === 'PROFILE_EXISTS')) return initialized;
+      return this.options.client.getProfile(signal);
+    });
     if (this.current(lifetime)) this.patch({ profile: resource(result) });
   }
 
@@ -168,7 +176,7 @@ export class MobileController {
   }
 
   async evaluate(): Promise<void> {
-    if (!this.active || this.busy()) return;
+    if (!this.active || this.busy() || this.state.profile.status === 'loading') return;
     const lifetime = this.lifetime;
     this.patch({ evaluation: { status: 'loading', data: null }, saveResult: 'idle' });
     const collection = await this.collect(lifetime);

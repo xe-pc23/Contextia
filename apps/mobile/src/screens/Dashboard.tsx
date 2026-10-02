@@ -25,7 +25,7 @@ export function Dashboard({ state, controller, clock, openDetail }: {
         ? <Text style={styles.note}>読み取った範囲に次の予定はありません。</Text> : null}
       <Text style={styles.note}>送る予定情報は ID ハッシュ・タイトル・日時・場所だけです。参加者や説明・メモは含みません。</Text>
       <Button title={state.collecting ? '読み取り中…' : '端末の情報を読み取る'} disabled={busy} onPress={() => void controller.readContext()} />
-      <Button title={state.evaluation.status === 'loading' ? '評価中…' : '今評価'} disabled={busy} onPress={() => void controller.evaluate()} />
+      <Button title={state.evaluation.status === 'loading' ? '評価中…' : '今評価'} disabled={busy || state.profile.status === 'loading'} onPress={() => void controller.evaluate()} />
       {state.collectionError ? <Failure error={state.collectionError} /> : null}
     </Card>
     <Card title={view?.title ?? '最新の評価'}>

@@ -12,6 +12,18 @@ function setup() {
 }
 
 describe('profile, preferences, and owned recommendation APIs', () => {
+  it('maps a conditional initial-profile race to 412 without changing preferences', async () => {
+    const { handle, request, state } = setup();
+    state.putPreferences.mockResolvedValue({ status: 'error', data: null, code: 'PROFILE_EXISTS' });
+    const response = await handle({ ...request, method: 'PUT', path: '/v1/me/preferences', body: JSON.stringify(preferences), ifNoneMatch: '*' });
+    expect(response.statusCode).toBe(412);
+    expect(state.putPreferences).toHaveBeenCalledWith({ userId: 'user-1', preferences, at: NOW.toISOString(), createOnly: true });
+  });
+  it('rejects unsupported profile preconditions before persisting', async () => {
+    const { handle, request, state } = setup();
+    expect((await handle({ ...request, method: 'PUT', path: '/v1/me/preferences', body: JSON.stringify(preferences), ifNoneMatch: 'private-etag' })).statusCode).toBe(400);
+    expect(state.putPreferences).not.toHaveBeenCalled();
+  });
   it('round-trips validated preferences for the authenticated identity', async () => {
     const { handle, request, state } = setup();
     const changed = { ...preferences, interests: ['museum'], timezone: 'America/New_York' };

@@ -25,6 +25,10 @@ Check ignored `.xcode.env.local` uses the repository Node 24 executable rather t
 Debug builds require Metro; native compilation alone is not an executed app check.
 See [Simulator and member hardware checklist](../../docs/MOBILE_VALIDATION.md) for the current validation matrix.
 
+Fresh accounts initialize shared default preferences only after `404 PROFILE_NOT_FOUND`, using an
+atomic create-only request. A concurrent existing profile is read back and preserved. Errors stay visible;
+logout cancels subsequent initialization requests. Evaluation waits until the profile load finishes.
+
 Dashboard now uses the backend's normalized `weather` reading for condition/temperature, labels forecast
 coverage and observation time, and displays missing/null temperature explicitly. It makes no direct weather call.
 

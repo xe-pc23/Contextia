@@ -133,6 +133,20 @@ function storedProfile(userId = 'user-1', value: unknown = preferences): Record<
   };
 }
 
+describe('conditional initial profile', () => {
+  it('uses an atomic absent-profile condition without affecting ordinary updates', async () => {
+    const { client, requests } = fakeClient();
+    await repository(client).putPreferences({ userId: 'user-1', preferences, at: processedAt, createOnly: true });
+    expect(requests[0]?.input).toMatchObject({ ConditionExpression: 'attribute_not_exists(PK)' });
+    await repository(client).putPreferences({ userId: 'user-1', preferences, at: processedAt });
+    expect(requests[1]?.input).not.toHaveProperty('ConditionExpression');
+  });
+  it('normalizes a lost creation race without exposing the raw error', async () => {
+    const { client } = fakeClient([Object.assign(new Error('private'), { name: 'ConditionalCheckFailedException' })]);
+    expect(await repository(client).putPreferences({ userId: 'user-1', preferences, at: processedAt, createOnly: true })).toMatchObject({ status: 'error', data: null, code: 'PROFILE_EXISTS' });
+  });
+});
+
 function storedState(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     PK: 'USER#user-1',

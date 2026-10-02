@@ -23,7 +23,7 @@ export type BackendOutcome<T> = { kind: 'success'; requestId: string; data: T } 
 
 export interface BackendClient {
   getProfile(signal?: AbortSignal): Promise<BackendOutcome<GetMeResponse['data']>>;
-  updatePreferences(input: unknown, signal?: AbortSignal): Promise<BackendOutcome<UpdatePreferencesResponse['data']>>;
+  updatePreferences(input: unknown, signal?: AbortSignal, createOnly?: boolean): Promise<BackendOutcome<UpdatePreferencesResponse['data']>>;
   evaluate(input: unknown, signal?: AbortSignal): Promise<BackendOutcome<ContextEvaluateResponse['data']>>;
   listRecommendations(query?: unknown, signal?: AbortSignal): Promise<BackendOutcome<ListRecommendationsResponse['data']>>;
   getRecommendation(id: string, signal?: AbortSignal): Promise<BackendOutcome<GetRecommendationResponse['data']>>;
@@ -139,10 +139,10 @@ export function createBackendClient(options: {
 
   return {
     getProfile: signal => request('v1/me', GetMeResponseSchema, 'GET', signal),
-    async updatePreferences(input, signal) {
+    async updatePreferences(input, signal, createOnly) {
       const parsed = UpdatePreferencesRequestSchema.safeParse(input);
       return parsed.success
-        ? request('v1/me/preferences', UpdatePreferencesResponseSchema, 'PUT', signal, parsed.data)
+        ? request('v1/me/preferences', UpdatePreferencesResponseSchema, 'PUT', signal, parsed.data, createOnly ? { 'if-none-match': '*' } : {})
         : invalidFields(parsed.error.issues);
     },
     async evaluate(input, signal) {

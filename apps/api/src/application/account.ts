@@ -6,7 +6,7 @@ import { ApiFailure } from './apiFailure.js';
 export type AccountRepository = Pick<StateRepository, 'getProfile' | 'putPreferences' | 'listRecommendations' | 'getRecommendation'>;
 export interface AccountServices {
   getMe(userId: string): Promise<Profile>;
-  putPreferences(userId: string, preferences: UserPreferences): Promise<{ updated: true }>;
+  putPreferences(userId: string, preferences: UserPreferences, createOnly?: boolean): Promise<{ updated: true }>;
   listRecommendations(userId: string, query: RecommendationsQuery): Promise<{ items: RecommendationHistoryItem[]; nextCursor: string | null }>;
   getRecommendation(userId: string, recommendationId: string): Promise<RecommendationHistoryItem>;
 }
@@ -27,8 +27,9 @@ export function createAccountServices(state: AccountRepository, clock: () => Dat
       if (result.data.userId !== userId) throw new ApiFailure('STATE_UNAVAILABLE');
       return ProfileSchema.parse(result.data);
     },
-    async putPreferences(userId, preferences) {
-      const result = await state.putPreferences({ userId, preferences: UserPreferencesSchema.parse(preferences), at: clock().toISOString() });
+    async putPreferences(userId, preferences, createOnly) {
+      const result = await state.putPreferences({ userId, preferences: UserPreferencesSchema.parse(preferences), at: clock().toISOString(), ...(createOnly ? { createOnly } : {}) });
+      if (createOnly && result.status === 'error' && result.code === 'PROFILE_EXISTS') throw new ApiFailure('PROFILE_EXISTS');
       if (result.status !== 'ok' && result.status !== 'degraded') throw new ApiFailure('STATE_UNAVAILABLE');
       return { updated: true };
     },

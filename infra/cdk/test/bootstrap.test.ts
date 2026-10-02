@@ -47,6 +47,12 @@ describe.each(['dev', 'prod'] as const)('%s stage bootstrap', stage => {
     expect(role).toContain(`api-key/contextia-${stage}-web-map`);
     expect(role).toContain(`:key/contextia-${stage}-web-map`);
   });
+  it('allows the tagged key to delegate tagging only on its exact map provider resource', () => {
+    const statements = z.array(z.object({ PolicyDocument: z.object({ Statement: z.array(z.object({ Action: z.array(z.string()), Resource: z.array(z.string()) })) }) }))
+      .parse(stageBootstrapTemplate(stage).Resources.CloudFormationExecutionRole?.Properties.Policies)
+      .flatMap(policy => policy.PolicyDocument.Statement);
+    expect(statements).toContainEqual({ Action: ['geo:TagResource'], Resource: ['arn:aws:geo-maps:ap-northeast-1::provider/default'] });
+  });
   it('permits only the exact API Gateway service-linked role with its service condition', () => {
     const policies = z.array(z.object({ PolicyDocument: z.object({ Statement: z.array(z.object({ Action: z.array(z.string()), Resource: z.array(z.string()), Condition: z.record(z.string(), z.unknown()).optional() })) }) }))
       .parse(stageBootstrapTemplate(stage).Resources.CloudFormationExecutionRole?.Properties.Policies);

@@ -668,14 +668,15 @@ export class DynamoDbStateRepository implements StateRepository {
     }
   }
 
-  async putPreferences(input: { userId: string; preferences: UserPreferences; at: string }): Promise<ProviderResult<null>> {
+  async putPreferences(input: { userId: string; preferences: UserPreferences; at: string; createOnly?: boolean }): Promise<ProviderResult<null>> {
     const startedAt = performance.now();
-    const parsed = z.strictObject({ userId: UserIdSchema, preferences: UserPreferencesSchema, at: TimestampSchema }).safeParse(input);
+    const parsed = z.strictObject({ userId: UserIdSchema, preferences: UserPreferencesSchema, at: TimestampSchema, createOnly: z.boolean().optional() }).safeParse(input);
     if (!parsed.success) return invalidRequest();
     try {
       await this.send({ operation: 'update', input: {
         TableName: this.tableName,
         Key: { PK: userKey(parsed.data.userId), SK: 'PROFILE' },
+        ...(parsed.data.createOnly ? { ConditionExpression: 'attribute_not_exists(PK)' } : {}),
         UpdateExpression: 'SET #entityType = :entityType, #preferences = :preferences, #createdAt = if_not_exists(#createdAt, :at), #updatedAt = :at, #schemaVersion = :schemaVersion',
         ExpressionAttributeNames: {
           '#entityType': 'entityType', '#preferences': 'preferences', '#createdAt': 'createdAt',
@@ -688,6 +689,7 @@ export class DynamoDbStateRepository implements StateRepository {
       } });
       return available('ok', null, elapsedSince(startedAt));
     } catch (error: unknown) {
+      if (parsed.data.createOnly && errorName(error) === 'ConditionalCheckFailedException') return unavailable('error', elapsedSince(startedAt), 'PROFILE_EXISTS');
       return mapFailure(error, elapsedSince(startedAt));
     }
   }

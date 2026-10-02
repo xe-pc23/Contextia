@@ -227,6 +227,12 @@ Response:
 
 ## 6. PUT /me/preferences
 
+Initial profile creation may send `If-None-Match: *`. The repository uses an atomic absent-profile
+condition; an existing profile returns `412 PROFILE_EXISTS` without overwriting preferences.
+Clients then read `GET /me` to display the winning profile. Omission keeps the ordinary authenticated
+preference update behavior. Other header values return 400. Web and Mobile initialize only after
+an explicit `404 PROFILE_NOT_FOUND`, never after authorization, network or validation errors.
+
 Auth: yes
 
 Request:
