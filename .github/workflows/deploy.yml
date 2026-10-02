@@ -73,7 +73,12 @@ jobs:
           role-to-assume: arn:aws:iam::634512763705:role/GitHub${{ inputs.stage == 'prod' && 'Prod' || 'Dev' }}DeployRole
       - name: Deploy selected stage
         run: pnpm "deploy:$CONTEXTIA_STAGE"
-      - name: Public web/API smoke at the deployed SHA
+      - name: Web/API smoke at the deployed SHA (authenticated dev gate)
         env:
           SMOKE_OUTPUTS_FILE: cdk.out/${{ inputs.stage }}/outputs.json
+          SMOKE_MODE: ${{ inputs.stage == 'dev' && 'authenticated' || 'public' }}
+          SMOKE_USER_1_USERNAME: ${{ secrets.SMOKE_USER_1_USERNAME }}
+          SMOKE_USER_1_PASSWORD: ${{ secrets.SMOKE_USER_1_PASSWORD }}
+          SMOKE_USER_2_USERNAME: ${{ secrets.SMOKE_USER_2_USERNAME }}
+          SMOKE_USER_2_PASSWORD: ${{ secrets.SMOKE_USER_2_PASSWORD }}
         run: pnpm "smoke:$CONTEXTIA_STAGE"

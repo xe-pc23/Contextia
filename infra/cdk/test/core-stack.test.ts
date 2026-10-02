@@ -41,7 +41,7 @@ describe.each(stages)('%s core stack', (stage) => {
 
   it('runs the API on Node.js 24 with JSON logs and client IDs for preview authorization', () => {
     template.hasResourceProperties('AWS::Lambda::Function', {
-      FunctionName: `contextia-${stage}-api`, Runtime: 'nodejs24.x', Timeout: 28, MemorySize: 512,
+      FunctionName: `contextia-${stage}-api`, Runtime: 'nodejs24.x', Timeout: 20, MemorySize: 512,
       Environment: { Variables: Match.objectLike({ CONTEXTIA_STAGE: stage, BUILD_ID: 'abc123', WEB_CLIENT_ID: Match.anyValue(), MOBILE_CLIENT_ID: Match.anyValue(), TABLE_NAME: Match.anyValue(), BEDROCK_MODEL_ID: { Ref: 'BedrockModelId' }, CONVERSATION_TTL_SECONDS: '7200' }) },
       LoggingConfig: Match.objectLike({ LogFormat: 'JSON' })
     });
@@ -80,6 +80,7 @@ describe.each(stages)('%s core stack', (stage) => {
     template.hasResourceProperties('AWS::Cognito::UserPoolDomain', { Domain: `contextia-${stage}-634512763705` });
     template.hasResourceProperties('AWS::Cognito::UserPoolClient', {
       ClientName: `contextia-${stage}-web`, GenerateSecret: false, AllowedOAuthFlows: ['code'], AllowedOAuthScopes: ['openid', 'email'],
+      ExplicitAuthFlows: isDev ? Match.arrayWith(['ALLOW_USER_PASSWORD_AUTH']) : Match.not(Match.arrayWith(['ALLOW_USER_PASSWORD_AUTH'])),
       CallbackURLs: isDev ? Match.arrayWith(localOrigins.map(origin => `${origin}/`)) : [Match.objectLike({ 'Fn::Join': Match.anyValue() })]
     });
     template.hasResourceProperties('AWS::Cognito::UserPoolClient', {

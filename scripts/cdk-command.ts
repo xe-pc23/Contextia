@@ -15,7 +15,7 @@ export function cdkArgs(invocation: CdkInvocation, outdir: string): string[] {
     '--filter', '@contextia/infra', 'exec', 'cdk', invocation.action, `contextia-${invocation.stage}-core`,
     '--context', `stage=${invocation.stage}`, '--output', outdir, '--no-lookups',
     ...(invocation.action === 'diff' ? ['--exclusively', '--method=template'] : invocation.action === 'deploy'
-      ? ['--exclusively', '--require-approval', 'never', '--outputs-file', `${outdir}/outputs.json`] : ['--quiet'])
+      ? ['--exclusively', '--require-approval', 'never', '--change-set-name', `contextia-${invocation.stage}-core-deploy`, '--outputs-file', `${outdir}/outputs.json`] : ['--quiet'])
   ];
 }
 

@@ -8,6 +8,21 @@ importers:
 
   .:
     devDependencies:
+      '@aws-sdk/client-bedrock':
+        specifier: 3.1144.0
+        version: 3.1144.0
+      '@aws-sdk/client-cloudformation':
+        specifier: 3.1144.0
+        version: 3.1144.0
+      '@aws-sdk/client-cognito-identity-provider':
+        specifier: 3.1144.0
+        version: 3.1144.0
+      '@aws-sdk/client-iam':
+        specifier: 3.1144.0
+        version: 3.1144.0
+      '@aws-sdk/client-sts':
+        specifier: 3.1144.0
+        version: 3.1144.0
       '@eslint/js':
         specifier: 10.0.1
         version: 10.0.1(eslint@10.11.0)
@@ -38,6 +53,9 @@ importers:
       vitest:
         specifier: 5.0.3
         version: 5.0.3(@types/node@24.19.0)(vite@8.3.1(@types/node@24.19.0)(esbuild@0.28.2)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.1))
+      yaml:
+        specifier: 2.9.1
+        version: 2.9.1
       zod:
         specifier: 4.6.5
         version: 4.6.5
@@ -234,6 +252,18 @@ packages:
     resolution: {integrity: sha512-NaTgcw2dK5jwiDFrhVDkqJDovSxwMYZT2hqwp7JvwRdJsSsCx+LyRB6i+xv200JBfLnvPb2C7hMP78oltHEbnQ==}
     engines: {node: '>=20.0.0'}
 
+  '@aws-sdk/client-bedrock@3.1144.0':
+    resolution: {integrity: sha512-fNM0Tb2CegEfMep/TrCtgcvqp2NE5EF8TftoNYQR1FMuaDbflEVxzxJR2607NGIVkDGhynO56BwcAWC5ZTzxLA==}
+    engines: {node: '>=20.0.0'}
+
+  '@aws-sdk/client-cloudformation@3.1144.0':
+    resolution: {integrity: sha512-36Z45LaZPqhxJLi85XspP9by4iNr3MeW0KFgjhpsq8ypY66Rr8+gbi0AZo+t5z77AYieZxY/guNc7BUeWOqtCw==}
+    engines: {node: '>=20.0.0'}
+
+  '@aws-sdk/client-cognito-identity-provider@3.1144.0':
+    resolution: {integrity: sha512-XXDUEJh/b6yemt5hk53vkzAVjrjYI5fouv8YGiBCzGuVi1cz7l/Z7pQpeLWo+VeY8DUbIUMgy1ggBheufDO2KQ==}
+    engines: {node: '>=20.0.0'}
+
   '@aws-sdk/client-dynamodb@3.1144.0':
     resolution: {integrity: sha512-WkiUF2WksJJsul4SLd2nqrDThIlYfjgHjRspiip7Xqkd7Xvw0vlX4fR76QZmxFx6eHM5ylukRDume+wI/dadPA==}
     engines: {node: '>=20.0.0'}
@@ -244,6 +274,14 @@ packages:
 
   '@aws-sdk/client-geo-routes@3.1144.0':
     resolution: {integrity: sha512-VCMxF/tma7jVPQQSk7TRQ6T4FS1wus7WJO8ei025ndS1F8kkjFwF8EpDs4TM4KOqB0DZnGTutKfbHl8/UWMBAQ==}
+    engines: {node: '>=20.0.0'}
+
+  '@aws-sdk/client-iam@3.1144.0':
+    resolution: {integrity: sha512-EExWx9Y1M5ZawtrraNni+EAXzuWNxDuULqFnuoKtsBQqLKO1Qlak+tgmnriVtFS5LT7uk4t6nyK4ubXuABFVVg==}
+    engines: {node: '>=20.0.0'}
+
+  '@aws-sdk/client-sts@3.1144.0':
+    resolution: {integrity: sha512-54Tn8DqDn7rX0ZEQzR8uhBrhlid93OiQgv72L3v1xFwrnsOxISeng3DzP5lngi7kTKHcgi7QAZR5ePgi36vxlw==}
     engines: {node: '>=20.0.0'}
 
   '@aws-sdk/core@3.978.1':
@@ -3415,6 +3453,40 @@ snapshots:
       '@smithy/types': 4.19.0
       tslib: 2.8.1
 
+  '@aws-sdk/client-bedrock@3.1144.0':
+    dependencies:
+      '@aws-sdk/core': 3.978.1
+      '@aws-sdk/credential-provider-node': 3.972.84
+      '@aws-sdk/token-providers': 3.1144.0
+      '@aws-sdk/types': 3.974.6
+      '@smithy/core': 3.35.1
+      '@smithy/fetch-http-handler': 5.8.0
+      '@smithy/node-http-handler': 4.12.1
+      '@smithy/types': 4.19.0
+      tslib: 2.8.1
+
+  '@aws-sdk/client-cloudformation@3.1144.0':
+    dependencies:
+      '@aws-sdk/core': 3.978.1
+      '@aws-sdk/credential-provider-node': 3.972.84
+      '@aws-sdk/types': 3.974.6
+      '@smithy/core': 3.35.1
+      '@smithy/fetch-http-handler': 5.8.0
+      '@smithy/node-http-handler': 4.12.1
+      '@smithy/types': 4.19.0
+      tslib: 2.8.1
+
+  '@aws-sdk/client-cognito-identity-provider@3.1144.0':
+    dependencies:
+      '@aws-sdk/core': 3.978.1
+      '@aws-sdk/credential-provider-node': 3.972.84
+      '@aws-sdk/types': 3.974.6
+      '@smithy/core': 3.35.1
+      '@smithy/fetch-http-handler': 5.8.0
+      '@smithy/node-http-handler': 4.12.1
+      '@smithy/types': 4.19.0
+      tslib: 2.8.1
+
   '@aws-sdk/client-dynamodb@3.1144.0':
     dependencies:
       '@aws-sdk/core': 3.978.1
@@ -3443,6 +3515,29 @@ snapshots:
     dependencies:
       '@aws-sdk/core': 3.978.1
       '@aws-sdk/credential-provider-node': 3.972.84
+      '@aws-sdk/types': 3.974.6
+      '@smithy/core': 3.35.1
+      '@smithy/fetch-http-handler': 5.8.0
+      '@smithy/node-http-handler': 4.12.1
+      '@smithy/types': 4.19.0
+      tslib: 2.8.1
+
+  '@aws-sdk/client-iam@3.1144.0':
+    dependencies:
+      '@aws-sdk/core': 3.978.1
+      '@aws-sdk/credential-provider-node': 3.972.84
+      '@aws-sdk/types': 3.974.6
+      '@smithy/core': 3.35.1
+      '@smithy/fetch-http-handler': 5.8.0
+      '@smithy/node-http-handler': 4.12.1
+      '@smithy/types': 4.19.0
+      tslib: 2.8.1
+
+  '@aws-sdk/client-sts@3.1144.0':
+    dependencies:
+      '@aws-sdk/core': 3.978.1
+      '@aws-sdk/credential-provider-node': 3.972.84
+      '@aws-sdk/signature-v4-multi-region': 3.996.47
       '@aws-sdk/types': 3.974.6
       '@smithy/core': 3.35.1
       '@smithy/fetch-http-handler': 5.8.0

@@ -126,6 +126,7 @@ export class ContextiaCoreStack extends Stack {
       resources: ['deploy', 'file-publishing'].map(kind => `arn:${this.partition}:iam::${target.account}:role/cdk-${qualifier}-${kind}-role-${target.account}-${target.region}`) }));
     deployRole.addToPolicy(new PolicyStatement({ actions: ['cloudformation:DescribeStacks'],
       resources: [`arn:${this.partition}:cloudformation:${target.region}:${target.account}:stack/${prefix}-core/*`] }));
+    if (isDev) deployRole.addToPolicy(new PolicyStatement({ actions: ['dynamodb:GetItem'], resources: [table.tableArn] }));
 
     const userPool = new UserPool(this, 'UserPool', {
       userPoolName: `${prefix}-users`,
@@ -140,7 +141,7 @@ export class ContextiaCoreStack extends Stack {
     const webClient = userPool.addClient('WebClient', {
       userPoolClientName: `${prefix}-web`,
       generateSecret: false,
-      authFlows: { userSrp: true },
+      authFlows: { userSrp: true, userPassword: isDev },
       preventUserExistenceErrors: true,
       supportedIdentityProviders: [UserPoolClientIdentityProvider.COGNITO],
       accessTokenValidity: Duration.hours(1),
@@ -192,7 +193,7 @@ export class ContextiaCoreStack extends Stack {
       handler: 'handler',
       runtime: Runtime.NODEJS_24_X,
       role: apiRole,
-      timeout: Duration.seconds(28),
+      timeout: Duration.seconds(20),
       memorySize: 512,
       logGroup: logs,
       loggingFormat: LoggingFormat.JSON,
@@ -207,7 +208,7 @@ export class ContextiaCoreStack extends Stack {
         BEDROCK_STRUCTURED_OUTPUT: 'true',
         WEATHER_ENDPOINT: 'https://api.open-meteo.com/v1/forecast',
         STATE_TIMEOUT_MS: '1500', PLACES_TIMEOUT_MS: '2500', WEATHER_TIMEOUT_MS: '2000', ROUTES_TIMEOUT_MS: '3000', MODEL_TIMEOUT_MS: '7000',
-        ENRICHMENT_TIMEOUT_MS: '7000', EVALUATION_TIMEOUT_MS: '20000', MAX_ROUTE_PLACES: '6', ROUTE_CONCURRENCY: '4', EVENT_ROUTE_MODE: 'transit',
+        ENRICHMENT_TIMEOUT_MS: '7000', EVALUATION_TIMEOUT_MS: '17000', MAX_ROUTE_PLACES: '6', ROUTE_CONCURRENCY: '4', EVENT_ROUTE_MODE: 'transit',
         CONTEXT_TTL_SECONDS: '86400', RECOMMENDATION_TTL_SECONDS: '604800', CONVERSATION_TTL_SECONDS: '7200', IDEMPOTENCY_TTL_SECONDS: '3600'
       },
       depsLockFilePath: join(root, 'pnpm-lock.yaml'),

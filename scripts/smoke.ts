@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
-import { runAuthenticatedSmoke, runPublicSmoke, SmokeTargetSchema } from './smoke-checks.js';
+import { runAuthenticatedSmoke, runPublicSmoke, SmokeCheckError, SmokeTargetSchema } from './smoke-checks.js';
+import { smokeAuthentication, smokeMode } from './smoke-auth.js';
+import { createDynamoDbStateRepository } from '@contextia/providers';
 
 try {
   const stage = z.enum(['dev', 'prod']).parse(process.argv[2]);
@@ -11,15 +13,17 @@ try {
     apiBaseUrl: process.env.SMOKE_API_URL ?? outputs?.ApiBaseUrl, webUrl: process.env.SMOKE_WEB_URL ?? outputs?.WebUrl });
   await runPublicSmoke(target);
   console.log(`Public ${stage} smoke passed at ${target.buildId}.`);
-  const accessToken = process.env.SMOKE_ACCESS_TOKEN;
-  const secondUserToken = process.env.SMOKE_SECOND_USER_ACCESS_TOKEN;
-  if (accessToken || secondUserToken) {
-    if (!accessToken || !secondUserToken) throw new Error('Two distinct access tokens are required for authenticated smoke');
-    await runAuthenticatedSmoke(target, { accessToken, secondUserToken });
+  if (smokeMode(stage, process.env) === 'authenticated') {
+    if (stage === 'prod' && !process.env.SMOKE_ACCESS_TOKEN) throw new Error('Production authenticated smoke requires transient PKCE access tokens');
+    const tokens = await smokeAuthentication(process.env, process.env.SMOKE_WEB_CLIENT_ID ?? outputs?.WebClientId);
+    const tableName = process.env.SMOKE_TABLE_NAME ?? outputs?.TableName;
+    if (tableName !== `contextia-${stage}-data`) throw new Error('Authenticated smoke needs the selected stage table');
+    const state = createDynamoDbStateRepository({ region: 'ap-northeast-1', tableName, timeoutMs: 5000 });
+    await runAuthenticatedSmoke(target, tokens, fetch, state);
     console.log(`Authenticated ${stage} scenario/ownership/idempotency smoke passed.`);
-  } else console.log('Authenticated scenario smoke was not run (no access tokens supplied).');
-} catch {
+  } else console.log('Public diagnostic only; the authenticated dev gate was not run.');
+} catch (cause: unknown) {
   // Validation/upstream errors may contain private response data. Report only this fixed diagnostic.
-  console.error('Smoke failed. Check the selected stage, deployed SHA, public assets and authenticated provider readiness.');
+  console.error(cause instanceof SmokeCheckError ? `Smoke failed: ${cause.message}` : 'Smoke failed. Check the selected stage, deployed SHA, public assets and authenticated provider readiness.');
   process.exitCode = 1;
 }
