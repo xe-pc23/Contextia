@@ -1,0 +1,27 @@
+{
+  "name": "@contextia/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/handler.d.ts",
+      "default": "./dist/handler.js"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --project tsconfig.build.json && esbuild src/handler.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/handler.cjs",
+    "dev": "node --import tsx src/local.ts"
+  },
+  "dependencies": {
+    "@contextia/config": "workspace:*",
+    "@contextia/contracts": "workspace:*",
+    "@contextia/domain": "workspace:*",
+    "@contextia/providers": "workspace:*",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@contextia/test-fixtures": "workspace:*"
+  }
+}

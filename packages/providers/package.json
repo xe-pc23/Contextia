@@ -1,0 +1,27 @@
+{
+  "name": "@contextia/providers",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --project tsconfig.build.json"
+  },
+  "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "3.1144.0",
+    "@aws-sdk/client-dynamodb": "3.1144.0",
+    "@aws-sdk/client-geo-places": "3.1144.0",
+    "@aws-sdk/lib-dynamodb": "3.1144.0",
+    "@contextia/contracts": "workspace:*",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@contextia/test-fixtures": "workspace:*"
+  }
+}

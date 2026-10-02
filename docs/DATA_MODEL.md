@@ -317,6 +317,8 @@ TTL:
 - 2 hours after last relevant session/message, or a fixed 2-hour TTL per item.
 - no permanent chat history.
 
+Assistant messages also retain the selected, normalized recommendation cards needed to resolve references in the next follow-up turn. User messages do not contain cards. Persisted place fields must come from Storage-intent `GetPlace`, as for the initial recommendation; never store a SingleUse candidate list. Repository reads return owned, unexpired conversation DTOs with these cards, not raw DynamoDB items.
+
 ## 9. DEVICE item
 
 Example:
@@ -363,6 +365,8 @@ The example `expiresAt=1790758800` is `2026-09-30T09:00:00Z`, exactly one hour a
 
 TTL:
 - 1 hour is sufficient.
+
+A newly claimed key may have an absent/null `responsePointer` while evaluation is in progress. Claim the key atomically with its request hash. On completion, the pointer identifies a user-owned `USER#{userId} / EVALUATION_RESULT#{evaluationId}` item containing the normalized evaluation result and the same logical expiry. Exclude the HTTP envelope's request ID; each replay receives its own request ID. Complete the result and pointer atomically, and verify ownership, request hash and expiry before replay. If the cached result contains selected places, their persisted fields must come from Storage-intent `GetPlace`; SingleUse enrichments are transient. This storage layout supports the Phase 2 idempotency port; no repository adapter is implemented in Phase 0.
 
 ## 11. Access patterns and indexes
 

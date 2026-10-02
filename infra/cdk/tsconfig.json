@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // aws-cdk-lib's Bucket is not assignable to its own IBucket under this flag
+    // (optional `isWebsite`), which blocks S3 deployments. Relaxed for infra only.
+    "exactOptionalPropertyTypes": false
+  },
+  "include": [
+    "src/**/*.ts",
+    "bin/**/*.ts",
+    "test/**/*.ts"
+  ]
+}

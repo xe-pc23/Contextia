@@ -235,6 +235,8 @@ For the hackathon either is valid. Choose one and keep it consistent.
 
 Recommended initial: **BucketDeployment** for fewer workflow steps.
 
+Implemented: BucketDeployment inside `contextia-{stage}-core`. `pnpm build` must run before `pnpm cdk:synth`, because synth packages `apps/web/dist` and fails clearly if it is missing. A credential-free `validate` workflow that runs the five checks in that order is prepared. A maintainer whose token has the `workflow` scope must commit it, because agent sessions cannot push `.github/workflows`. The OIDC deploy workflows are not added yet.
+
 ## 13. Rollback
 
 Fast rollback:

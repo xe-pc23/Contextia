@@ -1,0 +1,31 @@
+{
+  "name": "@contextia/mobile",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "EXPO_NO_TELEMETRY=1 expo export --platform all --output-dir dist --max-workers 2",
+    "dev": "EXPO_NO_TELEMETRY=1 expo start --dev-client",
+    "android": "expo run:android",
+    "ios": "expo run:ios"
+  },
+  "dependencies": {
+    "@contextia/contracts": "workspace:*",
+    "expo-auth-session": "~57.0.13",
+    "expo-calendar": "~57.0.5",
+    "expo-crypto": "~57.0.3",
+    "expo": "57.0.26",
+    "expo-dev-client": "57.0.19",
+    "expo-location": "~57.0.20",
+    "expo-secure-store": "~57.0.4",
+    "expo-web-browser": "~57.0.3",
+    "react": "19.2.3",
+    "react-native": "0.86.3",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.2"
+  }
+}

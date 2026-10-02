@@ -3,17 +3,23 @@ Thumbs.db
 
 node_modules/
 .pnpm-store/
+.pnpm-cache/
+.pnpm-state/
+.superpowers/
 dist/
 build/
 coverage/
 .expo/
 .web-build/
+apps/mobile/ios/
+apps/mobile/android/
 
 .env
 .env.*
 !.env.example
 
 cdk.out/
+cdk.context.json
 *.tsbuildinfo
 
 playwright-report/
