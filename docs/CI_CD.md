@@ -260,6 +260,12 @@ Set these non-secret GitHub environment variables (or local shell variables for 
 The current dev configuration uses `amazon.nova-lite-v1:0` in Tokyo with
 `BEDROCK_STRUCTURED_OUTPUT=false`. Anthropic access in this account returned the missing-use-case
 declaration error; Nova Lite accepted a schema-valid response without that owner prerequisite.
+Dev functional SHA `0e443f8` passed the extended authenticated gate in
+[run 37057828984](https://github.com/xe-pc23/Contextia/actions/runs/37057828984), including weather fault,
+Mobile SRP, one client reservation/quota increment, duplicate/cap suppression and safe EMF coverage.
+Run these checks without simultaneous manual evaluations on the dedicated smoke identity: its latest
+context fingerprint can be replaced by another evaluation. Naturally capped later runs verify cap/replay;
+the recorded uncapped positive run remains separate evidence. Never reset counters to produce a pass.
 The authenticated smoke rebases fixture times to a future Tokyo daytime window and uses a precise
 public Shibuya Station address for event destinations. It preserves each fixture's timing gaps and
 requires actual geocoding/transit results; it does not substitute estimated transit times.

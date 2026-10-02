@@ -78,9 +78,9 @@ On 2026-10-02, this checkout is `feature/phase0-d-platform` at `7b3091b` and is 
 - [x] Check the local AWS profiles' account/Region, CDK diff, bootstrap qualifier, OIDC role trust, GitHub `dev`/`prod` environments, required non-secret variables, and Bedrock model access. Make needed CDK/workflow changes before live deployment. Record any service-level blocker precisely.
 - [x] Change `scripts/smoke.ts` so dev gate mode fails when either test-user token is absent. Enable password auth on the existing dev Web Cognito client only for two dedicated smoke users; mint short-lived tokens on each workflow run from protected `dev` environment credentials without printing them. Keep the prod Web client on PKCE. Assert `/me`, schema-valid evaluation, a DynamoDB write, and cross-user recommendation denial. Public-only smoke remains a separate diagnostic, never a passed dev gate.
 - [x] Use the validated local dev profile for the first core deployment that creates the OIDC roles; then exercise the dev workflow through OIDC. Record deployed SHA and outputs. Run public HTTPS/asset/health smoke and authenticated `/me`/step-goal evaluation.
-- [ ] Run the same preview twice. Verify the second response is visible, `wouldSuppress` identifies duplicate guards, no push is sent, and the daily notification count is unchanged. Test a valid proactive request separately in dev.
+- [x] Run the same preview twice. Verify the second response is visible, `wouldSuppress` identifies duplicate guards, no push is sent, and the daily notification count is unchanged. Test a valid proactive request separately in dev.
 - [ ] Test another user's detail/chat access denial, token/redaction in structured logs, a provider timeout, and model-schema failure. Keep successful provider evidence if one fails. Exercise proactive guard/counter behavior with a dedicated dev test user; remote notification delivery is completed in Task 6.
-- [ ] Run the five commands and live smoke on the deployed SHA; have a fresh subagent review the CDK diff, IAM trust, persistence intent, and execution evidence.
+- [x] Run the five commands and live smoke on the deployed SHA; have a fresh subagent review the CDK diff, IAM trust, persistence intent, and execution evidence.
 
 **Gate:** A dated dev URL and SHA have real Web sign-in, Places and Bedrock evidence, mandatory authenticated smoke, and preview side-effect evidence. Offline or public-only smoke does not pass this gate.
 
@@ -93,8 +93,8 @@ On 2026-10-02, this checkout is `feature/phase0-d-platform` at `7b3091b` and is 
 - [x] Use existing five fixtures to write any missing regression tests for positive, negative, boundary, candidate exclusion, duplicate behavior, at most three recommendations, and correct used signals. Pin ambiguous geocodes, unavailable transit, out-of-range forecast, and unknown selected place/route IDs.
 - [x] Repair only concrete adapter/orchestration gaps found by those tests; preserve `SingleUse` discovery and `GetPlace(IntendedUse=Storage)` for persisted selections.
 - [x] Add the `docs/DEMO.md` §8 fault selector for weather or routes only in dev, accepting only the authenticated Web demo client and rejecting the selector in prod. Test the forced provider status and visible Web degradation while other valid candidates continue.
-- [ ] Run authenticated dev smoke for all five presets and the reproducible dev-only provider-degraded case; weather-dependent scenarios may validly be silent under live conditions. Confirm chat ownership, two-hour expiry, and no raw provider payload persistence.
-- [ ] Run the five commands and a fresh subagent review of normalized facts, provider statuses, and `SPEC.md` coverage.
+- [x] Run authenticated dev smoke for all five presets and the reproducible dev-only provider-degraded case; weather-dependent scenarios may validly be silent under live conditions. Confirm chat ownership, two-hour expiry, and no raw provider payload persistence.
+- [x] Run the five commands and a fresh subagent review of normalized facts, provider statuses, and `SPEC.md` coverage.
 
 **Gate:** Five deterministic fixture paths pass, each required live provider path has at least one observed dev result or an explicitly documented coverage blocker, and the dev-only degraded case reports no fabricated transit/weather fact. Prod rejects fault injection.
 
@@ -213,3 +213,17 @@ The local AWS profiles and GitHub access should be used where available. If boot
 - The prose/provenance slice passed all five commands with 1,263 tests / 79 files. Dev-only fault
   diagnostics are emitted before the assertion so a failed case still records fixed canonical status
   codes without leaking model prose or private context. Infrastructure configuration is unchanged.
+
+## Successful extended dev evidence — 2026-10-03 05:10 JST
+
+- `0e443f828d84441ac032c045a47e40bfdb5437c8` passed [run 37057828984](https://github.com/xe-pc23/Contextia/actions/runs/37057828984):
+  validation, OIDC deploy, public SHA/assets/config, five previews, step/transit, fault degradation,
+  owned chat/expiry/cross-user denial, replay/snapshot/quota invariants, Mobile SRP, one ready client
+  reservation with one quota increment, duplicate/cap suppression and bounded safe EMF coverage.
+  No concurrent manual evaluation used that identity during this run.
+- Browser PKCE login, clean callback URL, live Japanese step recommendation and selected Places usage
+  were observed. Evidence: `docs/hackathon/evidence/dev-preview-0e443f8.jpg` and
+  `dev-diagnostics-0e443f8.jpg`; the earlier map proof covers click/editing and logout was verified.
+- Real iOS/Android rows, authenticated Simulator UI, SNS and production remain open. Mac lock prevents
+  native UI actions. MCP OAuth and local AWS login also expired; OIDC dev deployment remains usable.
+  No hardware or production gate is closed by this script/browser evidence.
