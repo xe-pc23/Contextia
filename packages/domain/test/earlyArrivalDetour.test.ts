@@ -47,6 +47,37 @@ describe('EARLY_ARRIVAL_DETOUR', () => {
     expect(await primaryCandidates(earlyArrival, { calendar: [event, event] })).toHaveLength(1);
   });
 
+  it('does not let an unrelated all-day label block a timed early-arrival opportunity', async () => {
+    const holiday = { ...event, id: 'holiday', title: 'Holiday', allDay: true, location: null,
+      startAt: '2026-10-01T00:00:00+09:00', endAt: '2026-10-02T00:00:00+09:00' };
+    const calendar = [holiday, event];
+    const before = structuredClone(calendar);
+    expect((await refined(earlyArrival, { calendar })).candidates).toHaveLength(1);
+    expect(calendar).toEqual(before);
+    const timedBusy = { ...holiday, id: 'timed-busy', allDay: false };
+    expect(await primaryCandidates(earlyArrival, { calendar: [timedBusy, event] })).toEqual([]);
+  });
+
+  it.each([false, true])('uses a successful geocode retry despite a failed entry, reversed=%s', async reverse => {
+    const evidence = getScenarioEvidence(earlyArrival);
+    const success = evidence.geocoding[0];
+    if (!success) throw new Error('Expected geocoding fixture');
+    const entries = [success, { eventId: event.id, result: { status: 'timeout' as const, data: null } }];
+    evidence.geocoding = reverse ? entries.toReversed() : entries;
+    expect((await refined(earlyArrival, {}, evidence)).candidates).toHaveLength(1);
+  });
+
+  it('deduplicates identical successful geocodes but preserves conflicting retry ambiguity', async () => {
+    const evidence = getScenarioEvidence(earlyArrival);
+    const success = evidence.geocoding[0];
+    if (!success || success.result.status !== 'ok') throw new Error('Expected geocoding fixture');
+    evidence.geocoding.push(structuredClone(success));
+    expect((await refined(earlyArrival, {}, evidence)).candidates).toHaveLength(1);
+    const destination = GeocodedPlaceSchema.parse(success.result.data[0]);
+    evidence.geocoding.push({ eventId: event.id, result: { status: 'ok', data: [{ ...destination, longitude: destination.longitude + 0.01 }] } });
+    expect((await refined(earlyArrival, {}, evidence)).exclusions[0]?.code).toBe('GEOCODE_AMBIGUOUS');
+  });
+
   it('recognizes equivalent instants and trimmed locations for duplicate event IDs', async () => {
     const equivalent = {
       ...event, startAt: new Date(event.startAt).toISOString(), endAt: new Date(event.endAt).toISOString(),

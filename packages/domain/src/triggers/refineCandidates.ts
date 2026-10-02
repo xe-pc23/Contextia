@@ -1,16 +1,16 @@
 import { CandidateEvidenceSchema, CandidateOpportunitySchema, SignalNameSchema } from '@contextia/contracts';
 import type {
-  CandidateDiagnosticCode, CandidateEvidence, CandidateOpportunity, DetectorPolicy, GeoPoint, ProviderPlace, RouteSummary, SignalName
+  CandidateDiagnosticCode, CandidateEvidence, CandidateExclusionReason, CandidateOpportunity, DetectorPolicy, GeoPoint, ProviderPlace, RouteSummary, SignalName
 } from '@contextia/contracts';
-import { calendarWindow, distanceMeters, evaluationMillis, hasEventLocation, MINUTE_MS } from './calendar.js';
+import { activityDeadlines, calendarWindow, distanceMeters, evaluationMillis, hasEventLocation, MINUTE_MS } from './calendar.js';
 import {
   generateEarlyArrivalDetourCandidates, generateFreeTimeNearbyCandidates,
   generateUpcomingEventTransitCandidates, generateWeatherAdaptationCandidates
 } from './candidateGeneration.js';
 import type { DetectorContext } from './detectorContext.js';
 import { detectorPolicy } from './detectorPolicy.js';
-import { destinationFor, journeyArrival, matchingRoutes, placesFor, weatherAt } from './evidence.js';
-import type { EvidenceResult } from './evidence.js';
+import { destinationFor, forecastWeatherBetween, journeyArrival, matchingRoutes, placesFor, weatherAt } from './evidence.js';
+import type { EvidenceResult, WeatherReading } from './evidence.js';
 import { generateStepGoalRestCandidates } from './stepGoalRest.js';
 
 export interface CandidateExclusion {
@@ -19,6 +19,7 @@ export interface CandidateExclusion {
   // null: supplied facts do not justify this opportunity. Other codes are candidate diagnostics,
   // never global delivery guards and never appended to delivery.wouldSuppress.
   readonly code: CandidateDiagnosticCode | null;
+  readonly reason?: CandidateExclusionReason;
 }
 export interface CandidateRefinementResult {
   readonly candidates: CandidateOpportunity[];
@@ -33,8 +34,10 @@ export interface RefineCandidatesInput {
   readonly availableSignals?: readonly SignalName[];
 }
 
-function excluded(candidate: CandidateOpportunity, code: CandidateDiagnosticCode | null): CandidateExclusion {
-  return { type: candidate.type, anchorKey: candidate.anchorKey, code };
+function excluded(
+  candidate: CandidateOpportunity, code: CandidateDiagnosticCode | null, reason?: CandidateExclusionReason
+): CandidateExclusion {
+  return { type: candidate.type, anchorKey: candidate.anchorKey, code, ...(reason ? { reason } : {}) };
 }
 
 export function filterCandidatesBySignals(
@@ -71,7 +74,7 @@ interface PlaceTimeBudget {
 }
 
 function activityBudgets(
-  context: DetectorContext, places: ProviderPlace[], target: GeoPoint, deadline: number,
+  context: DetectorContext, places: ProviderPlace[], target: GeoPoint, deadline: number, activityDeadline: number,
   evidence: CandidateEvidence, policy: Readonly<DetectorPolicy>
 ): PlaceTimeBudget[] {
   const now = evaluationMillis(context);
@@ -88,8 +91,9 @@ function activityBudgets(
         if (back.routeId === route.routeId) continue;
         const returnedAt = journeyArrival(back, arrival + policy.minimumActivityMinutes * MINUTE_MS);
         if (returnedAt === null || returnedAt > deadline) continue;
-        const latestDeparture = back.departAt ? Date.parse(back.departAt)
+        const returnDeparture = back.departAt ? Date.parse(back.departAt)
           : Math.min(deadline, back.arriveAt ? Date.parse(back.arriveAt) : deadline) - back.durationMinutes * MINUTE_MS;
+        const latestDeparture = Math.min(activityDeadline, returnDeparture);
         const activityMinutes = (latestDeparture - arrival) / MINUTE_MS;
         if (activityMinutes < policy.minimumActivityMinutes) continue;
         const budget = { placeId: place.placeId, outboundRouteId: route.routeId, returnRouteId: back.routeId, activityMinutes };
@@ -108,7 +112,7 @@ function hasJourneyTiming(route: RouteSummary): boolean {
 // Optional routing must not erase the gap opportunity. Keep unresolved place discovery separate
 // from verified time-fit options, and never fill a missing journey with an invented duration.
 function unverifiedActivityPlaceIds(
-  context: DetectorContext, places: ProviderPlace[], target: GeoPoint | undefined, deadline: number,
+  context: DetectorContext, places: ProviderPlace[], target: GeoPoint | undefined, deadline: number, activityDeadline: number,
   evidence: CandidateEvidence, policy: Readonly<DetectorPolicy>
 ): string[] {
   const now = evaluationMillis(context);
@@ -122,7 +126,7 @@ function unverifiedActivityPlaceIds(
     if (outward.some(route => returning.some(back => back.routeId !== route.routeId))) return false;
     const outwardCanFit = !outward.length || outward.some(route => {
       const arrival = journeyArrival(route, now);
-      return arrival !== null && arrival + activityMillis <= deadline;
+      return arrival !== null && arrival + activityMillis <= activityDeadline;
     });
     const returnCanFit = !returning.length || returning.some(route => {
       // Even with zero outward travel, an impossible return cannot fit any activity here.
@@ -133,7 +137,7 @@ function unverifiedActivityPlaceIds(
   }).map(place => place.placeId);
 }
 
-type Assessment = EvidenceResult<CandidateOpportunity | null>;
+type Assessment = EvidenceResult<CandidateOpportunity | null> & { readonly reason?: CandidateExclusionReason };
 
 function assessUpcoming(
   seed: CandidateOpportunity, context: DetectorContext, evidence: CandidateEvidence, policy: Readonly<DetectorPolicy>
@@ -142,28 +146,33 @@ function assessUpcoming(
   if (!event) return { ok: false, code: 'MISSING_REQUIRED_SIGNAL' };
   const destination = destinationFor(event.id, evidence, policy);
   if (!destination.ok) return destination;
-  const routes = matchingRoutes(evidence, 'route-to-next-event', event.id, context.location, destination.value, policy)
-    .filter(route => route.mode === 'transit' || route.mode === 'intermodal');
-  if (!routes.length) return { ok: false, code: 'PROVIDER_UNAVAILABLE' };
   const now = evaluationMillis(context);
   const deadline = Date.parse(event.startAt) - policy.arrivalBufferMinutes * MINUTE_MS;
-  for (const route of routes) {
-    const departure = route.departAt ? Date.parse(route.departAt)
-      : (route.arriveAt ? Date.parse(route.arriveAt) : deadline) - route.durationMinutes * MINUTE_MS;
-    const arrival = route.arriveAt ? Date.parse(route.arriveAt) : departure + route.durationMinutes * MINUTE_MS;
-    if (departure < now || departure > now + policy.departureLeadMinutes * MINUTE_MS || arrival > deadline) continue;
-    return { ok: true, value: {
-      ...seed, confidence: Math.min(seed.confidence, destination.value.confidence),
-      facts: {
-        ...seed.facts, destinationPlaceId: destination.value.placeId, routeId: route.routeId,
-        routeDurationMinutes: route.durationMinutes, latestDepartureAt: new Date(departure).toISOString(),
-        departureSource: route.departAt ? 'provider' : 'duration-budget',
-        ...(route.departAt ? { providerDepartAt: route.departAt } : {}),
-        ...(route.arriveAt ? { providerArriveAt: route.arriveAt } : {})
-      }
-    } };
-  }
-  return { ok: true, value: null };
+  const planned = { ...evidence, routes: evidence.routes.filter(entry =>
+    entry.arriveBy !== undefined && Date.parse(entry.arriveBy) === deadline) };
+  const routes = matchingRoutes(planned, 'route-to-next-event', event.id, context.location, destination.value, policy)
+    .filter((route): route is RouteSummary & { departAt: string; arriveAt: string } =>
+      (route.mode === 'transit' || route.mode === 'intermodal') && route.departAt !== undefined && route.arriveAt !== undefined);
+  if (!routes.length) return { ok: false, code: 'PROVIDER_UNAVAILABLE' };
+  const journeys = routes.map(route => ({ route, departure: Date.parse(route.departAt), arrival: Date.parse(route.arriveAt) }));
+  const feasible = journeys.filter(journey => journey.departure >= now && journey.arrival <= deadline)
+    .sort((a, b) => b.departure - a.departure || a.arrival - b.arrival ||
+      a.route.durationMinutes - b.route.durationMinutes ||
+      (a.route.routeId < b.route.routeId ? -1 : a.route.routeId > b.route.routeId ? 1 : 0));
+  // Missing the planned journey is a timing diagnostic, never permission to invent a replacement timetable.
+  const latest = feasible[0];
+  if (!latest) return { ok: true, value: null,
+    reason: journeys.every(journey => journey.departure < now) ? 'DEPARTURE_PASSED' : 'ARRIVAL_BUFFER_MISSED' };
+  if (latest.departure > now + policy.departureLeadMinutes * MINUTE_MS) return { ok: true, value: null };
+  const { route, departure } = latest;
+  return { ok: true, value: {
+    ...seed, confidence: Math.min(seed.confidence, destination.value.confidence),
+    facts: {
+      ...seed.facts, destinationPlaceId: destination.value.placeId, routeId: route.routeId,
+      routeDurationMinutes: route.durationMinutes, latestDepartureAt: new Date(departure).toISOString(),
+      departureSource: 'provider', providerDepartAt: route.departAt, providerArriveAt: route.arriveAt
+    }
+  } };
 }
 
 function assessActivity(
@@ -172,7 +181,9 @@ function assessActivity(
   const early = seed.type === 'EARLY_ARRIVAL_DETOUR';
   const window = calendarWindow(context);
   const event = early ? window.nextTimedEvent : window.nextEvent;
-  let target: GeoPoint | undefined = context.location;
+  // With a next event, only its confirmed destination can prove the onward journey.
+  // A return to current position is valid only for an open-ended gap without a next event.
+  let target: GeoPoint | undefined = event ? undefined : context.location;
   let destinationPlaceId: string | undefined;
   if (event && hasEventLocation(event)) {
     const destination = destinationFor(event.id, evidence, policy);
@@ -188,14 +199,13 @@ function assessActivity(
   const distance = target ? distanceMeters(context.location, target) : null;
   if (early && (distance === null || distance + (context.location.accuracyMeters ?? 0) > policy.earlyArrivalRadiusMeters)) return { ok: true, value: null };
   const now = evaluationMillis(context);
-  const end = Math.min(now + policy.maximumFreeTimeMinutes * MINUTE_MS, event ? Date.parse(event.startAt) : Number.POSITIVE_INFINITY);
-  const deadline = end - (event ? policy.arrivalBufferMinutes : 0) * MINUTE_MS;
-  if (!early && deadline - now < policy.minimumActivityMinutes * MINUTE_MS) return { ok: true, value: null };
+  const { activityDeadlineAt: activityDeadline, returnDeadlineAt: deadline } = activityDeadlines(context, policy, event, early);
+  if (!early && activityDeadline - now < policy.minimumActivityMinutes * MINUTE_MS) return { ok: true, value: null };
   const nearby = placesFor(evidence, early ? 'places-near-destination' : 'places-near-current', early && event ? event.id : 'current');
   if (!nearby.ok) return nearby;
   if (!nearby.value.length) return { ok: true, value: null };
-  const budgets = target ? activityBudgets(context, nearby.value, target, deadline, evidence, policy) : [];
-  const unverifiedPlaceIds = early ? [] : unverifiedActivityPlaceIds(context, nearby.value, target, deadline, evidence, policy);
+  const budgets = target ? activityBudgets(context, nearby.value, target, deadline, activityDeadline, evidence, policy) : [];
+  const unverifiedPlaceIds = early ? [] : unverifiedActivityPlaceIds(context, nearby.value, target, deadline, activityDeadline, evidence, policy);
   if (!budgets.length && !unverifiedPlaceIds.length) {
     if (!early) return { ok: true, value: null };
     const hasRoutes = target && nearby.value.some(place => {
@@ -211,29 +221,48 @@ function assessActivity(
     facts: {
       ...seed.facts, eligiblePlaceIds: budgets.map(budget => budget.placeId), placeTimeBudgets: budgets,
       returnDeadlineAt: new Date(deadline).toISOString(),
-      ...(!early ? { unverifiedPlaceIds, minimumActivityMinutes: policy.minimumActivityMinutes } : {}),
+      ...(!early ? { unverifiedPlaceIds, minimumActivityMinutes: policy.minimumActivityMinutes,
+        activityDeadlineAt: new Date(activityDeadline).toISOString() } : {}),
       ...(destinationPlaceId ? { destinationPlaceId } : {}),
       ...(early ? { destinationDistanceMeters: distance, accuracyMeters: context.location.accuracyMeters ?? null } : {})
     }
   } };
 }
 
-function assessWeather(
-  seed: CandidateOpportunity, context: DetectorContext, evidence: CandidateEvidence, policy: Readonly<DetectorPolicy>
-): Assessment {
-  const weather = weatherAt(evidence, evaluationMillis(context), policy);
-  if (!weather) return { ok: false, code: 'PROVIDER_UNAVAILABLE' };
+function weatherIssues(weather: WeatherReading, policy: Readonly<DetectorPolicy>): string[] {
   const wet = ['rain', 'snow', 'storm'].includes(weather.condition) ||
     (weather.precipitationMillimeters ?? 0) >= policy.precipitationThresholdMillimeters ||
     (weather.precipitationProbability ?? 0) >= policy.precipitationProbabilityThreshold;
   const temperature = weather.feelsLikeCelsius ?? weather.temperatureCelsius;
   const hot = temperature !== null && temperature >= policy.heatThresholdCelsius;
-  if (!wet && !hot) return { ok: true, value: null };
+  return [...(wet ? ['precipitation'] : []), ...(hot ? ['heat'] : [])];
+}
+
+function assessWeather(
+  seed: CandidateOpportunity, context: DetectorContext, evidence: CandidateEvidence, policy: Readonly<DetectorPolicy>,
+  calendarAvailable: boolean
+): Assessment {
+  const now = evaluationMillis(context);
+  const current = weatherAt(evidence, now, policy, context.mode);
+  const window = calendarWindow(context);
+  const event = window.nextTimedEvent;
+  const forecasts = (!current || !weatherIssues(current, policy).length) && calendarAvailable && event &&
+    !window.ambiguousIds.has(event.id) && Date.parse(event.startAt) <= now + policy.upcomingEventHorizonMinutes * MINUTE_MS
+    ? forecastWeatherBetween(evidence, now, Date.parse(event.startAt)) : [];
+  const worsening = forecasts.find(reading => weatherIssues(reading.weather, policy).length > 0);
+  const weather = worsening?.weather ?? current ?? forecasts[0]?.weather;
+  if (!weather) return { ok: false, code: 'PROVIDER_UNAVAILABLE' };
+  const issues = weatherIssues(weather, policy);
+  if (!issues.length) return { ok: true, value: null };
   const places = placesFor(evidence, 'places-near-current', 'current');
-  return { ok: true, value: { ...seed, facts: {
-    ...seed.facts, weather, weatherIssues: [...(wet ? ['precipitation'] : []), ...(hot ? ['heat'] : [])],
-    eligiblePlaceIds: places.ok ? places.value.map(place => place.placeId) : []
-  } } };
+  return { ok: true, value: {
+    ...seed, requiredSignals: worsening ? [...seed.requiredSignals, 'calendar'] : seed.requiredSignals,
+    facts: {
+      ...seed.facts, weather, weatherIssues: issues,
+      weatherAssessmentAt: new Date(worsening?.at ?? now).toISOString(),
+      eligiblePlaceIds: places.ok ? places.value.map(place => place.placeId) : []
+    }
+  } };
 }
 
 // Run once all required needs have been attempted. Missing/not_requested required evidence is not
@@ -266,7 +295,7 @@ export function refineCandidates(input: RefineCandidatesInput): CandidateRefinem
         case 'UPCOMING_EVENT_TRANSIT': return assessUpcoming(seed, input.context, evidence, policy);
         case 'FREE_TIME_NEARBY':
         case 'EARLY_ARRIVAL_DETOUR': return assessActivity(seed, input.context, evidence, policy);
-        case 'WEATHER_ADAPTATION': return assessWeather(seed, input.context, evidence, policy);
+        case 'WEATHER_ADAPTATION': return assessWeather(seed, input.context, evidence, policy, explicitSignals?.has('calendar') ?? true);
         case 'STEP_GOAL_REST': {
           const places = placesFor(evidence, 'places-near-current', 'current');
           if (!places.ok) return places;
@@ -277,7 +306,7 @@ export function refineCandidates(input: RefineCandidatesInput): CandidateRefinem
       }
     })();
     if (result.ok && result.value) kept.push(CandidateOpportunitySchema.parse(result.value));
-    else exclusions.push(excluded(seed, result.ok ? null : result.code));
+    else exclusions.push(excluded(seed, result.ok ? null : result.code, result.reason));
   }
   return { candidates: kept, exclusions };
 }

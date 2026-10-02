@@ -1,11 +1,16 @@
 import { z } from 'zod';
-import { OpaqueIdSchema } from './context.js';
+import { OpaqueIdSchema, TimestampSchema } from './context.js';
 import { ProviderNeedSchema } from './enums.js';
 import { GeocodedPlaceSchema, ProviderPlaceSchema, RouteSummarySchema, WeatherSnapshotSchema, providerResultSchema } from './enrichment.js';
 
-// Transient, normalized evidence only. Structurally compatible with the provider port's enrichment.
-// Event routes use eventId as anchorKey. Activity routes use placeId, with explicit origin/destination;
-// supply both outward and return/onward routes rather than assuming a symmetric journey.
+export const CURRENT_PLACE_ANCHOR = 'current';
+
+// Transient evidence: detectCandidates -> attempt declared provider needs -> refineCandidates -> model.
+// places-near-current uses CURRENT_PLACE_ANCHOR; places-near-destination uses the destination eventId.
+// Event routes use eventId; activity routes use placeId and explicit endpoints in both directions.
+// For route-to-next-event, record the actual RouteProvider request's arriveBy (event start minus buffer).
+// Only arrival-planned results with both provider timestamps can prove the latest practical departure.
+// Departure-now results and duration-only transit must not be presented as an arrival-optimized timetable.
 export const CandidateEvidenceSchema = z.strictObject({
   geocoding: z.array(z.strictObject({
     eventId: OpaqueIdSchema, result: providerResultSchema(GeocodedPlaceSchema.array())
@@ -13,6 +18,10 @@ export const CandidateEvidenceSchema = z.strictObject({
   places: z.array(z.strictObject({
     need: ProviderNeedSchema.extract(['places-near-current', 'places-near-destination']),
     anchorKey: OpaqueIdSchema, result: providerResultSchema(ProviderPlaceSchema.array())
+  }).superRefine((entry, ctx) => {
+    if (entry.need === 'places-near-current' && entry.anchorKey !== CURRENT_PLACE_ANCHOR) {
+      ctx.addIssue({ code: 'custom', path: ['anchorKey'], message: 'places-near-current must use the current anchor' });
+    }
   })).default([]),
   weather: z.array(z.strictObject({
     need: ProviderNeedSchema.extract(['weather-current', 'weather-today']),
@@ -20,7 +29,7 @@ export const CandidateEvidenceSchema = z.strictObject({
   })).default([]),
   routes: z.array(z.strictObject({
     need: ProviderNeedSchema.extract(['route-to-next-event', 'route-to-place-candidates']),
-    anchorKey: OpaqueIdSchema, result: providerResultSchema(RouteSummarySchema)
+    anchorKey: OpaqueIdSchema, arriveBy: TimestampSchema.optional(), result: providerResultSchema(RouteSummarySchema)
   })).default([])
 });
 
