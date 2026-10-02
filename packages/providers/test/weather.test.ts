@@ -62,6 +62,86 @@ const input = {
 };
 
 describe('OpenMeteoWeatherProvider', () => {
+  it.each(['15', '30', '45'])('uses current conditions at the quarter-hour %s within their freshness interval', async minute => {
+    const sourceTime = `2026-10-01T14:${minute}`;
+    const sourceInstant = Date.parse(`2026-10-01T05:${minute}:00.000Z`);
+    const at = new Date(sourceInstant + 60_000).toISOString();
+    const { provider } = testProvider({
+      clock: () => new Date(sourceInstant + 60_001),
+      payload: weatherResponse({ current: {
+        time: sourceTime, interval: 900, temperature_2m: 31, apparent_temperature: 32,
+        precipitation: 1, weather_code: 61
+      } })
+    });
+
+    await expect(provider.getWeather({ ...input, at })).resolves.toMatchObject({
+      status: 'ok', data: {
+        at, sourceTimestamp: new Date(sourceInstant).toISOString(),
+        condition: 'rain', temperatureCelsius: 31, feelsLikeCelsius: 32, precipitationMillimeters: 1
+      }
+    });
+  });
+
+  it('keeps a future scenario on hourly forecast data even within the current interval', async () => {
+    const { provider } = testProvider({
+      clock: () => new Date('2026-10-01T05:15:00.000Z'),
+      payload: weatherResponse({ current: {
+        time: '2026-10-01T14:15', interval: 900, temperature_2m: 31, apparent_temperature: 32,
+        precipitation: 1, weather_code: 61
+      } })
+    });
+
+    await expect(provider.getWeather({ ...input, at: '2026-10-01T05:20:00.000Z' })).resolves.toMatchObject({
+      status: 'ok', data: { sourceTimestamp: '2026-10-01T05:00:00.000Z', condition: 'clear', temperatureCelsius: 22 }
+    });
+  });
+
+  it.each([
+    { at: '2026-10-01T05:14:59.999Z', now: '2026-10-01T05:16:00.000Z' },
+    { at: '2026-10-01T05:30:00.000Z', now: '2026-10-01T05:30:00.001Z' },
+    { at: '2026-10-01T05:20:00.000Z', now: '2026-10-01T05:30:00.000Z' }
+  ])('rejects past scenarios before the observation or outside a fresh interval: $at at $now', async ({ at, now }) => {
+    const { provider } = testProvider({
+      clock: () => new Date(now),
+      payload: weatherResponse({ current: {
+        time: '2026-10-01T14:15', interval: 900, temperature_2m: 31, apparent_temperature: 32,
+        precipitation: 1, weather_code: 61
+      } })
+    });
+
+    await expect(provider.getWeather({ ...input, at })).resolves.toMatchObject({
+      status: 'unavailable', data: null, code: 'FORECAST_OUT_OF_RANGE'
+    });
+  });
+
+  it('does not invent a freshness interval when current.interval is missing', async () => {
+    const { provider } = testProvider({
+      clock: () => new Date('2026-10-01T05:15:00.002Z'),
+      payload: weatherResponse({ current: {
+        time: '2026-10-01T14:15', temperature_2m: 31, apparent_temperature: 32, precipitation: 1, weather_code: 61
+      } })
+    });
+
+    await expect(provider.getWeather({ ...input, at: '2026-10-01T05:15:00.000Z' })).resolves.toMatchObject({ status: 'ok' });
+    await expect(provider.getWeather({ ...input, at: '2026-10-01T05:15:00.001Z' })).resolves.toMatchObject({
+      status: 'unavailable', data: null, code: 'FORECAST_OUT_OF_RANGE'
+    });
+  });
+
+  it('keeps current conditions through the instant before interval expiry', async () => {
+    const { provider } = testProvider({
+      clock: () => new Date('2026-10-01T05:29:59.999Z'),
+      payload: weatherResponse({ current: {
+        time: '2026-10-01T14:15', interval: 900, temperature_2m: 31, apparent_temperature: 32,
+        precipitation: 1, weather_code: 61
+      } })
+    });
+
+    await expect(provider.getWeather({ ...input, at: '2026-10-01T05:29:59.998Z' })).resolves.toMatchObject({
+      status: 'ok', data: { sourceTimestamp: '2026-10-01T05:15:00.000Z', condition: 'rain', temperatureCelsius: 31 }
+    });
+  });
+
   it('requests current, hourly, and daily fields and normalizes the requested forecast hour', async () => {
     const { provider, fetch } = testProvider();
 

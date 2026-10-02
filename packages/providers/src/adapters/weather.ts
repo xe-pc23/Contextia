@@ -18,7 +18,8 @@ const OpenMeteoResponseSchema = z.object({
   timezone: z.string().min(1),
   utc_offset_seconds: z.number().int(),
   current: z.object({
-    time: z.string(), temperature_2m: NullableNumber.optional(), apparent_temperature: NullableNumber.optional(),
+    time: z.string(), interval: z.number().int().positive().optional(),
+    temperature_2m: NullableNumber.optional(), apparent_temperature: NullableNumber.optional(),
     precipitation: NullableNumber.optional(), weather_code: NullableInteger.optional()
   }).passthrough().optional(),
   hourly: z.object({
@@ -124,7 +125,15 @@ function normalizeWeather(raw: unknown, input: WeatherInput, now: Date): Provide
   const currentTime = response.current?.time;
   const targetMs = Date.parse(input.at);
   const nowMs = now.getTime();
-  const canUseCurrent = targetMs <= nowMs && currentTime === targetTime;
+  const currentSourceTimestamp = currentTime === undefined ? null : toSourceTimestamp(currentTime, response.utc_offset_seconds);
+  const currentMs = currentSourceTimestamp === null ? NaN : Date.parse(currentSourceTimestamp);
+  const currentInterval = response.current?.interval;
+  // Open-Meteo's interval describes backward-looking aggregates. Use it as a conservative
+  // freshness limit for current conditions, without projecting them into future scenarios.
+  // Without an interval, only the exact provider timestamp proves applicability.
+  const canUseCurrent = currentMs <= targetMs && targetMs <= nowMs && (currentInterval === undefined
+    ? targetMs === currentMs
+    : targetMs < currentMs + currentInterval * 1_000 && nowMs < currentMs + currentInterval * 1_000);
   if ((!hourly || targetIndex < 0) && !canUseCurrent) {
     return { status: 'unavailable', data: null, code: 'FORECAST_OUT_OF_RANGE' };
   }
