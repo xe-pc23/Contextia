@@ -13,6 +13,7 @@ export interface UserState {
   notificationsSentToday: number;
   latestContext?: ContextReference;
   latestContextFingerprint?: string;
+  latestContextProcessedAt?: string;
   latestRecommendationAt?: string;
   recentAnchors: RecentAnchor[];
 }
@@ -83,10 +84,12 @@ export interface StateRepository {
   getProfile(input: { userId: string }): Promise<ProviderResult<Profile | null>>;
   putPreferences(input: { userId: string; preferences: UserPreferences; at: string }): Promise<ProviderResult<null>>;
   getState(input: OwnedRead): Promise<ProviderResult<UserState | null>>;
-  writeContextSnapshot(input: { userId: string; snapshot: ContextSnapshot; fingerprint: string }): Promise<ProviderResult<null>>;
+  writeContextSnapshot(input: { userId: string; snapshot: ContextSnapshot; fingerprint: string; processedAt: string; notificationDay: string }): Promise<ProviderResult<null>>;
   getContextSnapshot(input: OwnedRead & { reference: ContextReference }): Promise<ProviderResult<ContextSnapshot | null>>;
   // Write history and its ID pointer atomically; unwrap/project only the normalized Storage places.
   writeRecommendation(input: { userId: string; recommendation: RecommendationWrite }): Promise<ProviderResult<null>>;
+  // Proactive recommendations, their ID pointer, quota and anchor are committed in one transaction.
+  commitProactiveRecommendation(input: { userId: string; recommendation: RecommendationWrite; delivery: ProactiveDeliveryWrite }): Promise<ProviderResult<DeliveryWriteResult>>;
   getRecommendation(input: OwnedRead & { recommendationId: string }): Promise<ProviderResult<RecommendationRecord | null>>;
   listRecommendations(input: OwnedRead & { limit: number; cursor?: string }): Promise<ProviderResult<{ items: RecommendationRecord[]; nextCursor: string | null }>>;
   // Atomically recheck cap, fingerprint, anchor and recommendation ID; exclude this evaluation's own latest snapshot.
