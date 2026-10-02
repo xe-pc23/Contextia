@@ -14,6 +14,19 @@ function places(): PlacesProvider {
   return { searchNearby: vi.fn(async () => ok(pool)), getPlace: vi.fn() };
 }
 describe('provider orchestration bounds', () => {
+  it('does not apply current-only opening status to a simulated time or omit its route fanout', async () => {
+    const currentClosed = { ...place, isOpen: false };
+    const provider: PlacesProvider = { searchNearby: vi.fn(async () => ok([currentClosed])), getPlace: vi.fn() };
+    const routes = { getRoute: vi.fn<RouteProvider['getRoute']>(async () => ({ status: 'unavailable', data: null })) };
+    const simulated = await enrichCandidates({ context, evaluationAt: NOW, preferences, candidates: [candidate], providers: { places: provider, routes }, policy: defaultEvaluationPolicy });
+    expect(simulated.enrichment.places[0]?.result.data?.[0]).not.toHaveProperty('isOpen');
+    expect(routes.getRoute).toHaveBeenCalled();
+    routes.getRoute.mockClear();
+    const real = await enrichCandidates({ context: { ...context, mode: 'real', deliveryMode: 'proactive' }, evaluationAt: NOW, preferences, candidates: [candidate], providers: { places: provider, routes }, policy: defaultEvaluationPolicy });
+    expect(real.enrichment.places[0]?.result.data?.[0]?.isOpen).toBe(false);
+    expect(routes.getRoute).not.toHaveBeenCalled();
+    expect(currentClosed.isOpen).toBe(false);
+  });
   it('uses the transit candidate planning deadline and records the actual route request', async () => {
     const event = upcomingTransit.context.calendar[0];
     if (!event) throw new Error('upcoming-transit fixture needs an event');

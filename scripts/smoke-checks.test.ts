@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { assertCappedProactive, assertPreviewStateUnchanged, assertProactiveTransition, assertWeatherFault, hasLiveTransitProof, liveSmokeContext, liveTransitProofContext, nextLiveSmokeTime, runPublicSmoke, smokeProviderDiagnostic } from './smoke-checks.js';
+import { assertCappedProactive, assertPreviewStateUnchanged, assertProactiveTransition, assertWeatherFault, hasLiveTransitProof, initializeProfile, liveSmokeContext, liveTransitProofContext, nextLiveSmokeTime, runPublicSmoke, smokeProviderDiagnostic } from './smoke-checks.js';
 import { ContextEvaluateResponseSchema } from '@contextia/contracts';
 import { getScenarioInput } from '@contextia/test-fixtures';
 const target = { stage: 'dev' as const, buildId: 'sha-1', apiBaseUrl: 'https://api.example.com', webUrl: 'https://web.example.com/' };
@@ -75,6 +75,19 @@ describe('public deployment smoke', () => {
   });
 });
 describe('preview delivery invariants', () => {
+  it('preserves a profile created by another client during smoke initialization', async () => {
+    let reads = 0;
+    const fetcher = vi.fn<typeof fetch>(async (_input, init) => {
+      if (init?.method === 'PUT') {
+        expect(new Headers(init.headers).get('If-None-Match')).toBe('*');
+        return Response.json({ requestId: 'r', error: { code: 'PROFILE_EXISTS', message: 'Created by another client' } }, { status: 412 });
+      }
+      if (++reads === 1) return Response.json({ requestId: 'r', error: { code: 'PROFILE_NOT_FOUND', message: 'Missing' } }, { status: 404 });
+      return Response.json({ requestId: 'r', data: { userId: 'smoke-user', preferences: { interests: ['park'], stepGoal: 8000, notificationFrequency: 'low', notificationsEnabled: false, locale: 'ja-JP', timezone: 'Asia/Tokyo' } } });
+    });
+    await initializeProfile('https://api.example.com', 'transient-token', fetcher);
+    expect(reads).toBe(2); expect(fetcher).toHaveBeenCalledTimes(3);
+  });
   it('requires the forced weather failure to stay explicit while valid step suggestions continue', () => {
     const result = { decision: 'notify', triggerType: 'STEP_GOAL_REST', weather: null,
       delivery: { mode: 'preview', status: 'preview' },

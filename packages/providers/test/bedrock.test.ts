@@ -90,7 +90,7 @@ function modelInput(overrides: Partial<RecommendationModelInput> = {}): Recommen
       weather: [],
       routes: [{
         need: 'route-to-place-candidates',
-        anchorKey: 'current',
+        anchorKey: place.placeId,
         result: { status: 'ok', data: route }
       }]
     },
@@ -142,6 +142,14 @@ function hasFalseItems(value: unknown): boolean {
 }
 
 describe('BedrockRecommendationModel', () => {
+  it('rejects crossed place/route references in compact and saved follow-up cards', async () => {
+    const input = modelInput();
+    input.enrichment.places[0]!.result = { status: 'ok', data: [place, { ...place, placeId: 'place-2', name: 'Other', longitude: 139.78 }] };
+    const wrong = { ...notifyDecision, recommendations: [{ title: 'Other', reason: 'wrong route', placeRef: 'place-1', routeRef: 'route-0', action: { type: 'MAP' } }] };
+    expect(await model(fakeClient([response(wrong), response(wrong)]).client).decide(input)).toMatchObject({ status: 'error', code: 'INVALID_MODEL_OUTPUT' });
+    const reply = { reply: 'Other', recommendations: wrong.recommendations };
+    expect(await model(fakeClient([response(reply), response(reply)]).client).followUp(followUpInput({ enrichment: input.enrichment }))).toMatchObject({ status: 'error', code: 'INVALID_MODEL_OUTPUT' });
+  });
   it('counts every invalid output, including a recovered repair and a repair transport failure', async () => {
     for (const [second, expected, status] of [[response(notifyDecision), 1, 'degraded'], [new Error('transport'), 1, 'error'], [response({ invalid: true }), 2, 'error']] as const) {
       const entries: unknown[] = []; const fake = fakeClient([response({ private: 'invalid' }), second]);
@@ -433,7 +441,7 @@ describe('BedrockRecommendationModel followUp', () => {
       enrichment: {
         ...emptyEnrichment,
         places: [{ need: 'places-near-current', anchorKey: 'current', result: { status, data: [currentPlace] } }],
-        routes: [{ need: 'route-to-place-candidates', anchorKey: 'current', result: { status, data: currentRoute } }]
+        routes: [{ need: 'route-to-place-candidates', anchorKey: currentPlace.placeId, result: { status, data: currentRoute } }]
       }
     });
 

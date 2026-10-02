@@ -39,7 +39,8 @@ const SYSTEM_PROMPT = [
   'The decision object has exactly six top-level fields: decision, decisionReason, usedSignals, urgency, message, recommendations. Do not add fields such as $schema, anyOf, properties or triggerType.',
   'decision is exactly "notify" or "silent". For "silent", urgency and message are null and recommendations is []. For "notify", urgency is "low", "medium" or "high", message is a nonempty string, and recommendations has one to three cards.',
   'Prefer one useful concise card. usedSignals uses only supplied signal names. Every card has title, reason, action, and optional placeRef/routeRef from referenceCatalog.',
-  'Return references such as place-0 and route-0, never place/route objects, coordinates, times, or extra provider metadata. Source facts are attached by the application. Keep title, reason and message short.'
+  'Return references such as place-0 and route-0, never place/route objects, coordinates, times, or extra provider metadata. Source facts are attached by the application. Keep title, reason and message short.',
+  'When a card includes both a placeRef and routeRef, that placeRef must be in the route’s allowedPlaceRefs.'
 ].join(' ');
 
 const FOLLOW_UP_SYSTEM_PROMPT = [
@@ -50,6 +51,7 @@ const FOLLOW_UP_SYSTEM_PROMPT = [
   'If a fact is unavailable, say so. Keep the reply to one to three concise sentences in the user locale.',
   'Stay within this recommendation. Return only the requested reply object, with at most three recommendation cards.',
   'Cards contain title, reason, action and optional placeRef/routeRef from referenceCatalog. Never copy place/route objects or metadata. Prefer one concise card.',
+  'A placeRef and routeRef in one card must be an allowed pairing in the route’s allowedPlaceRefs.',
   'Do not provide internal reasoning.'
 ].join(' ');
 
@@ -59,7 +61,7 @@ const ReferenceDecisionSchema = z.discriminatedUnion('decision', [
   NotifyDecisionSchema.omit({ recommendations: true }).extend({ recommendations: z.array(ReferenceCardSchema).min(1).max(3) }), SilentDecisionSchema
 ]);
 const ReferenceReplySchema = ChatReplySchema.omit({ recommendations: true }).extend({ recommendations: z.array(ReferenceCardSchema).max(3) });
-type ReferenceCatalog = { places: { ref: string; value: NonNullable<RecommendationItem['place']> }[]; routes: { ref: string; value: NonNullable<RecommendationItem['route']> }[] };
+type ReferenceCatalog = { places: { ref: string; value: NonNullable<RecommendationItem['place']> }[]; routes: { ref: string; value: NonNullable<RecommendationItem['route']>; allowedPlaceRefs: string[] }[] };
 
 function referenceCatalog(enrichment: ProviderEnrichment, saved: RecommendationItem[] = []): ReferenceCatalog {
   const places = [...candidatePlaces(enrichment), ...saved.flatMap(item => item.place ? [item.place] : [])].map(place => ({
@@ -72,8 +74,10 @@ function referenceCatalog(enrichment: ProviderEnrichment, saved: RecommendationI
     ...(route.attributions === undefined ? {} : { attributions: route.attributions })
   }));
   // Identical facts share one reference; conflicting facts retain distinct, unambiguous references.
-  return { places: [...new Map(places.map(value => [JSON.stringify(value), value])).values()].map((value, index) => ({ ref: `place-${index}`, value })),
-    routes: [...new Map(routes.map(value => [JSON.stringify(value), value])).values()].map((value, index) => ({ ref: `route-${index}`, value })) };
+  const catalogPlaces = [...new Map(places.map(value => [JSON.stringify(value), value])).values()].map((value, index) => ({ ref: `place-${index}`, value }));
+  return { places: catalogPlaces,
+    routes: [...new Map(routes.map(value => [JSON.stringify(value), value])).values()].map((value, index) => ({ ref: `route-${index}`, value,
+      allowedPlaceRefs: catalogPlaces.filter(place => associatedRouteFacts(place.value.placeId, enrichment, saved).some(route => matchesRoute(value, route))).map(place => place.ref) })) };
 }
 function hydrateCards(cards: z.infer<typeof ReferenceCardSchema>[], catalog: ReferenceCatalog): RecommendationItem[] | null {
   const result: RecommendationItem[] = [];
@@ -284,7 +288,17 @@ function matchesRoute(recommendationRoute: NonNullable<RecommendationItem['route
     && recommendationRoute.durationMinutes === route.durationMinutes
     && (recommendationRoute.departAt === undefined || recommendationRoute.departAt === route.departAt)
     && (recommendationRoute.arriveAt === undefined || recommendationRoute.arriveAt === route.arriveAt)
-    && (recommendationRoute.transfers === undefined || recommendationRoute.transfers === route.transfers);
+    && (recommendationRoute.transfers === undefined || recommendationRoute.transfers === route.transfers)
+    && (recommendationRoute.attributions === undefined || JSON.stringify(recommendationRoute.attributions) === JSON.stringify(route.attributions));
+}
+
+function associatedRouteFacts(placeId: string, enrichment: ProviderEnrichment, saved: RecommendationItem[]): NonNullable<RecommendationItem['route']>[] {
+  return [...enrichment.routes.flatMap(entry => {
+    if (entry.result.status !== 'ok' && entry.result.status !== 'degraded') return [];
+    const associated = entry.need === 'route-to-place-candidates' ? entry.anchorKey === placeId
+      : enrichment.geocoding.some(destination => destination.eventId === entry.anchorKey && (destination.result.status === 'ok' || destination.result.status === 'degraded') && destination.result.data.some(place => place.placeId === placeId));
+    return associated ? [entry.result.data] : [];
+  }), ...saved.flatMap(card => card.route && card.place?.placeId === placeId ? [card.route] : [])];
 }
 
 function usesOnlySuppliedReferences(
@@ -296,7 +310,7 @@ function usesOnlySuppliedReferences(
   const routes = [...candidateRoutes(enrichment), ...savedRecommendations.flatMap(item => item.route == null ? [] : [item.route])];
   return recommendations.every(item => {
     const placeIsSupplied = item.place == null || places.some(place => matchesPlace(item.place!, place));
-    const routeIsSupplied = item.route == null || routes.some(route => matchesRoute(item.route!, route));
+    const routeIsSupplied = item.route == null || (item.place == null ? routes : associatedRouteFacts(item.place.placeId, enrichment, savedRecommendations)).some(route => matchesRoute(item.route!, route));
     return placeIsSupplied && routeIsSupplied;
   });
 }

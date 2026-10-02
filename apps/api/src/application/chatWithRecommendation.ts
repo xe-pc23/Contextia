@@ -2,7 +2,7 @@ import { ChatReplySchema, ContextInputSchema, ProviderPlaceSchema } from '@conte
 import type { ApiRecommendationItem, ChatResponse, ContextInput, ProviderPlace } from '@contextia/contracts';
 import type { PlacesProvider, ProviderEnrichment, RecommendationModel, StateRepository, StoragePlace, StorageRecommendationItem } from '@contextia/providers';
 import { ApiFailure } from './apiFailure.js';
-import { matchingRoute, publicPlace, referenceError } from './references.js';
+import { matchingSavedRoute, publicPlace, referenceError } from './references.js';
 import { providerCall } from './providerCall.js';
 
 export type ChatRepository = Pick<StateRepository, 'getProfile' | 'getRecommendation' | 'getContextSnapshot' | 'getConversation' | 'appendConversationTurn'>;
@@ -68,8 +68,7 @@ export function createChatWithRecommendation(deps: ChatDependencies): ChatWithRe
     }), deps.modelTimeoutMs ?? 7000);
     if (reply.status !== 'ok' && reply.status !== 'degraded') throw new ApiFailure('MODEL_UNAVAILABLE');
     const parsed = ChatReplySchema.safeParse(reply.data);
-    const routes = cards.flatMap(card => card.route ? [card.route] : []);
-    if (!parsed.success || referenceError(parsed.data.recommendations, enrichment, routes)) throw new ApiFailure('INVALID_MODEL_OUTPUT');
+    if (!parsed.success || referenceError(parsed.data.recommendations, enrichment, cards)) throw new ApiFailure('INVALID_MODEL_OUTPUT');
     const sourcePlaces = new Map(places.map(place => [place.placeId, place]));
     const storedPlaces = new Map<string, StoragePlace>();
     const selectedIds = [...new Set(parsed.data.recommendations.flatMap(item => item.place ? [item.place.placeId] : []))];
@@ -84,7 +83,7 @@ export function createChatWithRecommendation(deps: ChatDependencies): ChatWithRe
     const items = parsed.data.recommendations.map(item => {
       const id = deps.newId('item');
       const place = item.place ? storedPlaces.get(item.place.placeId) : undefined;
-      const route = item.route ? matchingRoute(item.route, cards.flatMap(card => card.route ? [card.route] : [])) : null;
+      const route = matchingSavedRoute(item, cards);
       const api: ApiRecommendationItem = { ...item, id, place: place ? publicPlace(place.place) : null, route: route ?? null };
       const storage: StorageRecommendationItem = { ...api, place: place ?? null };
       return { api, storage };

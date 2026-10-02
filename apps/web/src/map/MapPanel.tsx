@@ -18,8 +18,9 @@ export function MapPanel({ latitude, longitude, config, onSelect }: {
     let disposed = false;
     const element = container.current;
     setStatus('loading');
-    void import('maplibre-gl').then(library => {
+    void Promise.all([import('maplibre-gl'), import('maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url')]).then(([library, worker]) => {
       if (disposed) return;
+      library.setWorkerUrl(worker.default);
       const point = parseMapPoint(current.current.latitude, current.current.longitude) ?? { latitude: 35.681236, longitude: 139.767125 };
       const instance = new library.Map({ container: element, style: mapStyleUrl(config), center: [point.longitude, point.latitude], zoom: 14 });
       map.current = instance;

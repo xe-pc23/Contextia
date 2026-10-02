@@ -11,7 +11,7 @@ import type { EvaluationDomain, GuardCheckInput, GuardUserState } from './evalua
 import { contextFingerprint, hashCalendarId } from './fingerprint.js';
 import { enrichCandidates } from './enrichCandidates.js';
 import type { EnrichmentPolicy, EnrichmentProviders } from './enrichCandidates.js';
-import { publicPlace, publicRoute, referenceError, suppliedRoutes } from './references.js';
+import { associatedRoutes, matchingRoute, publicPlace, publicRoute, referenceError } from './references.js';
 import { providerCall, statusOf } from './providerCall.js';
 import { claimEvaluation } from './idempotency.js';
 import type { IdempotencyRepository } from './idempotency.js';
@@ -323,15 +323,11 @@ export function createEvaluateContext(deps: EvaluationDependencies): EvaluateCon
         providerStatus.places = { status: 'degraded', code: 'PLACE_STORAGE_UNAVAILABLE' };
         return finish(silent('Selected website could not be stored safely.', [...previewCodes, 'NO_MEANINGFUL_OPPORTUNITY']));
       }
-      const routes = suppliedRoutes(enrichment);
       const items = decision.recommendations.map(item => {
         const id = deps.newId('item');
         const storagePlace = item.place ? storagePlaces.get(item.place.placeId) ?? null : null;
         const place = storagePlace ? publicPlace(storagePlace.place) : null;
-        const sourceRoute = item.route ? routes.find(route => route.mode === item.route?.mode && route.durationMinutes === item.route.durationMinutes
-          && (item.route.departAt === undefined || item.route.departAt === route.departAt)
-          && (item.route.arriveAt === undefined || item.route.arriveAt === route.arriveAt)
-          && (item.route.transfers === undefined || item.route.transfers === route.transfers)) : undefined;
+        const sourceRoute = item.route ? matchingRoute(item.route, associatedRoutes(item, enrichment)) : undefined;
         const api: ApiRecommendationItem = { id, title: item.title, reason: item.reason, place, route: sourceRoute ? publicRoute(sourceRoute) : null, action: item.action };
         const storage: StorageRecommendationItem = { ...api, place: storagePlace };
         return { api, storage };

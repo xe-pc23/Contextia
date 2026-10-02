@@ -2,7 +2,7 @@
 
 React/Vite/strict TypeScript console for judges. It edits synthetic device context and sends it to the same `POST /v1/context/evaluate` endpoint used by mobile, fixed to `mode="simulation"` and `deliveryMode="preview"`.
 
-**Current state:** runtime `/config.json` loading, Cognito authorization code/PKCE login and logout, in-memory token refresh, first-login profile creation, MapLibre/Amazon Location Maps V2 selection, all five editable presets, and the validating preview API client are connected. Missing config/auth or failed profile loading keeps evaluation disabled. Live AWS sign-in/maps/evaluation proof remains Task 3.
+**Current state:** runtime `/config.json` loading, Cognito authorization code/PKCE login and logout, in-memory token refresh, conditional first-login profile creation, MapLibre/Amazon Location Maps V2 selection, all five editable presets, and the validating preview API client are connected. Missing config/auth or failed profile loading keeps evaluation disabled. Dev authenticated API smoke passed at `ba15f30`; actual browser PKCE and map interaction evidence remain open. The newer deployed `79ff4cd` failed its positive step smoke, and release-audit fixes require redeployment. See [the demo status](../../docs/DEMO.md#11-console-status-local-integration-2026-10-03).
 
 The local integration branch includes A/B/C/D/E Phase 2 implementations. Test transports and synthetic responses exist only under `test/`; the production build excludes them. The product renders only validated responses from the shared backend.
 
@@ -43,7 +43,7 @@ src/
   - Used and unused signals.
   - Status, latency, and code for each of the five providers, with a warning for `degraded`, `unavailable`, `timeout`, or `error`. Successful provider facts and recommendation cards remain visible.
   - Preview delivery diagnostics: an explicit `wouldSuppress=true/false` and the guard codes. The client does not calculate guards or update notification counters.
-  - Identifiers, plus a closed native toggle that shows the exact schema-validated context that was sent. The API does not return a separate backend-normalized context; the label identifies the sent request accurately. **SPEC FR-020's normalized-context requirement remains incomplete** and needs an A/D contract and API change; the sent request is not claimed as its replacement.
+  - Identifiers, plus separate closed toggles for the exact schema-validated sent request and the backend-normalized preview context returned by the shared response contract. Real/proactive responses do not expose normalized debug context.
   - If inputs change after submission, a notice explains that the result belongs to the submitted context and that another Run is needed for the edited inputs.
 
 ## Commands
@@ -102,7 +102,7 @@ These review fixes do not add live-provider, authenticated smoke or notification
 
 ## Historical Phase 2-C handoff requests
 
-The lane assignments below describe the original handoff. Runtime/auth/map connections are now implemented locally; live evidence and backend normalized-context coverage remain to be verified.
+The lane assignments below describe the original handoff and are historical. Runtime/auth/map connections and the backend-normalized context contract are implemented; current live evidence and remaining gates are recorded above.
 
 C does not edit the root lockfile or CDK. The Console needs the following from D.
 

@@ -14,7 +14,8 @@ type SmokeState = Pick<StateRepository, 'getState' | 'getContextSnapshot'>;
 export class SmokeCheckError extends Error {}
 const SAFE_PROVIDER_CODES = new Set(['TIMEOUT', 'THROTTLED', 'UPSTREAM_AUTH', 'UPSTREAM_VALIDATION', 'UPSTREAM_ERROR', 'INVALID_MODEL_OUTPUT', 'UNKNOWN_PLACE_REFERENCE', 'UNKNOWN_ROUTE_REFERENCE', 'NO_COVERAGE', 'DEMO_FORCED_UNAVAILABLE', 'GEOCODE_AMBIGUOUS', 'GEOCODE_NOT_FOUND', 'GEOCODE_LOW_CONFIDENCE', 'GEOCODE_OUT_OF_AREA', 'PLACE_STORAGE_UNAVAILABLE', 'DURATION_MISMATCH', 'DURATION_UNRESOLVED', 'NO_ROUTE', 'NO_TRANSIT_ROUTE', 'SCHEDULE_UNAVAILABLE', 'PARTIAL_DATA']);
 export function smokeProviderDiagnostic(scenarioId: ScenarioId, result: ContextEvaluateResponse): string {
-  return JSON.stringify({ scenarioId, requestId: /^[A-Za-z0-9_+=/-]{1,128}$/.test(result.requestId) ? result.requestId : 'redacted',
+  return JSON.stringify({ scenarioId, decision: result.data.decision, triggerType: result.data.triggerType,
+    guards: result.data.delivery.guardCodes, requestId: /^[A-Za-z0-9_+=/-]{1,128}$/.test(result.requestId) ? result.requestId : 'redacted',
     providers: Object.fromEntries(Object.entries(result.data.providerStatus).map(([name, value]) => [name, { status: value.status, ...(value.code && SAFE_PROVIDER_CODES.has(value.code) ? { code: value.code } : {}) }])) });
 }
 
@@ -72,14 +73,18 @@ export function assertCappedProactive(before: UserState | null, after: UserState
   }
   assertPreviewStateUnchanged(before, after);
 }
-async function initializeProfile(api: string, token: string, fetcher: Fetcher): Promise<void> {
+export async function initializeProfile(api: string, token: string, fetcher: Fetcher): Promise<void> {
   const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
   const current = await response(fetcher, `${api}/v1/me`, { headers });
   if (current.ok) { GetMeResponseSchema.parse(await current.json() as unknown); return; }
   const failure = ErrorResponseSchema.safeParse(await current.json() as unknown);
   if (current.status !== 404 || !failure.success || failure.data.error.code !== 'PROFILE_NOT_FOUND') throw new SmokeCheckError('Smoke profile lookup failed');
   const preferences = UpdatePreferencesRequestSchema.parse({ interests: ['cafe', 'park'], stepGoal: 10000, notificationFrequency: 'normal', notificationsEnabled: true, locale: 'ja-JP', timezone: 'Asia/Tokyo' });
-  UpdatePreferencesResponseSchema.parse(await json(fetcher, `${api}/v1/me/preferences`, { method: 'PUT', headers, body: JSON.stringify(preferences) }));
+  const created = await response(fetcher, `${api}/v1/me/preferences`, { method: 'PUT', headers: { ...headers, 'If-None-Match': '*' }, body: JSON.stringify(preferences) });
+  if (created.ok) { UpdatePreferencesResponseSchema.parse(await created.json() as unknown); return; }
+  const conflict = ErrorResponseSchema.safeParse(await created.json() as unknown);
+  if (created.status !== 412 || !conflict.success || conflict.data.error.code !== 'PROFILE_EXISTS') throw new SmokeCheckError('Smoke profile initialization failed');
+  GetMeResponseSchema.parse(await json(fetcher, `${api}/v1/me`, { headers }));
 }
 
 async function response(fetcher: Fetcher, url: string, init?: RequestInit): Promise<Response> {

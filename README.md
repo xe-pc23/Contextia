@@ -9,11 +9,13 @@ A separate Web **Scenario Console** lets judges choose arbitrary location/time/s
 ## Status
 
 Specification: **v1.1 candidate**  
-Implementation on this branch: **Phase 2 A/B/C/D/E code integrated; local delivery in progress; live gates remain open**
+Implementation on this branch: **Web/API and native code integrated; dev deployed; hardware and production gates remain open**
+
+Public dev URL: [Scenario Console](https://d1grgebh7iqqmf.cloudfront.net/)
 
 Public production URL: `TBD after deployment`
 
-This branch contains the contracts, five detectors, provider adapters, API evaluation paths, five-preset Web Scenario Console, Expo foreground application, dev/prod CDK, and GitHub validation/deployment workflows. No AWS deployment or public URL has been verified. Follow the [local delivery plan](docs/superpowers/plans/2026-10-02-local-solo-delivery.md) for the single-owner execution order and remaining gates. The [Phase 0 handoff](docs/hackathon/PHASE0_HANDOFF.md) and [Phase 1 assignments](docs/hackathon/PHASE1_ASSIGNMENTS.md) are historical records.
+This branch contains the contracts, five detectors, provider adapters, authenticated API, five-preset Web Scenario Console, Expo foreground/background application, dev/prod CDK, and GitHub OIDC workflows. Dev deployment and authenticated smoke passed at `ba15f30` ([run](https://github.com/xe-pc23/Contextia/actions/runs/37046597403)). The newer deployed `79ff4cd` passed validation/deployment but its smoke failed because the step scenario returned a valid silent model decision; subsequent audit fixes still require a new deployment and smoke. Follow the [local delivery plan](docs/superpowers/plans/2026-10-02-local-solo-delivery.md) for remaining gates. The [Phase 0 handoff](docs/hackathon/PHASE0_HANDOFF.md) and [Phase 1 assignments](docs/hackathon/PHASE1_ASSIGNMENTS.md) are historical records.
 
 ```bash
 pnpm install --frozen-lockfile
@@ -30,7 +32,7 @@ pnpm dev:mobile
 
 Use Node.js 24.13.1 from `.node-version` (minimum 24.3.0, below 25) and pnpm 10.29.3. `pnpm dev:api` serves health at `http://127.0.0.1:3001/health`; `pnpm dev:web` opens the Web app at `http://127.0.0.1:5173`. Runtime authentication and live evaluation require deployed stage configuration. Mobile uses a development client; follow [its README](apps/mobile/README.md) for native setup.
 
-The Phase 0 baseline passed all five verification commands with 124 tests. On 2026-10-02, a fresh isolated checkout of Phase 2 integration SHA `6a588cb` passed frozen installation, lint, typecheck, 879 tests, build, and offline CDK synth. Remote CI and live service results remain unverified. Mobile JavaScript export does not verify APK/IPA compilation or native device behavior.
+On 2026-10-03, `79ff4cd` passed all five verification commands with 1,253 tests. Its iOS Simulator development build compiled and installed. Dev live smoke has observed Places/Weather/Bedrock, a scheduled transit card, owned chat, cross-user denial and preview quota invariants. Real iOS/Android capability results and production deployment remain open; see [mobile validation](docs/MOBILE_VALIDATION.md) and the [agent log](docs/hackathon/AGENT_LOG.md). Mobile JavaScript export does not verify APK/IPA compilation or native device behavior.
 
 ## Stack
 

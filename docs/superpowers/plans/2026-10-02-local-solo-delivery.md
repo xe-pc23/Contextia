@@ -179,3 +179,18 @@ The local AWS profiles and GitHub access should be used where available. If boot
   proactive counter and recent EMF checks are prepared for the next dev SHA.
 - Tasks 3/4 full live UI evidence, Task 5/7 hardware matrix and Task 8 production release remain open.
   A Simulator build, SRP script or JS export does not close a native capability row.
+
+## Release audit evidence — 2026-10-03 04:35 JST
+
+- The next dev SHA `79ff4cd7986a79760f3186032f45361d4e9dbc63` passed OIDC validation/deployment,
+  but [run 37052996485](https://github.com/xe-pc23/Contextia/actions/runs/37052996485) failed the
+  mandatory positive step gate on a valid silent model decision. Extended fault/SRP/proactive/EMF
+  checks were not reached; the prior successful run does not prove these new checks.
+- Whole-branch reviews reproduced four defects: missing MapLibre worker asset, a route associated
+  with the wrong place, provider-current opening flags applied to simulated time, and smoke profile
+  creation overwriting a concurrent winner. Regression tests failed before each fix and passed after.
+  Provider association is enforced during compact model hydration, API validation and storage;
+  opening availability remains unknown for simulation; smoke creation is conditional.
+- The corrected source passed lint, typecheck, 1,258 tests / 79 files, build and dev/prod CDK synth.
+  Independent reviewers verified negative/positive provider pairs and profile race recovery. These
+  fixes need dev deployment and live confirmation; browser/hardware/production gates stay open.

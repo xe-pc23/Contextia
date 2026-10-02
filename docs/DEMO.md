@@ -15,7 +15,7 @@ The Console injects synthetic device context into the **same production backend*
 
 Its delivery policy is `preview`: the evaluation/providers/Bedrock path is real, but the judge does not consume notification quota or get blocked from seeing an answer because another judge ran the same scenario seconds earlier.
 
-### 1.1 Console status (Phase 2-C, standalone Web work)
+### 1.1 Console status (local integration, 2026-10-03)
 
 - Implemented in `apps/web`:
   - editors for coordinates (with Tokyo/Osaka Station shortcuts), scenario time with an IANA timezone, steps and goal, multiple calendar events, interests and notification preference overrides;
@@ -24,15 +24,13 @@ Its delivery policy is `preview`: the evaluation/providers/Bedrock path is real,
   - immediate per-field validation against the shared contract, with a view of the exact request to be sent;
   - a schema-validating API client;
   - the result panel: up to 3 cards, used signals, all six provider status values, explicit `wouldSuppress` and guard codes, and a closed sent-context toggle;
-  - a notice when inputs have changed since submission, so the last result is identified as belonging to the submitted context.
+  - a notice when inputs have changed since submission, so the last result is identified as belonging to the submitted context;
+  - runtime configuration, Cognito authorization-code/PKCE login/logout, profile initialization and MapLibre/Amazon Location Maps V2 selection;
+  - the backend-normalized preview context toggle, alongside the exact sent request.
 - Every run is fixed to `mode="simulation"` / `deliveryMode="preview"`. There is no mode switch.
-- Not connected yet:
-  - the API URL and Cognito login, which need the remaining Phase 1-C connection to lane D's runtime config;
-  - the MapLibre map (the dependency is installed; the renderer and restricted map configuration remain pending).
-
-  Until then the Console shows "未接続" and keeps Run disabled.
-- **Phase 1-B remains unfinished and is not merged into the C worktree.** Input editing and Web tests can run independently, but live Places/Weather/Bedrock/persistence, all five detector/provider paths, and repeated-preview notification-counter checks remain integration work after B/A/D deliver. These checks have not been run; five visible preset controls do not prove backend completion.
-- The context toggle shows the exact shared-schema-validated request. **SPEC FR-020's backend-normalized context toggle remains incomplete**: that context is not part of the current response contract. A/D must define and return the normalized context before C can display it. Details: `apps/web/README.md`.
+- Dev is available at https://d1grgebh7iqqmf.cloudfront.net/. OIDC run [37046597403](https://github.com/xe-pc23/Contextia/actions/runs/37046597403) at `ba15f30` passed authenticated five-preset smoke, preview persistence/quota invariants, a live step recommendation, an actual transit card and chat ownership checks. Weather-adaptation's model call timed out and displayed degradation.
+- Newer dev `79ff4cd` deployed successfully, but its mandatory step smoke failed on a valid silent model decision. A release audit then reproduced and fixed the missing MapLibre worker asset, crossed place/route references, current-only opening flags applied to simulated time, and a smoke profile-initialization race. New deployment/live confirmation remains pending.
+- Actual browser PKCE callback/map interaction evidence, extended dev fault/SRP/proactive/metrics smoke, physical-device capability results and production release remain open. The [local delivery plan](superpowers/plans/2026-10-02-local-solo-delivery.md) records these gates.
 
 ## 2. Judge flow
 

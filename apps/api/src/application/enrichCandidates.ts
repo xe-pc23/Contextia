@@ -76,7 +76,12 @@ export async function enrichCandidates(input: {
     const key = JSON.stringify(request);
     let pending = nearbyCalls.get(key);
     if (!pending) {
-      pending = call(() => providers.places.searchNearby(request), ProviderPlaceSchema.array(), policy.placesTimeoutMs);
+      pending = call(() => providers.places.searchNearby(request), ProviderPlaceSchema.array(), policy.placesTimeoutMs).then(result => {
+        if (context.mode !== 'simulation' || !result.data) return result;
+        // Amazon Location OpenNow describes the provider request's current time, not scenarioTime.
+        // Keep simulated opening hours unknown rather than excluding or promising future availability.
+        return { ...result, data: result.data.map(place => { const scoped = { ...place }; delete scoped.isOpen; return scoped; }) };
+      });
       nearbyCalls.set(key, pending);
     }
     return pending;
