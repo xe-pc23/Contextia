@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { MobileController } from '../src/application/mobileController';
 import type { BackendClient, BackendOutcome } from '../src/api/backendClient';
 import type { ContextCollectionResult } from '../src/context/types';
-import type { EvaluationResult, ListRecommendationsResponse, RecommendationHistoryItem } from '@contextia/contracts';
+import type { ChatResponse, EvaluationResult, ListRecommendationsResponse, RecommendationHistoryItem } from '@contextia/contracts';
 import { collection, deferred, historyItem, notify, profile, silent } from './support/data';
 
 function success<T>(data: T): BackendOutcome<T> { return { kind: 'success', requestId: 'req-test', data }; }
@@ -12,7 +12,8 @@ function setup() {
     updatePreferences: vi.fn<BackendClient['updatePreferences']>(async () => success({ updated: true })),
     evaluate: vi.fn<BackendClient['evaluate']>(async () => success(notify)),
     listRecommendations: vi.fn<BackendClient['listRecommendations']>(async () => success({ items: [historyItem], nextCursor: null })),
-    getRecommendation: vi.fn<BackendClient['getRecommendation']>(async () => success(historyItem))
+    getRecommendation: vi.fn<BackendClient['getRecommendation']>(async () => success(historyItem)),
+    chat: vi.fn<BackendClient['chat']>(async () => success({ conversationId: 'chat-1', reply: 'A quiet place is nearby.', recommendations: [], expiresAt: new Date(Date.now() + 7200_000).toISOString() }))
   };
   const collect = vi.fn<(goal?: number) => Promise<ContextCollectionResult>>(async () => collection);
   const controller = new MobileController({ client, collector: { collect }, collectionTimeoutMs: 50 });
@@ -84,6 +85,40 @@ describe('foreground mobile workflow', () => {
 });
 
 describe('profile, preferences and recommendation navigation', () => {
+  it('sends one follow-up and keeps the response within the opened detail', async () => {
+    const test = setup();
+    await test.controller.sendChat('No detail');
+    expect(test.client.chat).not.toHaveBeenCalled();
+    await test.controller.openDetail(historyItem.id);
+    await test.controller.sendChat('Any quiet options?');
+    expect(test.client.chat.mock.calls[0]?.slice(0, 2)).toEqual([historyItem.id, { message: 'Any quiet options?' }]);
+    expect(test.controller.getSnapshot().chat.data?.reply).toBe('A quiet place is nearby.');
+    test.controller.closeDetail();
+    expect(test.controller.getSnapshot().chat.data).toBeNull();
+  });
+  it.each(['navigate', 'logout'])('aborts a pending chat on %s and discards its late reply', async action => {
+    const test = setup(); const pending = deferred<BackendOutcome<ChatResponse['data']>>();
+    await test.controller.openDetail(historyItem.id);
+    test.client.chat.mockReturnValue(pending.promise);
+    const sending = test.controller.sendChat('Any quiet options?');
+    await test.controller.sendChat('Duplicate tap');
+    const signal = test.client.chat.mock.calls[0]?.[2];
+    expect(test.client.chat).toHaveBeenCalledOnce();
+    if (action === 'logout') { test.controller.dispose(); test.controller.activate(); }
+    else await test.controller.openDetail('rec-new');
+    expect(signal?.aborted).toBe(true);
+    pending.resolve(success({ conversationId: 'chat-old', reply: 'Old private reply', recommendations: [], expiresAt: new Date(Date.now() + 7200_000).toISOString() }));
+    await sending;
+    expect(test.controller.getSnapshot().chat.data).toBeNull();
+  });
+  it('keeps chat errors explicit and validates input before sending', async () => {
+    const test = setup(); await test.controller.openDetail(historyItem.id);
+    await test.controller.sendChat('x'.repeat(1001));
+    expect(test.client.chat).not.toHaveBeenCalled();
+    test.client.chat.mockResolvedValue({ kind: 'http-error', status: 404, code: 'RECOMMENDATION_NOT_FOUND', requestId: 'req' });
+    await test.controller.sendChat('A question');
+    expect(test.controller.getSnapshot().chat).toMatchObject({ status: 'error', data: null, error: { kind: 'http-error', status: 404 } });
+  });
   it('refreshes history after evaluation even while the initial history request is pending', async () => {
     const test = setup();
     const initial = deferred<BackendOutcome<ListRecommendationsResponse['data']>>();

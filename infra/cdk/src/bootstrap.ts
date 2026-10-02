@@ -91,6 +91,7 @@ export function stageBootstrapTemplate(stage: 'dev' | 'prod') {
     allow(['iam:CreateServiceLinkedRole'], [`arn:aws:iam::${account}:role/aws-service-role/ops.apigateway.amazonaws.com/AWSServiceRoleForAPIGateway`],
       { StringEquals: { 'iam:AWSServiceName': 'ops.apigateway.amazonaws.com' } }),
     allow(operations('apigateway', ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']), [`arn:aws:apigateway:${region}::/apis`, `arn:aws:apigateway:${region}::/apis/*`, `arn:aws:apigateway:${region}::/tags/*`]),
+    allow(['apigateway:TagResource'], [`arn:aws:apigateway:${region}::/apis/*`]),
     allow(operations('cloudfront', ['CreateDistribution', 'CreateDistributionWithTags', 'CreateOriginAccessControl']), ['*']),
     allow(['cloudfront:TagResource'], [arn('cloudfront', 'distribution/*', false)], { StringEquals: { 'aws:RequestTag/project': 'contextia', 'aws:RequestTag/stage': stage } }),
     allow(operations('cloudfront', ['GetDistribution', 'GetDistributionConfig', 'UpdateDistribution', 'DeleteDistribution', 'TagResource', 'UntagResource', 'ListTagsForResource']), [arn('cloudfront', 'distribution/*', false)], stageTags),

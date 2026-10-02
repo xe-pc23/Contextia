@@ -60,4 +60,10 @@ describe.each(['dev', 'prod'] as const)('%s stage bootstrap', stage => {
     expect(statement?.Resource).toEqual(['arn:aws:iam::634512763705:role/aws-service-role/ops.apigateway.amazonaws.com/AWSServiceRoleForAPIGateway']);
     expect(statement?.Condition).toEqual({ StringEquals: { 'iam:AWSServiceName': 'ops.apigateway.amazonaws.com' } });
   });
+  it('permits API Gateway tagging only for HTTP API resources in this region', () => {
+    const policies = z.array(z.object({ PolicyDocument: z.object({ Statement: z.array(z.object({ Action: z.array(z.string()), Resource: z.array(z.string()) })) }) }))
+      .parse(stageBootstrapTemplate(stage).Resources.CloudFormationExecutionRole?.Properties.Policies);
+    const statement = policies.flatMap(policy => policy.PolicyDocument.Statement).find(item => item.Action.includes('apigateway:TagResource'));
+    expect(statement?.Resource).toEqual(['arn:aws:apigateway:ap-northeast-1::/apis/*']);
+  });
 });

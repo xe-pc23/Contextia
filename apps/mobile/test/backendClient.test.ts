@@ -10,6 +10,15 @@ function setup(response: () => Response | Promise<Response>, token: () => Promis
 }
 
 describe('mobile API URL and request boundary', () => {
+  it('sends a bounded follow-up only to the owned recommendation chat endpoint', async () => {
+    const reply = { conversationId: 'chat-1', reply: 'A nearby rest is possible.', recommendations: [], expiresAt: '2026-10-03T12:00:00Z' };
+    const { client, fetch } = setup(() => json({ requestId: 'req', data: reply }));
+    expect(await client.chat('rec /?', { message: 'Any quiet options?' })).toEqual({ kind: 'success', requestId: 'req', data: reply });
+    expect(fetch.mock.calls[0]).toMatchObject(['https://api.example.test/dev/v1/recommendations/rec%20%2F%3F/chat', { method: 'POST', body: JSON.stringify({ message: 'Any quiet options?' }) }]);
+    expect((await client.chat('rec', { message: 'x'.repeat(1001) })).kind).toBe('invalid-request');
+    expect((await client.chat('rec', { message: 'Question', userId: 'other' })).kind).toBe('invalid-request');
+    expect(fetch).toHaveBeenCalledOnce();
+  });
   it('requests absent-profile initialization only when explicitly selected', async () => {
     const { client, fetch } = setup(() => json({ requestId: 'req', data: { updated: true } }));
     await client.updatePreferences(profile.preferences, undefined, true);

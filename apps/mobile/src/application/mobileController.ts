@@ -1,5 +1,5 @@
-import { createDefaultUserPreferences, UserPreferencesSchema } from '@contextia/contracts';
-import type { EvaluationResult, ListRecommendationsResponse, Profile, RecommendationHistoryItem } from '@contextia/contracts';
+import { ChatRequestSchema, createDefaultUserPreferences, UserPreferencesSchema } from '@contextia/contracts';
+import type { ChatResponse, EvaluationResult, ListRecommendationsResponse, Profile, RecommendationHistoryItem } from '@contextia/contracts';
 import type { BackendClient, BackendFailure, BackendOutcome } from '../api/backendClient';
 import { OperationTimeout, withTimeout } from '../async/withTimeout';
 import type { ContextCollectionResult } from '../context/types';
@@ -15,6 +15,7 @@ export type MobileState = {
   profile: Resource<Profile>;
   history: Resource<History>;
   detail: Resource<RecommendationHistoryItem>;
+  chat: Resource<ChatResponse['data']>;
   evaluation: Resource<{ result: EvaluationResult; requestId: string }>;
   collection: ContextCollectionResult | null;
   collecting: boolean;
@@ -26,7 +27,7 @@ export type MobileState = {
 function initialState(): MobileState {
   return {
     profile: { status: 'idle', data: null }, history: { status: 'idle', data: null },
-    detail: { status: 'idle', data: null }, evaluation: { status: 'idle', data: null },
+    detail: { status: 'idle', data: null }, chat: { status: 'idle', data: null }, evaluation: { status: 'idle', data: null },
     collection: null, collecting: false, collectionError: null, saving: false, saveResult: 'idle'
   };
 }
@@ -46,6 +47,7 @@ export class MobileController {
   private readonly listeners = new Set<() => void>();
   private readonly requests = new Set<AbortController>();
   private detailRequest: AbortController | null = null;
+  private chatRequest: AbortController | null = null;
   private historyRefreshPending = false;
 
   constructor(private readonly options: {
@@ -134,12 +136,13 @@ export class MobileController {
   async openDetail(id: string): Promise<void> {
     if (!this.active) return;
     this.detailRequest?.abort();
+    this.chatRequest?.abort();
     const request = new AbortController();
     this.detailRequest = request;
     this.requests.add(request);
     const version = ++this.detailVersion;
     const lifetime = this.lifetime;
-    this.patch({ detail: { status: 'loading', data: null } });
+    this.patch({ detail: { status: 'loading', data: null }, chat: { status: 'idle', data: null } });
     let result: BackendOutcome<RecommendationHistoryItem>;
     try { result = await this.options.client.getRecommendation(id, request.signal); }
     catch { result = { kind: 'network-error' }; }
@@ -151,7 +154,30 @@ export class MobileController {
     this.detailVersion++;
     this.detailRequest?.abort();
     this.detailRequest = null;
-    this.patch({ detail: { status: 'idle', data: null } });
+    this.chatRequest?.abort();
+    this.chatRequest = null;
+    this.patch({ detail: { status: 'idle', data: null }, chat: { status: 'idle', data: null } });
+  }
+
+  async sendChat(message: string): Promise<void> {
+    if (!this.active || this.state.detail.status !== 'ready' || this.state.chat.status === 'loading') return;
+    const parsed = ChatRequestSchema.safeParse({ message: message.trim() });
+    if (!parsed.success) {
+      this.patch({ chat: { status: 'error', data: null, error: { kind: 'invalid-request', fields: ['message'] } } });
+      return;
+    }
+    const id = this.state.detail.data.id;
+    const version = this.detailVersion;
+    const lifetime = this.lifetime;
+    const request = new AbortController();
+    this.chatRequest = request;
+    this.requests.add(request);
+    this.patch({ chat: { status: 'loading', data: null } });
+    let result: BackendOutcome<ChatResponse['data']>;
+    try { result = await this.options.client.chat(id, parsed.data, request.signal); }
+    catch { result = { kind: 'network-error' }; }
+    finally { this.requests.delete(request); }
+    if (this.current(lifetime) && version === this.detailVersion) this.patch({ chat: resource(result) });
   }
 
   private async collect(lifetime: number): Promise<ContextCollectionResult | null> {

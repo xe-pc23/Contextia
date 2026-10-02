@@ -3,6 +3,9 @@ import { evaluationPresentation, failureMessage, nextCalendarEvent, parsePrefere
 import { notify, profile, silent } from './support/data';
 
 describe('mobile presentation', () => {
+  it('explains a chat turn limit separately from temporary throttling', () => {
+    expect(failureMessage({ kind: 'http-error', status: 429, code: 'CHAT_LIMIT_REACHED', requestId: 'req' })).toBe('この提案への質問回数の上限に達しました。');
+  });
   it('labels forecasts and unknown temperature without fabricating zero degrees', () => {
     const summary = weatherPresentation({ source: 'forecast', condition: 'rain', temperatureCelsius: null,
       precipitationMillimeters: 1, precipitationProbability: 80, sourceTimestamp: '2026-10-01T05:00:00Z',

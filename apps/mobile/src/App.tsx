@@ -44,7 +44,7 @@ function ForegroundApp({ client }: { client: BackendClient }) {
     </View>
     {screen === 'dashboard' ? <Dashboard state={state} controller={controller} clock={clock} openDetail={openDetail} /> : null}
     {screen === 'settings' ? <Settings state={state} controller={controller} /> : null}
-    {screen === 'detail' ? <RecommendationDetail state={state} retry={() => { if (detailId) void controller.openDetail(detailId); }} /> : null}
+    {screen === 'detail' ? <RecommendationDetail key={detailId} state={state} sendChat={message => controller.sendChat(message)} retry={() => { if (detailId) void controller.openDetail(detailId); }} /> : null}
   </>;
 }
 

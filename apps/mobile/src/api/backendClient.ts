@@ -1,12 +1,12 @@
 import type { z } from 'zod';
 import {
-  ContextEvaluateResponseSchema, ErrorResponseSchema, EvaluationHeadersSchema, GetMeResponseSchema,
+  ChatRequestSchema, ChatResponseSchema, ContextEvaluateResponseSchema, ErrorResponseSchema, EvaluationHeadersSchema, GetMeResponseSchema,
   GetRecommendationResponseSchema, ListRecommendationsResponseSchema,
   RealContextInputSchema, RecommendationParamsSchema, RecommendationsQuerySchema,
   UpdatePreferencesRequestSchema, UpdatePreferencesResponseSchema
 } from '@contextia/contracts';
 import type {
-  ContextEvaluateResponse, GetMeResponse, GetRecommendationResponse,
+  ChatResponse, ContextEvaluateResponse, GetMeResponse, GetRecommendationResponse,
   ListRecommendationsResponse, UpdatePreferencesResponse
 } from '@contextia/contracts';
 
@@ -27,6 +27,7 @@ export interface BackendClient {
   evaluate(input: unknown, signal?: AbortSignal): Promise<BackendOutcome<ContextEvaluateResponse['data']>>;
   listRecommendations(query?: unknown, signal?: AbortSignal): Promise<BackendOutcome<ListRecommendationsResponse['data']>>;
   getRecommendation(id: string, signal?: AbortSignal): Promise<BackendOutcome<GetRecommendationResponse['data']>>;
+  chat(id: string, input: unknown, signal?: AbortSignal): Promise<BackendOutcome<ChatResponse['data']>>;
 }
 
 export function apiBaseUrl(value: unknown): string | null {
@@ -174,6 +175,13 @@ export function createBackendClient(options: {
       if (!parsed.success) return invalidFields(parsed.error.issues);
       const result = await request(`v1/recommendations/${encodeURIComponent(parsed.data.recommendationId)}`, GetRecommendationResponseSchema, 'GET', signal);
       return result.kind === 'success' && result.data.id !== id ? { kind: 'invalid-response' } : result;
+    },
+    async chat(id, input, signal) {
+      const params = RecommendationParamsSchema.safeParse({ recommendationId: id });
+      if (!params.success) return invalidFields(params.error.issues);
+      const parsed = ChatRequestSchema.safeParse(input);
+      if (!parsed.success) return invalidFields(parsed.error.issues);
+      return request(`v1/recommendations/${encodeURIComponent(params.data.recommendationId)}/chat`, ChatResponseSchema, 'POST', signal, parsed.data);
     }
   };
 }

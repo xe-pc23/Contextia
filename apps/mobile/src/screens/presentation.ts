@@ -28,6 +28,7 @@ export function failureMessage(failure: MobileFailure): string {
       if (failure.status === 403) return 'このアカウントまたはアプリでは実行できません。認証設定を確認してください。';
       if (failure.code === 'PROFILE_NOT_FOUND') return 'アカウントの設定がまだ用意されていません。';
       if (failure.status === 404) return 'データが見つかりません。保存期間の終了や接続先の準備状況を確認してください。';
+      if (failure.code === 'CHAT_LIMIT_REACHED') return 'この提案への質問回数の上限に達しました。';
       if (failure.status === 429) return 'リクエストが集中しています。少し待ってから再実行してください。';
       if (failure.status === 503) return 'サービスを現在利用できません。時間をおいて再実行してください。';
       return '処理に失敗しました。もう一度お試しください。';
