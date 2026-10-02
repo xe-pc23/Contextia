@@ -3,7 +3,7 @@ import { z } from 'zod';
 const PublicEnvironmentSchema = z.object({
   EXPO_PUBLIC_STAGE: z.enum(['dev', 'prod']).optional(),
   EXPO_PUBLIC_COGNITO_ISSUER: z.string().trim().url().optional(),
-  EXPO_PUBLIC_COGNITO_CLIENT_ID: z.string().trim().min(1).optional(),
+  EXPO_PUBLIC_COGNITO_CLIENT_ID: z.string().trim().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/).optional(),
   EXPO_PUBLIC_COGNITO_REDIRECT_URI: z.string().trim().min(1).optional()
 });
 
@@ -29,7 +29,7 @@ export function readCognitoConfiguration(environment: unknown): CognitoConfigura
     const issuerUrl = new URL(issuer);
     if (issuerUrl.protocol !== 'https:' || issuerUrl.search || issuerUrl.hash) return null;
 
-    const redirectUri = parsed.data.EXPO_PUBLIC_COGNITO_REDIRECT_URI ?? `${scheme}://auth`;
+    const redirectUri = parsed.data.EXPO_PUBLIC_COGNITO_REDIRECT_URI ?? `${scheme}://auth/callback`;
     const redirectUrl = new URL(redirectUri);
     if (redirectUrl.protocol !== `${scheme}:` || !redirectUrl.host || redirectUrl.search || redirectUrl.hash) return null;
 

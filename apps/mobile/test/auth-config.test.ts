@@ -14,7 +14,7 @@ describe('Cognito public configuration', () => {
       scheme: 'contextia-dev',
       issuer: 'https://cognito-idp.ap-northeast-1.amazonaws.com/ap-northeast-1_example',
       clientId: 'mobile-client-id',
-      redirectUri: 'contextia-dev://auth'
+      redirectUri: 'contextia-dev://auth/callback'
     });
   });
 

@@ -1,4 +1,4 @@
-import type { CalendarEventContext, ContextInput, LocationContext } from '@contextia/contracts';
+import type { ActivityContext, CalendarEventContext, ContextInput, LocationContext } from '@contextia/contracts';
 
 export type NativeReadStatus = 'granted' | 'denied' | 'unavailable';
 
@@ -24,19 +24,36 @@ export interface ClockSource {
   now(): Date;
 }
 
+export type StepReadResult =
+  | {
+      status: 'granted';
+      steps: number;
+      source: Exclude<NonNullable<ActivityContext['stepSource']>, 'scenario'>;
+      confidence: NonNullable<ActivityContext['confidence']>;
+    }
+  | { status: 'denied' | 'unavailable' };
+
+export interface StepSource {
+  getTodaySteps(now: Date): Promise<StepReadResult>;
+}
+
+export type RealContextInput = Extract<ContextInput, { mode: 'real' }>;
+
 export type ContextCollectionResult =
   | {
       status: 'ready';
-      input: ContextInput;
-      permissions: { location: 'granted'; calendar: NativeReadStatus };
+      input: RealContextInput;
+      permissions: { location: 'granted'; calendar: NativeReadStatus; steps: NativeReadStatus };
     }
   | {
       status: 'location-unavailable';
       location: 'denied' | 'unavailable';
       calendar: NativeReadStatus;
+      steps: NativeReadStatus;
     }
   | {
       status: 'invalid-context';
       location: 'granted';
       calendar: NativeReadStatus;
+      steps: NativeReadStatus;
     };
