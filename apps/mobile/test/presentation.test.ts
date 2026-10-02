@@ -1,8 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { evaluationPresentation, failureMessage, nextCalendarEvent, parsePreferencesDraft, preferencesDraft } from '../src/screens/presentation';
+import { evaluationPresentation, failureMessage, nextCalendarEvent, parsePreferencesDraft, preferencesDraft, weatherPresentation } from '../src/screens/presentation';
 import { notify, profile, silent } from './support/data';
 
 describe('mobile presentation', () => {
+  it('labels forecasts and unknown temperature without fabricating zero degrees', () => {
+    const summary = weatherPresentation({ source: 'forecast', condition: 'rain', temperatureCelsius: null,
+      precipitationMillimeters: 1, precipitationProbability: 80, sourceTimestamp: '2026-10-01T05:00:00Z',
+      startAt: '2026-10-01T06:00:00Z', endAt: '2026-10-01T07:00:00Z' }, 'Asia/Tokyo');
+    expect(summary.condition).toBe('雨');
+    expect(summary.temperature).toBe('気温不明');
+    expect(summary.period).toContain('予報');
+    expect(summary.period).toContain('15:00');
+    expect(weatherPresentation(null).temperature).toBe('未取得');
+  });
   it('shows notify cards and used signals, and renders silent without old recommendations', () => {
     expect(evaluationPresentation(notify)).toMatchObject({ title: '今のあなたへの提案', message: notify.message, cards: notify.recommendations, signals: ['現在地', '予定'] });
     expect(evaluationPresentation(silent)).toMatchObject({ message: null, cards: [], guards: ['直近に同じ状況を評価しました'] });

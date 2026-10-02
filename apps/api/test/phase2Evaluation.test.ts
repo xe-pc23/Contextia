@@ -56,6 +56,28 @@ function setup(fixture: ScenarioFixture, primaryOnly = false) {
 }
 
 describe('Phase 2: five fixtures through the same evaluation pipeline', () => {
+  it('returns covered forecast facts rather than projecting a current observation into a simulation', async () => {
+    const fixture = scenarios.find(value => value.id === 'weather-adaptation');
+    if (!fixture?.providers.weather.data) throw new Error('Missing weather fixture');
+    const { evaluate, weather } = setup(fixture, true);
+    weather.getWeather.mockResolvedValue(ok({ ...fixture.providers.weather.data, temperatureCelsius: 40,
+      forecast: fixture.providers.weather.data.forecast.map(value => ({ ...value, temperatureCelsius: null })) }));
+    const result = await evaluate({ userId: 'user-1', context: { ...fixture.context, scenarioTime: '2026-10-01T15:30:00+09:00' } });
+    expect(result).toMatchObject({ weather: { source: 'forecast', temperatureCelsius: null, startAt: '2026-10-01T15:00:00+09:00', endAt: '2026-10-01T16:00:00+09:00' } });
+    expect(result.weather).not.toHaveProperty('forecast');
+    const outside = await evaluate({ userId: 'user-1', context: { ...fixture.context, scenarioTime: '2026-10-01T16:00:00+09:00' } });
+    expect(outside.weather).toBeNull();
+  });
+
+  it('preserves an independent step-goal recommendation when weather is unavailable', async () => {
+    const fixture = scenarios.find(value => value.id === 'free-time');
+    if (!fixture) throw new Error('Missing fixture');
+    const { evaluate, weather } = setup(fixture);
+    weather.getWeather.mockResolvedValue({ status: 'unavailable', data: null });
+    const result = await evaluate({ userId: 'user-1', context: { ...fixture.context, activity: { ...fixture.context.activity, stepsToday: 12_000 } } });
+    expect(result).toMatchObject({ decision: 'notify', triggerType: 'STEP_GOAL_REST', weather: null,
+      providerStatus: { weather: { status: 'unavailable' }, places: { status: 'ok' } } });
+  });
   it.each(scenarios)('$id uses validated provider evidence and reports its adopted trigger', async fixture => {
     const { evaluate, model, state } = setup(fixture, true);
     const result = await evaluate({ userId: 'user-1', context: fixture.context });

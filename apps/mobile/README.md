@@ -1,6 +1,31 @@
-# Mobile — Phase 2 E
+# Mobile — React Native
 
 Expo / React Native / strict TypeScript foreground client. Cognito sign-in connects the Dashboard, saved preferences, recommendation history/detail, and **今評価** to the shared backend API. Production evaluation uses device data and shared Zod contracts; test doubles exist only under `test/`.
+
+## Local validation update — 2026-10-03
+
+The owner cannot attach an iPhone directly to this Mac. Use the iOS Simulator for local native compilation,
+sign-in, UI, permission and simulated-location checks, then hand actual hardware capabilities to a member
+with a development-build device. Simulator results do not mark physical GPS, steps, background or remote push passed.
+Xcode 26.6 is installed at `/Applications/Xcode.app`; CocoaPods 1.17.0 dependency installation completed.
+The iOS 26.5 runtime is available. The owner has a Personal Team; a simulator build needs no signing team.
+
+From the repository root, generate the ignored native project:
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer EXPO_PUBLIC_STAGE=dev \
+  pnpm --filter @contextia/mobile exec expo prebuild --platform ios --no-install --skip-dependency-update react,react-native
+cd apps/mobile/ios
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer COCOAPODS_DISABLE_STATS=1 pod install
+```
+
+Run CocoaPods from `apps/mobile/ios`; `--project-directory` from the repository root does not give the
+Podfile's Node subprocess the correct Expo resolution directory. Do not combine `--pnpm` with `--no-install`.
+Check ignored `.xcode.env.local` uses the repository Node 24 executable rather than Homebrew's Node 25.
+Debug builds require Metro; native compilation alone is not an executed app check.
+
+Dashboard now uses the backend's normalized `weather` reading for condition/temperature, labels forecast
+coverage and observation time, and displays missing/null temperature explicitly. It makes no direct weather call.
 
 ## Development environment
 

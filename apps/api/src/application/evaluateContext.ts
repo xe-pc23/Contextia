@@ -17,7 +17,7 @@ import { claimEvaluation } from './idempotency.js';
 import type { IdempotencyRepository } from './idempotency.js';
 import { ApiFailure } from './apiFailure.js';
 import { EvaluationDeadline } from './evaluationDeadline.js';
-import { localDate } from '@contextia/domain';
+import { defaultDetectorPolicy, localDate, normalizeDetectorContext, weatherAt } from '@contextia/domain';
 import { selectOpportunity } from './selectOpportunity.js';
 
 export type EvaluationFailureCode = 'PROFILE_NOT_FOUND' | 'STATE_UNAVAILABLE';
@@ -222,7 +222,15 @@ export function createEvaluateContext(deps: EvaluationDependencies): EvaluateCon
       const providerStatus: ProviderStatusMap = {
         geocoding: NOT_REQUESTED, places: NOT_REQUESTED, weather: NOT_REQUESTED, routes: NOT_REQUESTED, bedrock: NOT_REQUESTED
       };
-      const base = { evaluationId, contextExpiresAt: new Date(contextExpiresAt * 1000).toISOString() };
+      const normalized = normalizeDetectorContext({ context, preferences, clock: { now: () => now }, profileTimezone: preferences.timezone });
+      const base: Pick<EvaluationResult, 'evaluationId' | 'contextExpiresAt' | 'normalizedContext' | 'weather'> = {
+        evaluationId, contextExpiresAt: new Date(contextExpiresAt * 1000).toISOString(), weather: null,
+        ...(normalized.mode === 'simulation' ? { normalizedContext: {
+          mode: 'simulation', evaluationAt: normalized.evaluationAt.toISOString(), timezone: normalized.timezone, stepGoal: normalized.stepGoal,
+          location: normalized.location, ...(normalized.activity ? { activity: normalized.activity } : {}),
+          calendar: [...normalized.calendar], preferences: normalized.preferences
+        } } : {})
+      };
       const silent = (decisionReason: string, guardCodes: GuardCode[], usedSignals: EvaluationResult['usedSignals'] = []): EvaluationResult =>
         EvaluationResultSchema.parse({
           ...base, decision: 'silent', recommendationId: null, triggerType: null, urgency: null, message: null, recommendations: [],
@@ -246,6 +254,7 @@ export function createEvaluateContext(deps: EvaluationDependencies): EvaluateCon
       const evaluationAt = context.mode === 'simulation' ? new Date(context.scenarioTime ?? context.capturedAt) : now;
       const enriched = await deadline.run(() => enrichCandidates({ context, evaluationAt, preferences, candidates: viable.map(entry => entry.candidate), providers: deps, policy }));
       Object.assign(providerStatus, enriched.providerStatus);
+      base.weather = weatherAt(enriched.enrichment, evaluationAt.getTime(), defaultDetectorPolicy, context.mode);
       const refined = deps.domain.refineCandidates({ context, preferences, now, candidates: viable.map(entry => entry.candidate), evidence: enriched.enrichment });
       if (!refined.length) return finish(silent('Provider facts did not justify a meaningful opportunity.', [...previewCodes, 'NO_MEANINGFUL_OPPORTUNITY']));
       const candidate = selectOpportunity(refined);

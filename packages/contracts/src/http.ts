@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import { ContextInputSchema, OpaqueIdSchema, ScenarioContextInputSchema, UserPreferencesSchema, TimestampSchema } from './context.js';
+import { ActivityContextSchema, CalendarEventContextSchema, ContextInputSchema, LocationContextSchema, OpaqueIdSchema, ScenarioContextInputSchema, TimezoneSchema, UserPreferencesSchema, TimestampSchema } from './context.js';
 import { GuardCodeSchema, ScenarioIdSchema, SignalNameSchema, TriggerTypeSchema, UrgencySchema } from './enums.js';
-import { ProviderStatusMapSchema } from './enrichment.js';
+import { ProviderStatusMapSchema, WeatherReadingSchema } from './enrichment.js';
 import { ApiRecommendationItemSchema } from './recommendation.js';
 
 export function responseEnvelopeSchema<T extends z.ZodType>(data: T) {
@@ -26,9 +26,16 @@ export const DeliveryDiagnosticsSchema = z.discriminatedUnion('mode', [
   z.strictObject({ ...deliveryFields, mode: z.literal('preview'), status: z.literal('preview') }),
   z.strictObject({ ...deliveryFields, mode: z.literal('proactive'), status: z.enum(['ready', 'sent', 'failed', 'suppressed']) })
 ]).refine(value => value.wouldSuppress === (value.guardCodes.length > 0), { path: ['wouldSuppress'], message: 'wouldSuppress must match guard diagnostics' });
+export const NormalizedPreviewContextSchema = z.strictObject({
+  mode: z.literal('simulation'), evaluationAt: TimestampSchema, timezone: TimezoneSchema,
+  stepGoal: z.number().int().min(1).max(200_000), location: LocationContextSchema,
+  activity: ActivityContextSchema.optional(), calendar: z.array(CalendarEventContextSchema).max(100), preferences: UserPreferencesSchema
+});
 const evaluationFields = {
   evaluationId: OpaqueIdSchema, decisionReason: z.string().min(1), usedSignals: z.array(SignalNameSchema),
-  delivery: DeliveryDiagnosticsSchema, providerStatus: ProviderStatusMapSchema, contextExpiresAt: TimestampSchema
+  delivery: DeliveryDiagnosticsSchema, providerStatus: ProviderStatusMapSchema, contextExpiresAt: TimestampSchema,
+  // Optional during rollout so older persisted idempotency responses remain readable.
+  normalizedContext: NormalizedPreviewContextSchema.optional(), weather: WeatherReadingSchema.nullable().optional()
 };
 export const EvaluationResultSchema = z.discriminatedUnion('decision', [
   z.strictObject({
@@ -40,6 +47,9 @@ export const EvaluationResultSchema = z.discriminatedUnion('decision', [
     urgency: z.null(), message: z.null(), recommendations: z.tuple([])
   })
 ]).superRefine((value, ctx) => {
+  if (value.normalizedContext && value.delivery.mode !== 'preview') {
+    ctx.addIssue({ code: 'custom', path: ['normalizedContext'], message: 'Normalized debug context is only returned for preview' });
+  }
   if (value.delivery.mode !== 'proactive') return;
   if (value.decision === 'notify' && (value.delivery.status === 'suppressed' || value.delivery.wouldSuppress)) {
     ctx.addIssue({ code: 'custom', path: ['delivery'], message: 'Proactive notify must pass delivery guards' });

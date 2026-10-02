@@ -130,6 +130,10 @@ describe.each(stages)('%s core stack', (stage) => {
   });
 
   it('deploys immutable assets and an uncached entry point with generated runtime config', () => {
+    if (isDev) template.hasResource('Custom::CDKBucketDeployment', {
+      DependsOn: Match.arrayWith(['WebBucketAutoDeleteObjectsCustomResource9C1A079F']),
+      Properties: Match.objectLike({ SystemMetadata: { 'cache-control': 'public, max-age=31536000, immutable' } })
+    });
     template.resourceCountIs('AWS::Lambda::LayerVersion', 2);
     for (const deployment of ['assets', 'entry']) {
       template.hasResourceProperties('AWS::Lambda::LayerVersion', {

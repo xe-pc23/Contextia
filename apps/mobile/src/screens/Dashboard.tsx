@@ -2,7 +2,7 @@ import { Button, Text, View } from 'react-native';
 import type { MobileController, MobileState } from '../application/mobileController';
 import type { ClockSource } from '../context/types';
 import { Card, CollectionSummary, Failure, ProviderHealth, RecommendationCards, styles } from './components';
-import { evaluationPresentation, formatTime, nextCalendarEvent } from './presentation';
+import { evaluationPresentation, formatTime, nextCalendarEvent, weatherPresentation } from './presentation';
 
 export function Dashboard({ state, controller, clock, openDetail }: {
   state: MobileState; controller: MobileController; clock: ClockSource; openDetail: (id: string) => void;
@@ -13,6 +13,7 @@ export function Dashboard({ state, controller, clock, openDetail }: {
   const nextEvent = nextCalendarEvent(context?.calendar ?? [], clock.now());
   const evaluation = state.evaluation.data;
   const view = evaluation ? evaluationPresentation(evaluation.result) : null;
+  const weather = weatherPresentation(evaluation?.result.weather, timezone);
   return <>
     <Card title="現在地と予定">
       <Text style={styles.note}>位置と予定は操作した時に読み取ります。「今評価」では、読み取った情報を送って提案を確認します。</Text>
@@ -39,6 +40,12 @@ export function Dashboard({ state, controller, clock, openDetail }: {
         <RecommendationCards items={view.cards} timezone={timezone} />
         {evaluation.result.recommendationId ? <Button title="提案の詳細を見る" onPress={() => openDetail(evaluation.result.recommendationId ?? '')} /> : null}
       </> : null}
+    </Card>
+    <Card title="天気">
+      <Text style={styles.body}>{weather.condition} / {weather.temperature}</Text>
+      {weather.period ? <Text style={styles.note}>{weather.period}</Text> : <Text style={styles.note}>
+        {evaluation?.result.providerStatus.weather.status === 'not_requested' ? 'この評価では天気を取得していません。' : evaluation ? '利用できる天気情報がありません。' : '今評価で天気を確認できます。'}
+      </Text>}
     </Card>
     <ProviderHealth value={evaluation?.result.providerStatus} />
     <Card title="最近の提案">

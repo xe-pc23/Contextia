@@ -11,3 +11,4 @@ export * from './triggers/weatherAdaptation.js';
 export * from './triggers/earlyArrivalDetour.js';
 export * from './triggers/registry.js';
 export * from './triggers/refineCandidates.js';
+export { weatherAt } from './triggers/evidence.js';

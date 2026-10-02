@@ -1,7 +1,7 @@
-import type { ScenarioContextInput } from '@contextia/contracts';
+import type { EvaluationResult, ScenarioContextInput } from '@contextia/contracts';
 
 /** Shows the exact validated context that was (or will be) sent to the API. */
-export function DebugContext({ request, label }: { request: ScenarioContextInput; label: string }) {
+export function DebugContext({ request, label }: { request: ScenarioContextInput | NonNullable<EvaluationResult['normalizedContext']>; label: string }) {
   return (
     <details className="debug">
       <summary>{label}</summary>

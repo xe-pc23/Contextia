@@ -33,6 +33,18 @@ describe('result panel states', () => {
 });
 
 describe('notify result', () => {
+  it('shows returned normalized values separately from the sent request', () => {
+    const html = success({ ...notifyResult(1), normalizedContext: {
+      mode: 'simulation', evaluationAt: request.capturedAt, timezone: 'Europe/London', stepGoal: 8000,
+      location: request.location, calendar: [], preferences: {
+        interests: ['server-interest'], stepGoal: 8000, notificationFrequency: 'normal', notificationsEnabled: true, locale: 'ja-JP', timezone: 'Europe/London'
+      }
+    } });
+    expect(html).toContain('サーバーで正規化したコンテキストを表示');
+    expect(html).toContain('server-interest');
+    expect(html).toContain('&quot;stepGoal&quot;: 8000');
+    expect(html).toContain('送信したコンテキストを表示');
+  });
   it('renders the message, trigger, reason and at most three cards', () => {
     const html = success(notifyResult(3));
     expect(html).toContain('通知する判断');

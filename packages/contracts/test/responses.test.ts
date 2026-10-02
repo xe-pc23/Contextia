@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { getScenarioInput, scenarios } from '@contextia/test-fixtures';
 import {
   ChatRequestSchema, ContextEvaluateResponseSchema, ErrorResponseSchema,
   ProviderStatusMapSchema, RecommendationDecisionSchema, RecommendationsQuerySchema,
@@ -17,6 +18,22 @@ const evaluation = {
 };
 
 describe('response and model contracts', () => {
+  it('accepts bounded normalized preview context and time-qualified weather while rejecting provider payloads', () => {
+    const input = getScenarioInput('step-goal');
+    const preferences = scenarios[0]?.preferences;
+    const normalizedContext = { mode: 'simulation', evaluationAt: input.scenarioTime, timezone: 'Asia/Tokyo', stepGoal: 10000,
+      location: input.location, activity: input.activity, calendar: input.calendar, preferences };
+    const weather = { source: 'forecast', sourceTimestamp: input.capturedAt, startAt: input.capturedAt,
+      endAt: '2026-10-01T06:00:00Z', condition: 'rain', temperatureCelsius: 18, precipitationProbability: 80, precipitationMillimeters: 1 };
+    const parse = (data: unknown) => ContextEvaluateResponseSchema.safeParse({ requestId: 'req', data }).success;
+    expect(parse({ ...evaluation, normalizedContext, weather })).toBe(true);
+    expect(parse({ ...evaluation, normalizedContext: { ...normalizedContext, places: [{ raw: 'single-use' }] } })).toBe(false);
+    expect(parse({ ...evaluation, weather: { ...weather, rawResponse: 'upstream' } })).toBe(false);
+    expect(parse({ ...evaluation, weather: { ...weather, endAt: '2025-01-01T00:00:00Z' } })).toBe(false);
+    expect(parse({ ...evaluation, normalizedContext, delivery: { mode: 'proactive', status: 'ready', wouldSuppress: false, guardCodes: [] } })).toBe(false);
+    // Old idempotency rows remain readable during rollout.
+    expect(parse(evaluation)).toBe(true);
+  });
   it('accepts notify, silent and preview diagnostics without hiding a useful recommendation', () => {
     expect(RecommendationDecisionSchema.safeParse(notify).success).toBe(true);
     expect(RecommendationDecisionSchema.safeParse(silent).success).toBe(true);

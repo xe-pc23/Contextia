@@ -1,5 +1,5 @@
 import { UserPreferencesSchema } from '@contextia/contracts';
-import type { CalendarEventContext, EvaluationResult, GuardCode, SignalName, UserPreferences } from '@contextia/contracts';
+import type { CalendarEventContext, EvaluationResult, GuardCode, SignalName, UserPreferences, WeatherReading } from '@contextia/contracts';
 import type { MobileFailure } from '../application/mobileController';
 
 export const signalLabels: Record<SignalName, string> = {
@@ -39,6 +39,18 @@ export function formatTime(timestamp: string, timezone?: string): string {
     month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit',
     ...(timezone === undefined ? {} : { timeZone: timezone })
   }).format(new Date(timestamp));
+}
+
+export function weatherPresentation(weather: WeatherReading | null | undefined, timezone?: string) {
+  if (!weather) return { condition: '天気は未取得', temperature: '未取得', period: '' };
+  const labels = { clear: '晴れ', cloudy: '曇り', rain: '雨', snow: '雪', storm: '荒天', unknown: '天候不明' };
+  return {
+    condition: labels[weather.condition],
+    temperature: weather.temperatureCelsius === null ? '気温不明' : `${weather.temperatureCelsius}°C`,
+    period: weather.source === 'forecast'
+      ? `予報: ${formatTime(weather.startAt, timezone)}〜${formatTime(weather.endAt, timezone)}`
+      : `観測: ${formatTime(weather.sourceTimestamp, timezone)}`
+  };
 }
 
 export function nextCalendarEvent(events: readonly CalendarEventContext[], now: Date): CalendarEventContext | null {

@@ -29,6 +29,12 @@ const weatherFields = {
   condition: WeatherConditionSchema, temperatureCelsius: z.number().nullable(), feelsLikeCelsius: z.number().nullable().optional(),
   precipitationProbability: z.number().min(0).max(100).nullable(), precipitationMillimeters: z.number().nonnegative().nullable()
 };
+export const WeatherReadingSchema = z.discriminatedUnion('source', [
+  z.strictObject({ ...weatherFields, sourceTimestamp: TimestampSchema, source: z.literal('current') }),
+  z.strictObject({ ...weatherFields, sourceTimestamp: TimestampSchema, source: z.literal('forecast'), startAt: TimestampSchema, endAt: TimestampSchema })
+]).refine(value => value.source !== 'forecast' || Date.parse(value.endAt) > Date.parse(value.startAt), {
+  path: ['endAt'], message: 'Forecast coverage must have a positive duration'
+});
 export const WeatherWindowSchema = z.strictObject({ startAt: TimestampSchema, endAt: TimestampSchema, ...weatherFields }).refine(
   value => Date.parse(value.endAt) >= Date.parse(value.startAt), { path: ['endAt'], message: 'endAt must be at or after startAt' }
 );
@@ -56,4 +62,5 @@ export type ProviderStatusMap = z.infer<typeof ProviderStatusMapSchema>;
 export type GeocodedPlace = z.infer<typeof GeocodedPlaceSchema>;
 export type ProviderPlace = z.infer<typeof ProviderPlaceSchema>;
 export type WeatherSnapshot = z.infer<typeof WeatherSnapshotSchema>;
+export type WeatherReading = z.infer<typeof WeatherReadingSchema>;
 export type RouteSummary = z.infer<typeof RouteSummarySchema>;

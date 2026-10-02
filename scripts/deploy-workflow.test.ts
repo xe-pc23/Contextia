@@ -16,10 +16,16 @@ describe('deployment workflow authorization', () => {
     ['staging', 'refs/heads/main', 'xe-pc23', 1]
   ])('stage %s on %s by %s exits %i before any AWS job', (stage, ref, actor, exit) => {
     const result = spawnSync('bash', ['-e', '-c', script], {
-      env: { ...process.env, REQUESTED_STAGE: stage, REQUESTED_REF: ref, REQUESTED_ACTOR: actor, REPOSITORY_OWNER: 'xe-pc23' }, encoding: 'utf8'
+      env: { ...process.env, REQUESTED_EVENT: 'workflow_dispatch', REQUESTED_STAGE: stage, REQUESTED_REF: ref, REQUESTED_ACTOR: actor, REPOSITORY_OWNER: 'xe-pc23' }, encoding: 'utf8'
     });
     expect(result.status).toBe(exit);
     if (exit) expect(result.stdout).toContain('::error::');
     expect(workflow).toContain('needs: [authorize, validate]');
+  });
+  it('rejects a production stage on a push even from the owner on main', () => {
+    const result = spawnSync('bash', ['-e', '-c', script], {
+      env: { ...process.env, REQUESTED_EVENT: 'push', REQUESTED_STAGE: 'prod', REQUESTED_REF: 'refs/heads/main', REQUESTED_ACTOR: 'xe-pc23', REPOSITORY_OWNER: 'xe-pc23' }, encoding: 'utf8'
+    });
+    expect(result.status).toBe(1);
   });
 });

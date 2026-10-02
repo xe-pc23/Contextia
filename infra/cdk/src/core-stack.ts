@@ -249,6 +249,8 @@ export class ContextiaCoreStack extends Stack {
       cacheControl: [CacheControl.fromString('public, max-age=31536000, immutable')],
       memoryLimit: 512
     });
+    // Register the cleanup hook before uploading assets, including during failed initial creates.
+    if (isDev) assets.node.addDependency(webBucket.node.findChild('AutoDeleteObjectsCustomResource'));
     const entry = new BucketDeployment(this, 'WebEntry', {
       sources: [
         Source.asset(options.webAssetPath, { exclude: ['*', '!index.html'] }),

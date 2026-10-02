@@ -101,6 +101,7 @@ function EvaluationView({ result, requestId, elapsedMs, timeZone }: { result: Ev
         <div><dt>コンテキストの保持期限</dt><dd>{formatDateTime(result.contextExpiresAt, timeZone)}</dd></div>
         <div><dt>応答時間</dt><dd>{elapsedMs} ms</dd></div>
       </dl>
+      {result.normalizedContext ? <DebugContext request={result.normalizedContext} label="サーバーで正規化したコンテキストを表示" /> : null}
     </div>
   );
 }

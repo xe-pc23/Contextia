@@ -98,6 +98,20 @@ function setup(options: Options = {}) {
 }
 
 describe('createEvaluateContext', () => {
+  it('returns the server-normalized preview inputs even when no candidate runs, and keeps them out of real responses', async () => {
+    const { evaluate, places, decide } = setup({ candidates: [] });
+    const result = await evaluate({ userId: 'user-1', context: { ...preview, activity: {},
+      preferencesOverride: { stepGoal: 8000, timezone: 'Europe/London' } } });
+    expect(result).toMatchObject({ decision: 'silent', weather: null, normalizedContext: {
+      mode: 'simulation', evaluationAt: new Date(preview.scenarioTime ?? preview.capturedAt).toISOString(), timezone: 'Europe/London',
+      stepGoal: 8000, preferences: { ...preferences, stepGoal: 8000, timezone: 'Europe/London' }
+    } });
+    expect(places.searchNearby).not.toHaveBeenCalled();
+    expect(decide).not.toHaveBeenCalled();
+    const real = await setup({ candidates: [] }).evaluate({ userId: 'user-1', context: proactive });
+    expect(real).not.toHaveProperty('normalizedContext');
+    expect(real).toHaveProperty('weather', null);
+  });
   it('runs guards, detection, Places and the model, then returns a schema-valid preview notify', async () => {
     const { evaluate, places, decide, state, guardCalls } = setup();
     const result = await evaluate({ userId: 'user-1', context: preview });

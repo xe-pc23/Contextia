@@ -1,5 +1,7 @@
 name: Owner deployment
 on:
+  push:
+    branches: ['codex/local-delivery']
   workflow_dispatch:
     inputs:
       stage:
@@ -16,7 +18,8 @@ jobs:
       - name: Authorize deployment request
         shell: bash
         env:
-          REQUESTED_STAGE: ${{ inputs.stage }}
+          REQUESTED_STAGE: ${{ inputs.stage || 'dev' }}
+          REQUESTED_EVENT: ${{ github.event_name }}
           REQUESTED_REF: ${{ github.ref }}
           REQUESTED_ACTOR: ${{ github.actor }}
           REPOSITORY_OWNER: ${{ github.repository_owner }}
@@ -24,7 +27,7 @@ jobs:
           case "$REQUESTED_STAGE" in
             dev) ;;
             prod)
-              if [ "$REQUESTED_REF" != 'refs/heads/main' ] || [ "$REQUESTED_ACTOR" != "$REPOSITORY_OWNER" ]; then
+              if [ "$REQUESTED_EVENT" != 'workflow_dispatch' ] || [ "$REQUESTED_REF" != 'refs/heads/main' ] || [ "$REQUESTED_ACTOR" != "$REPOSITORY_OWNER" ]; then
                 echo '::error::Production requires main and the repository owner.'
                 exit 1
               fi
@@ -35,9 +38,9 @@ jobs:
     uses: ./.github/workflows/validate.yml
   deploy:
     needs: [authorize, validate]
-    environment: ${{ inputs.stage }}
+    environment: ${{ inputs.stage || 'dev' }}
     concurrency:
-      group: contextia-deploy-${{ inputs.stage }}
+      group: contextia-deploy-${{ inputs.stage || 'dev' }}
       cancel-in-progress: false
     permissions:
       contents: read
@@ -46,7 +49,7 @@ jobs:
     timeout-minutes: 30
     env:
       BUILD_ID: ${{ github.sha }}
-      CONTEXTIA_STAGE: ${{ inputs.stage }}
+      CONTEXTIA_STAGE: ${{ inputs.stage || 'dev' }}
       AWS_REGION: ap-northeast-1
       AWS_EC2_METADATA_DISABLED: 'true'
       BEDROCK_MODEL_ID: ${{ vars.BEDROCK_MODEL_ID }}
@@ -75,8 +78,8 @@ jobs:
         run: pnpm "deploy:$CONTEXTIA_STAGE"
       - name: Web/API smoke at the deployed SHA (authenticated dev gate)
         env:
-          SMOKE_OUTPUTS_FILE: cdk.out/${{ inputs.stage }}/outputs.json
-          SMOKE_MODE: ${{ inputs.stage == 'dev' && 'authenticated' || 'public' }}
+          SMOKE_OUTPUTS_FILE: cdk.out/${{ inputs.stage || 'dev' }}/outputs.json
+          SMOKE_MODE: ${{ inputs.stage != 'prod' && 'authenticated' || 'public' }}
           SMOKE_USER_1_USERNAME: ${{ secrets.SMOKE_USER_1_USERNAME }}
           SMOKE_USER_1_PASSWORD: ${{ secrets.SMOKE_USER_1_PASSWORD }}
           SMOKE_USER_2_USERNAME: ${{ secrets.SMOKE_USER_2_USERNAME }}

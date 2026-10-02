@@ -98,11 +98,13 @@ On 2026-10-02, this checkout is `feature/phase0-d-platform` at `7b3091b` and is 
 
 **Gate:** Five deterministic fixture paths pass, each required live provider path has at least one observed dev result or an explicitly documented coverage blocker, and the dev-only degraded case reports no fabricated transit/weather fact. Prod rejects fault injection.
 
-## Task 5 — Prove Mobile foreground on a real device
+## Task 5 — Prove Mobile foreground locally, then on a real device
 
 **Files:** `apps/mobile/src/auth/**`, `context/**`, `api/**`, `application/**`, `screens/**`, `app.config.ts`, focused tests, `apps/mobile/README.md`, and `docs/TEST_STRATEGY.md` device table.
 
-**Produces:** At least one iOS or Android development build signs in, collects actual foreground GPS and minimized calendar events, calls the deployed dev API, and displays the result.
+**2026-10-03 execution update:** The owner cannot connect an iPhone by cable. First run the React Native development build on the local iOS Simulator for login, UI, minimized calendar and simulated-location checks. Prepare a reproducible hardware checklist for another member; actual GPS, steps, background callbacks and push remain open until that member records device results. Wireless pairing can be used if available; it is not a prerequisite for local development.
+
+**Produces:** A locally executed iOS Simulator development build and a hardware handoff, followed by at least one iOS or Android development build that signs in, collects actual foreground GPS and minimized calendar events, calls the deployed dev API, and displays the result.
 
 - [ ] Add failing tests for denied location/calendar access, permitted calendar fields only, expired Cognito session, API error display, and validated response rendering.
 - [ ] Complete the merged Mobile foreground flow and stage runtime configuration. Keep attendees, descriptions, tokens in logs, and unbounded GPS history out of requests/persistence.

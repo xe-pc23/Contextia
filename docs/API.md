@@ -352,6 +352,16 @@ Request:
 
 `recommendationId` is the stable key used by recommendation-detail and follow-up-chat routes.
 
+New evaluations also return `weather`, a nullable normalized reading with `source="current"|"forecast"`,
+`sourceTimestamp`, condition, nullable temperature and precipitation values. Forecast readings include
+`startAt`/`endAt` and only apply within that interval. The value is null when guards skip providers or
+the provider has no valid reading for the evaluation time; it is never a fabricated observation.
+
+Preview responses include `normalizedContext`: `mode`, `evaluationAt`, resolved `timezone` and `stepGoal`,
+permitted location/activity/calendar fields, and effective preferences after authorized overrides.
+It excludes provider candidate payloads and is not included in real/proactive responses. Both fields are
+optional in the response schema during rollout to preserve older cached idempotency responses.
+
 `delivery.status` is `preview` in preview mode. In proactive mode it is `ready` when the result is returned for the designated client delivery path, `sent` only after an explicit server notification provider accepts it, `failed` if that server send fails, or `suppressed` for a silent result. `sent` does not claim the OS displayed the notification. This field never authorizes a second delivery path. `wouldSuppress` is true exactly when `guardCodes` is non-empty. A proactive `notify` result must pass the delivery guards; preview can return `notify` with suppression diagnostics.
 
 ### Response — silent
