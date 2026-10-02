@@ -46,6 +46,7 @@ export class MobileController {
   private readonly listeners = new Set<() => void>();
   private readonly requests = new Set<AbortController>();
   private detailRequest: AbortController | null = null;
+  private historyRefreshPending = false;
 
   constructor(private readonly options: {
     client: BackendClient;
@@ -64,6 +65,7 @@ export class MobileController {
     this.active = false;
     this.lifetime++;
     this.detailVersion++;
+    this.historyRefreshPending = false;
     for (const request of this.requests) request.abort();
     this.requests.clear();
     this.state = initialState();
@@ -93,11 +95,16 @@ export class MobileController {
   }
 
   async loadHistory(append = false): Promise<void> {
-    if (!this.active || this.state.history.status === 'loading') return;
+    if (!this.active) return;
+    if (this.state.history.status === 'loading') {
+      if (!append) this.historyRefreshPending = true;
+      return;
+    }
     const lifetime = this.lifetime;
     const previous = this.state.history.data;
     const cursor = append ? previous?.nextCursor : undefined;
     if (append && !cursor) return;
+    if (!append) this.historyRefreshPending = false;
     this.patch({ history: { status: 'loading', data: previous } });
     const result = await this.call(signal => this.options.client.listRecommendations(cursor ? { cursor } : {}, signal));
     if (!this.current(lifetime)) return;
@@ -110,6 +117,10 @@ export class MobileController {
       });
       this.patch({ history: { status: 'ready', data: { items, nextCursor: result.data.nextCursor === cursor ? null : result.data.nextCursor } } });
     } else this.patch({ history: resource(result, previous) });
+    if (this.current(lifetime) && this.historyRefreshPending) {
+      this.historyRefreshPending = false;
+      await this.loadHistory();
+    }
   }
 
   async openDetail(id: string): Promise<void> {

@@ -55,7 +55,7 @@ Transient refresh failures (network loss, timeout, missing endpoint, or malforme
 - Evaluation is single-flight. A successful silent response replaces the previous recommendation instead of leaving old cards visible. Provider failures remain visible while successful data is retained.
 - Foreground results are displayed in the app; there is no local/push notification path in this phase, even for a `notify` decision.
 - Settings validate the full saved preference schema before PUT and show saved values only after acknowledgement. Failed writes preserve the previous saved profile.
-- Recommendation history supports cursor pagination, and detail IDs are URI-encoded. A replaced/closed detail or logged-out evaluation cannot display a late response.
+- Recommendation history supports cursor pagination, and detail IDs are URI-encoded. Successful evaluation requests a first-page refresh; if an initial/page request is already running, refresh requests are coalesced and run after it completes, including after a failed read. Logout discards queued refreshes. A replaced/closed detail or logged-out evaluation cannot display a late response.
 - Map actions open the supplied URL, or a coordinate-based map link when the response supplies a MAP place without a URL. No train times are synthesized when route/action data is missing.
 
 ## API / contract handoff to A and D
@@ -109,9 +109,9 @@ The current task environment has no ADB or Xcode executable on PATH and no Andro
 | Saved preferences | Blocked by dev API/config and device validation | Blocked by dev API/config and device validation |
 | Map / route / website action | Not verified on device | Not verified on device |
 
-2026-10-02 validation in the isolated Phase 2-E worktree, Node 24.13.1 / pnpm 10.29.3: frozen dependency installation, `pnpm lint`, `pnpm typecheck`, `pnpm test` (506 tests in 26 files; 115 mobile tests), `pnpm build` (including iOS/Android JS exports), and `pnpm cdk:synth` (offline dev/prod) passed. No infrastructure was deployed. Root package manifests and lockfile are unchanged.
+2026-10-02 validation in the isolated Phase 2-E worktree, Node 24.13.1 / pnpm 10.29.3: frozen dependency installation, `pnpm lint`, `pnpm typecheck`, `pnpm test` (512 tests in 26 files; 121 mobile tests), `pnpm build` (including iOS/Android JS exports), and `pnpm cdk:synth` (offline dev/prod) passed. No infrastructure was deployed. Root package manifests and lockfile are unchanged.
 
-Unit coverage includes real-only API requests, privacy projection, notify/silent and provider failure, contract rejection, evaluation UUID headers, HTTP errors, bounded waits, cancellation, token-refresh single-flight, transient refresh recovery, explicit refresh rejection, current-session 401 cleanup without replay, stale 401 rejection, logout/write races, stage-isolated credential storage, collection failure, settings acknowledgement, pagination and stale-detail rejection. These checks do not complete the device/live gates above.
+Unit coverage includes real-only API requests, privacy projection, notify/silent and provider failure, contract rejection, evaluation UUID headers, HTTP errors, bounded waits, cancellation, token-refresh single-flight, transient refresh recovery, explicit refresh rejection, current-session 401 cleanup without replay, stale 401 rejection, logout/write races, stage-isolated credential storage, collection failure, settings acknowledgement, pagination, post-evaluation history refresh races, and stale-detail rejection. These checks do not complete the device/live gates above.
 
 ## Phase 3 boundaries
 

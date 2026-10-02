@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { MobileController } from '../src/application/mobileController';
 import type { BackendClient, BackendOutcome } from '../src/api/backendClient';
 import type { ContextCollectionResult } from '../src/context/types';
-import type { EvaluationResult, RecommendationHistoryItem } from '@contextia/contracts';
+import type { EvaluationResult, ListRecommendationsResponse, RecommendationHistoryItem } from '@contextia/contracts';
 import { collection, deferred, historyItem, notify, profile, silent } from './support/data';
 
 function success<T>(data: T): BackendOutcome<T> { return { kind: 'success', requestId: 'req-test', data }; }
@@ -84,6 +84,86 @@ describe('foreground mobile workflow', () => {
 });
 
 describe('profile, preferences and recommendation navigation', () => {
+  it('refreshes history after evaluation even while the initial history request is pending', async () => {
+    const test = setup();
+    const initial = deferred<BackendOutcome<ListRecommendationsResponse['data']>>();
+    const newest = { ...historyItem, id: 'rec-after-evaluation' };
+    test.client.listRecommendations.mockReturnValueOnce(initial.promise)
+      .mockResolvedValueOnce(success({ items: [newest], nextCursor: 'fresh-cursor' }));
+    const loading = test.controller.loadHistory();
+    await test.controller.evaluate();
+    expect(test.client.listRecommendations).toHaveBeenCalledTimes(1);
+    initial.resolve(success({ items: [], nextCursor: null }));
+    await loading;
+    expect(test.client.listRecommendations).toHaveBeenCalledTimes(2);
+    expect(test.controller.getSnapshot().history).toEqual({ status: 'ready', data: { items: [newest], nextCursor: 'fresh-cursor' } });
+  });
+  it('refreshes the first page after evaluation while a later page is loading', async () => {
+    const test = setup();
+    const page = deferred<BackendOutcome<ListRecommendationsResponse['data']>>();
+    const newest = { ...historyItem, id: 'rec-after-evaluation' };
+    test.client.listRecommendations.mockResolvedValueOnce(success({ items: [historyItem], nextCursor: 'old-cursor' }))
+      .mockReturnValueOnce(page.promise)
+      .mockResolvedValueOnce(success({ items: [newest], nextCursor: 'fresh-cursor' }));
+    await test.controller.loadHistory();
+    const loading = test.controller.loadHistory(true);
+    await test.controller.evaluate();
+    expect(test.client.listRecommendations).toHaveBeenCalledTimes(2);
+    page.resolve(success({ items: [{ ...historyItem, id: 'older-page' }], nextCursor: 'older-cursor' }));
+    await loading;
+    expect(test.client.listRecommendations.mock.calls.map(([query]) => query)).toEqual([{}, { cursor: 'old-cursor' }, {}]);
+    expect(test.controller.getSnapshot().history.data).toEqual({ items: [newest], nextCursor: 'fresh-cursor' });
+  });
+  it.each(['failure-result', 'exception'])('coalesces successful evaluations into one refresh after the current history request ends with %s', async behavior => {
+    const test = setup();
+    const initial = deferred<BackendOutcome<ListRecommendationsResponse['data']>>();
+    const newest = { ...historyItem, id: 'rec-after-evaluations' };
+    test.client.listRecommendations.mockImplementationOnce(async () => {
+      const result = await initial.promise;
+      if (behavior === 'exception') throw new Error('private network error');
+      return result;
+    })
+      .mockResolvedValueOnce(success({ items: [newest], nextCursor: null }));
+    const loading = test.controller.loadHistory();
+    await test.controller.evaluate(); await test.controller.evaluate();
+    expect(test.client.listRecommendations).toHaveBeenCalledTimes(1);
+    initial.resolve({ kind: 'network-error' });
+    await loading;
+    expect(test.client.listRecommendations).toHaveBeenCalledTimes(2);
+    expect(test.controller.getSnapshot().history).toEqual({ status: 'ready', data: { items: [newest], nextCursor: null } });
+  });
+  it('discards a queued history refresh on logout and does not disturb a reactivated session', async () => {
+    const test = setup();
+    const initial = deferred<BackendOutcome<ListRecommendationsResponse['data']>>();
+    const current = { ...historyItem, id: 'rec-current-session' };
+    test.client.listRecommendations.mockReturnValueOnce(initial.promise)
+      .mockResolvedValueOnce(success({ items: [current], nextCursor: null }));
+    const loading = test.controller.loadHistory();
+    await test.controller.evaluate();
+    const oldSignal = test.client.listRecommendations.mock.calls[0]?.[1];
+    test.controller.dispose();
+    expect(oldSignal?.aborted).toBe(true);
+    test.controller.activate();
+    await test.controller.loadHistory();
+    initial.resolve(success({ items: [historyItem], nextCursor: 'old-session-cursor' }));
+    await loading;
+    expect(test.client.listRecommendations).toHaveBeenCalledTimes(2);
+    expect(test.controller.getSnapshot().history.data).toEqual({ items: [current], nextCursor: null });
+  });
+  it('does not queue a first-page refresh for repeated pagination taps', async () => {
+    const test = setup();
+    const page = deferred<BackendOutcome<ListRecommendationsResponse['data']>>();
+    const older = { ...historyItem, id: 'older-page' };
+    test.client.listRecommendations.mockResolvedValueOnce(success({ items: [historyItem], nextCursor: 'next-cursor' }))
+      .mockReturnValueOnce(page.promise);
+    await test.controller.loadHistory();
+    const loading = test.controller.loadHistory(true);
+    await test.controller.loadHistory(true); await test.controller.loadHistory(true);
+    page.resolve(success({ items: [older], nextCursor: null }));
+    await loading;
+    expect(test.client.listRecommendations).toHaveBeenCalledTimes(2);
+    expect(test.controller.getSnapshot().history.data?.items.map(item => item.id)).toEqual([historyItem.id, older.id]);
+  });
   it('updates the saved settings only after success and prevents duplicate saves', async () => {
     const test = setup(); await test.controller.loadProfile();
     const pending = deferred<BackendOutcome<{ updated: true }>>(); test.client.updatePreferences.mockReturnValue(pending.promise);
