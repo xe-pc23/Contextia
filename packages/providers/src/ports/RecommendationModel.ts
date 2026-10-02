@@ -9,7 +9,8 @@ export interface ProviderEnrichment {
   geocoding: { eventId: string; result: ProviderResult<GeocodedPlace[]> }[];
   places: { need: Extract<ProviderNeed, 'places-near-current' | 'places-near-destination'>; anchorKey: string; result: ProviderResult<ProviderPlace[]> }[];
   weather: { need: Extract<ProviderNeed, 'weather-current' | 'weather-today'>; result: ProviderResult<WeatherSnapshot> }[];
-  routes: { need: Extract<ProviderNeed, 'route-to-next-event' | 'route-to-place-candidates'>; anchorKey: string; result: ProviderResult<RouteSummary> }[];
+  // Preserve the actual arrival-planning request for Phase 2 candidate refinement.
+  routes: { need: Extract<ProviderNeed, 'route-to-next-event' | 'route-to-place-candidates'>; anchorKey: string; arriveBy?: string; result: ProviderResult<RouteSummary> }[];
 }
 export interface RecommendationSummary { recommendationId: string; triggerType: TriggerType; createdAt: string; summary: string }
 export interface RecommendationModelInput {

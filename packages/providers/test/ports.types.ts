@@ -1,6 +1,7 @@
 import type {
   PlacesProvider, GeocodingProvider, WeatherProvider, RouteProvider, RecommendationModel,
-  StateRepository, NotificationProvider, StoragePlace, RecommendationWrite, ProactiveDeliveryWrite, ConversationRecord
+  StateRepository, NotificationProvider, StoragePlace, RecommendationWrite, ProactiveDeliveryWrite, ConversationRecord,
+  ProviderEnrichment
 } from '../src/index.js';
 import type { ProviderResult } from '@contextia/contracts';
 
@@ -46,3 +47,9 @@ export const unavailableWithData: ProviderResult<string[]> = { status: 'unavaila
 export function retainedChatFacts(conversation: ConversationRecord) {
   return conversation.messages.flatMap(message => message.role === 'assistant' ? message.recommendations.map(item => item.place?.placeId) : []);
 }
+
+// Arrival-aware requests must retain their planning instant for A's candidate refinement.
+export const arrivalAwareEvidence: ProviderEnrichment['routes'][number] = {
+  need: 'route-to-next-event', anchorKey: 'event-1', arriveBy: '2026-10-02T06:00:00Z',
+  result: { status: 'unavailable', data: null, code: 'NO_ROUTE' }
+};
