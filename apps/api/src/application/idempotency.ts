@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { EvaluationResultSchema } from '@contextia/contracts';
-import type { ContextInput, EvaluationResult } from '@contextia/contracts';
+import type { ContextInput, DemoFault, EvaluationResult } from '@contextia/contracts';
 import type { StateRepository, StoragePlace } from '@contextia/providers';
 import { ApiFailure } from './apiFailure.js';
 
@@ -18,16 +18,16 @@ function canonical(value: unknown): unknown {
   return value;
 }
 
-export function evaluationRequestHash(userId: string, context: ContextInput): string {
-  return createHash('sha256').update(JSON.stringify(canonical({ operation: 'POST /v1/context/evaluate', userId, context }))).digest('hex');
+export function evaluationRequestHash(userId: string, context: ContextInput, demoFault?: DemoFault): string {
+  return createHash('sha256').update(JSON.stringify(canonical({ operation: 'POST /v1/context/evaluate', userId, context, ...(demoFault ? { demoFault } : {}) }))).digest('hex');
 }
 
 export async function claimEvaluation(input: {
-  state: IdempotencyRepository; userId: string; context: ContextInput; key: string; now: Date; ttlSeconds: number;
+  state: IdempotencyRepository; userId: string; context: ContextInput; key: string; now: Date; ttlSeconds: number; demoFault?: DemoFault;
 }): Promise<Claim> {
   const { state, userId, context, key, now } = input;
   const nowEpochSeconds = Math.floor(now.getTime() / 1000);
-  const requestHash = evaluationRequestHash(userId, context);
+  const requestHash = evaluationRequestHash(userId, context, input.demoFault);
   const expiresAt = nowEpochSeconds + input.ttlSeconds;
   const claimId = randomUUID();
   const result = await state.claimIdempotency({

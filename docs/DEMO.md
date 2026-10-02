@@ -241,6 +241,12 @@ Decision summary
 
 Add a developer/demo toggle only in `dev` to force one provider failure.
 
+The dev Console now offers `通常`, weather unavailable, or routes unavailable. It sends a closed
+`X-Contextia-Demo-Fault` selector to the same evaluation API. The backend accepts it only from the
+authenticated dev Web client in preview mode and rejects it in prod. An unneeded provider stays
+`not_requested`; changing the selector does not add candidates or bypass guards. After running,
+the result identifies which failure was selected. Live dev proof is still pending deployment.
+
 Do not expose a production toggle that can call arbitrary upstream endpoints.
 
 Useful dev demo:

@@ -1,5 +1,5 @@
-import { ContextEvaluateResponseSchema, ErrorResponseSchema, OpaqueIdSchema, ScenarioContextInputSchema } from '@contextia/contracts';
-import type { EvaluationResult, ScenarioContextInput } from '@contextia/contracts';
+import { ContextEvaluateResponseSchema, DemoFaultSchema, ErrorResponseSchema, OpaqueIdSchema, ScenarioContextInputSchema } from '@contextia/contracts';
+import type { DemoFault, EvaluationResult, ScenarioContextInput } from '@contextia/contracts';
 
 export const EVALUATE_PATH = 'v1/context/evaluate';
 export const DEFAULT_EVALUATE_TIMEOUT_MS = 30_000;
@@ -28,12 +28,13 @@ export type EvaluateOutcome =
 
 export interface ScenarioEvaluator {
   /** Resolves with an outcome for every failure; it does not reject. */
-  evaluate(input: ScenarioContextInput): Promise<EvaluateOutcome>;
+  evaluate(input: ScenarioContextInput, demoFault?: DemoFault): Promise<EvaluateOutcome>;
 }
 
 export interface ScenarioApiClientOptions {
   /** HTTP API origin (optionally with a base path), without `/v1`. */
   readonly baseUrl: string;
+  readonly stage?: 'dev' | 'prod';
   /** Current Cognito access token, or null when signed out. */
   readonly getAccessToken: () => string | null | Promise<string | null>;
   readonly fetch?: typeof fetch;
@@ -104,9 +105,12 @@ export function createScenarioApiClient(options: ScenarioApiClientOptions): Scen
   const timeoutMs = options.timeoutMs ?? DEFAULT_EVALUATE_TIMEOUT_MS;
 
   return {
-    async evaluate(input) {
+    async evaluate(input, demoFault) {
       const parsed = ScenarioContextInputSchema.safeParse(input);
       if (!parsed.success) return { kind: 'invalid-request', issues: summarize(parsed.error.issues) };
+      if (demoFault !== undefined && (options.stage !== 'dev' || !DemoFaultSchema.safeParse(demoFault).success)) {
+        return { kind: 'invalid-request', issues: [{ path: 'demoFault', message: 'Provider failure simulation is only available in dev' }] };
+      }
 
       let token: string | null;
       try {
@@ -125,7 +129,8 @@ export function createScenarioApiClient(options: ScenarioApiClientOptions): Scen
       try {
         const response = await fetchImpl(endpoint, {
           method: 'POST',
-          headers: { accept: 'application/json', 'content-type': 'application/json', authorization: `Bearer ${token}` },
+          headers: { accept: 'application/json', 'content-type': 'application/json', authorization: `Bearer ${token}`,
+            ...(demoFault ? { 'x-contextia-demo-fault': demoFault } : {}) },
           body: JSON.stringify(parsed.data),
           signal: controller.signal,
           credentials: 'omit',

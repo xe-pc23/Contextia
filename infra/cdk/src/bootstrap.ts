@@ -77,13 +77,17 @@ export function stageBootstrapTemplate(stage: 'dev' | 'prod') {
     allow(operations('s3', ['CreateBucket', 'DeleteBucket', 'GetBucketAcl', 'GetBucketPolicy', 'GetBucketPolicyStatus', 'GetBucketLocation', 'GetBucketTagging', 'GetBucketPublicAccessBlock', 'GetBucketOwnershipControls', 'GetBucketVersioning', 'GetBucketCors', 'GetBucketLogging', 'GetBucketWebsite', 'GetBucketNotification', 'GetBucketObjectLockConfiguration', 'GetLifecycleConfiguration', 'GetEncryptionConfiguration', 'ListBucket', 'PutBucketAcl', 'PutBucketPolicy', 'DeleteBucketPolicy', 'PutBucketPublicAccessBlock', 'PutBucketOwnershipControls', 'DeleteBucketOwnershipControls', 'PutBucketTagging', 'PutEncryptionConfiguration']), [`arn:aws:s3:::${prefix}-core-*`]),
     allow(operations('s3', ['GetAccelerateConfiguration', 'GetAnalyticsConfiguration', 'GetInventoryConfiguration', 'GetMetricsConfiguration', 'GetReplicationConfiguration', 'ListTagsForResource', 'GetBucketAbac', 'GetIntelligentTieringConfiguration', 'GetBucketMetadataTableConfiguration']), [`arn:aws:s3:::${prefix}-core-*`]),
     allow(operations('s3', ['GetObject', 'GetObjectVersion', 'GetBucketLocation', 'ListBucket']), [bucket, `${bucket}/*`]),
-    allow(operations('geo', ['CreateKey', 'DescribeKey', 'UpdateKey', 'DeleteKey', 'TagResource', 'UntagResource', 'ListTagsForResource']), [arn('geo', `api-key/${prefix}-web-map`)]),
+    // AWS API and authorization references document different key ARN prefixes. Both names stay exact.
+    allow(operations('geo', ['CreateKey', 'DescribeKey', 'UpdateKey', 'DeleteKey', 'TagResource', 'UntagResource', 'ListTagsForResource']), [arn('geo', `api-key/${prefix}-web-map`), arn('geo', `key/${prefix}-web-map`)]),
     // Creating/updating a key also authorizes the specific map action granted by its restrictions.
     allow(['geo-maps:GetTile'], [`arn:aws:geo-maps:${region}::provider/default`]),
     allow(['cognito-idp:CreateUserPool'], ['*'], { StringEquals: { 'aws:RequestTag/project': 'contextia', 'aws:RequestTag/stage': stage } }),
     allow(['cognito-idp:TagResource'], [arn('cognito-idp', 'userpool/*')], { StringEquals: { 'aws:RequestTag/project': 'contextia', 'aws:RequestTag/stage': stage } }),
     allow(operations('cognito-idp', ['DeleteUserPool', 'DescribeUserPool', 'UpdateUserPool', 'CreateUserPoolClient', 'DeleteUserPoolClient', 'DescribeUserPoolClient', 'UpdateUserPoolClient', 'CreateUserPoolDomain', 'DeleteUserPoolDomain', 'UpdateUserPoolDomain', 'SetUserPoolMfaConfig', 'GetUserPoolMfaConfig', 'TagResource', 'UntagResource', 'ListTagsForResource']), [arn('cognito-idp', 'userpool/*')], stageTags),
     allow(['cognito-idp:DescribeUserPoolDomain'], ['*'], { StringEquals: { 'aws:RequestedRegion': region } }),
+    // API Gateway creates this AWS-managed account service role on its first API integration.
+    allow(['iam:CreateServiceLinkedRole'], [`arn:aws:iam::${account}:role/aws-service-role/ops.apigateway.amazonaws.com/AWSServiceRoleForAPIGateway`],
+      { StringEquals: { 'iam:AWSServiceName': 'ops.apigateway.amazonaws.com' } }),
     allow(operations('apigateway', ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']), [`arn:aws:apigateway:${region}::/apis`, `arn:aws:apigateway:${region}::/apis/*`, `arn:aws:apigateway:${region}::/tags/*`]),
     allow(operations('cloudfront', ['CreateDistribution', 'CreateDistributionWithTags', 'CreateOriginAccessControl']), ['*']),
     allow(['cloudfront:TagResource'], [arn('cloudfront', 'distribution/*', false)], { StringEquals: { 'aws:RequestTag/project': 'contextia', 'aws:RequestTag/stage': stage } }),

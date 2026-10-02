@@ -26,6 +26,13 @@ All IDs are opaque strings.
 
 All request bodies are runtime-validated with Zod.
 
+`POST /v1/context/evaluate` also accepts `X-Contextia-Demo-Fault: weather|routes` only in `dev`,
+with the verified Web app client and simulation/preview input. The chosen provider returns
+`unavailable` / `DEMO_FORCED_UNAVAILABLE` only if candidate generation requests it. Other providers
+and delivery guards are unchanged. Production or Mobile requests containing this header return 403;
+unknown selectors return 400 in the dev Web path. The selector is part of the idempotency request hash,
+so a key cannot replay a different fault condition. No-fault hashes remain compatible with older rows.
+
 The implementation is `packages/contracts/src`. Object schemas reject unknown fields; clients must project calendar data to the allowed fields before sending it. Timestamp validation requires an offset (`Z` or `±HH:MM`) and rejects invalid calendar dates. URL actions permit only HTTP(S).
 
 ### 1.1 Canonical enums

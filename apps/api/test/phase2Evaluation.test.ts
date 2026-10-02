@@ -56,6 +56,32 @@ function setup(fixture: ScenarioFixture, primaryOnly = false) {
 }
 
 describe('Phase 2: five fixtures through the same evaluation pipeline', () => {
+  it.each(['weather', 'routes'] as const)('forces only %s for this preview and leaves the next request unchanged', async demoFault => {
+    const fixture = scenarios.find(value => value.id === 'free-time');
+    if (!fixture) throw new Error('Missing fixture');
+    const { evaluate, weather, routes, model } = setup(fixture);
+    const context = { ...fixture.context, activity: { ...fixture.context.activity, stepsToday: 12_000 } };
+    const result = await evaluate({ userId: 'user-1', context, demoFault });
+    expect(result).toMatchObject({ decision: 'notify', triggerType: 'STEP_GOAL_REST', providerStatus: { [demoFault]: { status: 'unavailable', code: 'DEMO_FORCED_UNAVAILABLE' } } });
+    if (demoFault === 'weather') {
+      expect(weather.getWeather).not.toHaveBeenCalled();
+      expect(result.weather).toBeNull();
+    } else {
+      expect(routes.getRoute).not.toHaveBeenCalled();
+      expect(model.decide.mock.calls[0]?.[0].enrichment.routes).toEqual([]);
+    }
+    const next = await evaluate({ userId: 'user-1', context });
+    expect(['ok', 'degraded']).toContain(next.providerStatus[demoFault].status);
+    expect(demoFault === 'weather' ? weather.getWeather : routes.getRoute).toHaveBeenCalled();
+  });
+
+  it('does not force a provider call when the chosen scenario does not need it', async () => {
+    const fixture = scenarios.find(value => value.id === 'step-goal');
+    if (!fixture) throw new Error('Missing fixture');
+    const { evaluate, routes } = setup(fixture, true);
+    expect((await evaluate({ userId: 'user-1', context: fixture.context, demoFault: 'routes' })).providerStatus.routes.status).toBe('not_requested');
+    expect(routes.getRoute).not.toHaveBeenCalled();
+  });
   it('returns covered forecast facts rather than projecting a current observation into a simulation', async () => {
     const fixture = scenarios.find(value => value.id === 'weather-adaptation');
     if (!fixture?.providers.weather.data) throw new Error('Missing weather fixture');

@@ -36,6 +36,7 @@ export type ClientConfig = { webClientId: string | null; mobileClientId: string 
 
 export type HandlerOptions = {
   version: string;
+  stage?: 'dev' | 'prod';
   log: (entry: RequestLog) => void;
   clients?: ClientConfig;
   /** Absent until provider adapters are composed; the route then reports 503 instead of fabricating results. */
@@ -49,7 +50,7 @@ export type AuthClaims = { sub: string; clientId: string };
 
 export type ApiRequest = {
   method: string; path: string; requestId: string; body?: string | null; claims?: AuthClaims | null;
-  query?: Record<string, string | undefined>; idempotencyKey?: string;
+  query?: Record<string, string | undefined>; idempotencyKey?: string; demoFault?: string;
 };
 
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
@@ -75,7 +76,7 @@ function parseBody(body: string | null | undefined): { ok: true; value: unknown 
   }
 }
 
-async function evaluate(request: ApiRequest, clients: ClientConfig, evaluateContext: EvaluateContext | undefined): Promise<Outcome> {
+async function evaluate(request: ApiRequest, clients: ClientConfig, evaluateContext: EvaluateContext | undefined, stage: HandlerOptions['stage']): Promise<Outcome> {
   const { requestId } = request;
   if (!request.claims) return error(401, requestId, 'UNAUTHORIZED', 'A valid access token is required.');
   const body = parseBody(request.body);
@@ -90,8 +91,14 @@ async function evaluate(request: ApiRequest, clients: ClientConfig, evaluateCont
     return error(400, requestId, 'VALIDATION_ERROR', 'Request body is invalid.', details);
   }
   const mode = parsed.data.mode;
-  const headers = EvaluationHeadersSchema.safeParse(request.idempotencyKey === undefined ? {} : { idempotencyKey: request.idempotencyKey });
-  if (!headers.success) return { ...error(400, requestId, 'VALIDATION_ERROR', 'Idempotency-Key must be a UUID.'), mode };
+  if (request.demoFault !== undefined && (stage !== 'dev' || mode !== 'simulation' || parsed.data.deliveryMode !== 'preview' || request.claims.clientId !== clients.webClientId)) {
+    return { ...error(403, requestId, 'DEMO_FAULT_FORBIDDEN', 'Provider failure simulation is restricted to the dev Scenario Console.'), mode };
+  }
+  const headers = EvaluationHeadersSchema.safeParse({
+    ...(request.idempotencyKey === undefined ? {} : { idempotencyKey: request.idempotencyKey }),
+    ...(request.demoFault === undefined ? {} : { demoFault: request.demoFault })
+  });
+  if (!headers.success) return { ...error(400, requestId, 'VALIDATION_ERROR', 'Evaluation headers are invalid.'), mode };
   // Preview is limited to the Scenario Console client; proactive delivery to the mobile client.
   const allowedClient = mode === 'simulation' ? clients.webClientId : clients.mobileClientId;
   if (!allowedClient || request.claims.clientId !== allowedClient) {
@@ -100,6 +107,7 @@ async function evaluate(request: ApiRequest, clients: ClientConfig, evaluateCont
   if (!evaluateContext) return { ...error(503, requestId, 'EVALUATION_UNAVAILABLE', 'Context evaluation is not available yet.'), mode };
   try {
     const data = await evaluateContext({ userId: request.claims.sub, context: parsed.data,
+      ...(headers.data.demoFault === undefined ? {} : { demoFault: headers.data.demoFault }),
       ...(headers.data.idempotencyKey === undefined ? {} : { idempotencyKey: headers.data.idempotencyKey }) });
     return { response: json(200, ContextEvaluateResponseSchema.parse({ requestId, data } satisfies ContextEvaluateResponse)), mode };
   } catch (cause) {
@@ -180,7 +188,7 @@ export function createRequestHandler(options: HandlerOptions): (request: ApiRequ
       result = { response: json(200, { status: 'ok', version: options.version } satisfies HealthResponse) };
     } else if (request.method === 'POST' && request.path === '/v1/context/evaluate') {
       route = 'evaluate';
-      result = await evaluate(request, clients, options.evaluate);
+      result = await evaluate(request, clients, options.evaluate, options.stage);
     } else if (request.method === 'GET' && request.path === '/v1/me') {
       route = 'me';
       result = await accountRoute(request, route, options);
@@ -229,7 +237,8 @@ export function createLambdaHandler(options: HandlerOptions): (event: APIGateway
     query: event.queryStringParameters ?? {},
     ...(() => {
       const key = Object.entries(event.headers).find(([name]) => name.toLowerCase() === 'idempotency-key')?.[1];
-      return key === undefined ? {} : { idempotencyKey: key };
+      const demoFault = Object.entries(event.headers).find(([name]) => name.toLowerCase() === 'x-contextia-demo-fault')?.[1];
+      return { ...(key === undefined ? {} : { idempotencyKey: key }), ...(demoFault === undefined ? {} : { demoFault }) };
     })()
   });
 }

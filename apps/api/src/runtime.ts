@@ -35,7 +35,7 @@ export function composeRuntime(env: Record<string, string | undefined>, log: (en
     idempotencyTtlSeconds: config.idempotencyTtlSeconds
   };
   return {
-    version: env.BUILD_ID ?? 'development', log,
+    version: env.BUILD_ID ?? 'development', stage: config.stage, log,
     clients: { webClientId: env.WEB_CLIENT_ID ?? null, mobileClientId: env.MOBILE_CLIENT_ID ?? null },
     account: createAccountServices(state, clock),
     chat: createChatWithRecommendation({ state, places, model, clock, newId, modelTimeoutMs: config.modelTimeoutMs,

@@ -145,4 +145,9 @@ describe('Lambda event mapping', () => {
     const response = await handle(event(accessClaims, Buffer.from(JSON.stringify(preview)).toString('base64'), true));
     expect(response.statusCode).toBe(503);
   });
+  it('maps the dev fault header case-insensitively and rejects it in production', async () => {
+    const faultEvent = { ...event(accessClaims, JSON.stringify(preview)), headers: { 'X-Contextia-Demo-Fault': 'weather' } };
+    expect((await createLambdaHandler({ version: 'test', clients, stage: 'prod', log: vi.fn() })(faultEvent)).statusCode).toBe(403);
+    expect((await createLambdaHandler({ version: 'test', clients, stage: 'dev', log: vi.fn() })(faultEvent)).statusCode).toBe(503);
+  });
 });

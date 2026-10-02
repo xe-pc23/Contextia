@@ -56,6 +56,11 @@ describe('evaluation idempotency', () => {
     state.getIdempotencyResponse.mockResolvedValue(ok({ ...cached, evaluationId: 'another-evaluation' }));
     await expect(claimEvaluation({ state, userId: 'user-1', context, key, now: NOW, ttlSeconds: 3600 })).rejects.toMatchObject({ code: 'STATE_UNAVAILABLE' });
   });
+  it('refuses replay when a selector changes even if the context is identical', async () => {
+    const state = repository(); state.claimIdempotency.mockResolvedValue(ok(existing()));
+    await expect(claimEvaluation({ state, userId: 'user-1', context, key, now: NOW, ttlSeconds: 3600, demoFault: 'weather' })).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' });
+    expect(state.getIdempotencyResponse).not.toHaveBeenCalled();
+  });
   it('rejects a non-UUID header before invoking evaluation', async () => {
     const evaluate = vi.fn();
     const handle = createRequestHandler({ version: 'test', log: vi.fn(), clients: { webClientId: 'web', mobileClientId: null }, evaluate });

@@ -327,6 +327,10 @@ Unit:
 
 Manual real-device matrix:
 
+The owner's 2026-10-03 environment cannot attach an iPhone. Local iOS Simulator compilation is
+available; follow [Simulator and member hardware checklist](MOBILE_VALIDATION.md) and keep actual
+hardware results separate. Simulated location and unavailable sensors do not close the real-device gate.
+
 | Capability | iOS | Android |
 |---|---:|---:|
 | Cognito login | required | required |

@@ -8,6 +8,12 @@ const runButton = /<button type="button" class="primary"( disabled="")?[^>]*>シ
 const fixedNow = () => new Date('2026-10-01T14:10:00+09:00');
 
 describe('Scenario Console shell', () => {
+  it('offers the provider failure selector only for a dev deployment', () => {
+    const access = { status: 'unconnected' as const, pending: [] };
+    expect(renderToStaticMarkup(<App stage="dev" access={access} />)).toContain('プロバイダー障害の検証');
+    expect(renderToStaticMarkup(<App stage="prod" access={access} />)).not.toContain('プロバイダー障害の検証');
+    expect(renderToStaticMarkup(<App access={access} />)).not.toContain('プロバイダー障害の検証');
+  });
   it('states that the API is unconnected and blocks running', () => {
     const html = renderToStaticMarkup(<App access={{ status: 'unconnected', pending: ['評価APIのURL', 'Cognitoログイン'] }} now={fixedNow} />);
     expect(html).toContain('評価APIに未接続です');

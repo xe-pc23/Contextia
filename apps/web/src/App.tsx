@@ -1,4 +1,6 @@
-import { useMemo, useReducer } from 'react';
+import { useMemo, useReducer, useState } from 'react';
+import { DemoFaultSchema } from '@contextia/contracts';
+import type { DemoFault } from '@contextia/contracts';
 import type { ReactNode } from 'react';
 import type { WebConfig } from './runtimeConfig.js';
 import { RunControls } from './execution/RunControls.js';
@@ -22,13 +24,14 @@ export type EvaluationAccess =
 const NO_ERRORS: FieldErrors = {};
 const systemNow = () => new Date();
 
-export function App({ access, now = systemNow, mapConfig, accountControl }: { access: EvaluationAccess; now?: () => Date; mapConfig?: WebConfig['map']; accountControl?: ReactNode }) {
+export function App({ access, now = systemNow, mapConfig, accountControl, stage }: { access: EvaluationAccess; now?: () => Date; mapConfig?: WebConfig['map']; accountControl?: ReactNode; stage?: 'dev' | 'prod' }) {
+  const [demoFault, setDemoFault] = useState<DemoFault | undefined>();
   const [form, dispatch] = useReducer(scenarioFormReducer, undefined, () => formFromScenarioInput(createPresetInput(DEFAULT_PRESET_ID, now())));
   const build = useMemo(() => buildScenarioRequest(form), [form]);
   const errors = build.ok ? NO_ERRORS : build.errors;
   const { state, run } = useScenarioRun(access.status === 'ready' ? access.evaluator : null);
   const resultTimeZone = state.status === 'idle' ? DEFAULT_TIMEZONE : state.request.preferencesOverride?.timezone ?? DEFAULT_TIMEZONE;
-  const inputsChanged = state.status !== 'idle' && (!build.ok || JSON.stringify(build.request) !== JSON.stringify(state.request));
+  const inputsChanged = state.status !== 'idle' && (!build.ok || JSON.stringify(build.request) !== JSON.stringify(state.request) || demoFault !== state.demoFault);
 
   return (
     <div className="console">
@@ -72,13 +75,22 @@ export function App({ access, now = systemNow, mapConfig, accountControl }: { ac
           <StepsEditor form={form} errors={errors} dispatch={dispatch} />
           <CalendarEditor events={form.events} errors={errors} dispatch={dispatch} />
           <PreferencesEditor form={form} errors={errors} dispatch={dispatch} />
+          {stage === 'dev' ? <label className="field" htmlFor="demo-fault">プロバイダー障害の検証
+            <select id="demo-fault" disabled={state.status === 'running'} value={demoFault ?? ''} onChange={event => {
+              const parsed = DemoFaultSchema.safeParse(event.target.value);
+              setDemoFault(parsed.success ? parsed.data : undefined);
+            }}>
+              <option value="">通常</option><option value="weather">天気を取得不可にする</option><option value="routes">経路を取得不可にする</option>
+            </select>
+          </label> : null}
           <RunControls
-            build={build} running={state.status === 'running'} onRun={request => void run(request)}
+            build={build} running={state.status === 'running'} onRun={request => void run(request, stage === 'dev' ? demoFault : undefined)}
             blockedReason={access.status === 'ready' ? null : '評価APIとログインが未接続のため実行できません。'}
           />
         </section>
       </div>
 
+      {state.demoFault ? <p className="hint">この評価では{state.demoFault === 'weather' ? '天気' : '経路'}の取得不可を検証しています。</p> : null}
       <ResultPanel state={state} timeZone={resultTimeZone} inputsChanged={inputsChanged} />
     </div>
   );

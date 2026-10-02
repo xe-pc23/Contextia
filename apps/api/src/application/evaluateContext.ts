@@ -1,6 +1,6 @@
 import { EvaluationResultSchema, ProviderPlaceSchema, RecommendationDecisionSchema, UserPreferencesSchema } from '@contextia/contracts';
 import type {
-  ApiRecommendationItem, CandidateOpportunity, ContextInput, DeliveryDiagnostics, EvaluationResult, GuardCode,
+  ApiRecommendationItem, CandidateOpportunity, ContextInput, DeliveryDiagnostics, DemoFault, EvaluationResult, GuardCode,
   NotifyDecision, ProviderStatus, ProviderStatusMap, UserPreferences
 } from '@contextia/contracts';
 import type {
@@ -78,7 +78,7 @@ export interface EvaluationDependencies extends EnrichmentProviders {
   idempotency?: IdempotencyRepository;
 }
 
-export interface EvaluateContextInput { userId: string; context: ContextInput; idempotencyKey?: string }
+export interface EvaluateContextInput { userId: string; context: ContextInput; idempotencyKey?: string; demoFault?: DemoFault }
 export type EvaluateContext = (input: EvaluateContextInput) => Promise<EvaluationResult>;
 
 const NOT_REQUESTED: ProviderStatus = { status: 'not_requested' };
@@ -175,7 +175,7 @@ export function createEvaluateContext(deps: EvaluationDependencies): EvaluateCon
     throw new RangeError('contextTtlSeconds must exceed contextDedupSeconds so an expired snapshot is never a recent duplicate');
   }
 
-  return async ({ userId, context, idempotencyKey }) => {
+  return async ({ userId, context, idempotencyKey, demoFault }) => {
     // One request-start instant keeps both guard passes on the same day and window.
     const now = deps.clock();
     const nowEpochSeconds = epochSeconds(now);
@@ -187,7 +187,8 @@ export function createEvaluateContext(deps: EvaluationDependencies): EvaluateCon
       if (idempotencyKey) {
         const idempotency = deps.idempotency;
         if (!idempotency) throw new ApiFailure('STATE_UNAVAILABLE');
-        const claim = await deadline.run(() => claimEvaluation({ state: idempotency, userId, context, key: idempotencyKey, now, ttlSeconds: policy.idempotencyTtlSeconds }));
+        const claim = await deadline.run(() => claimEvaluation({ state: idempotency, userId, context, key: idempotencyKey, now, ttlSeconds: policy.idempotencyTtlSeconds,
+          ...(demoFault ? { demoFault } : {}) }));
         if ('replay' in claim) return claim.replay;
         pendingClaim = claim;
         finish = (result, places = []) => {
@@ -252,7 +253,12 @@ export function createEvaluateContext(deps: EvaluationDependencies): EvaluateCon
       const previewCodes: GuardCode[] = context.deliveryMode === 'preview' ? [...pre.guardCodes, ...candidateGuardCodes] : [];
 
       const evaluationAt = context.mode === 'simulation' ? new Date(context.scenarioTime ?? context.capturedAt) : now;
-      const enriched = await deadline.run(() => enrichCandidates({ context, evaluationAt, preferences, candidates: viable.map(entry => entry.candidate), providers: deps, policy }));
+      // Request-local decorators leave warm Lambda providers unchanged; unneeded providers remain unrequested.
+      const providers: EnrichmentProviders = { ...deps,
+        ...(demoFault === 'weather' ? { weather: { getWeather: async () => ({ status: 'unavailable' as const, data: null, code: 'DEMO_FORCED_UNAVAILABLE' }) } } : {}),
+        ...(demoFault === 'routes' ? { routes: { getRoute: async () => ({ status: 'unavailable' as const, data: null, code: 'DEMO_FORCED_UNAVAILABLE' }) } } : {})
+      };
+      const enriched = await deadline.run(() => enrichCandidates({ context, evaluationAt, preferences, candidates: viable.map(entry => entry.candidate), providers, policy }));
       Object.assign(providerStatus, enriched.providerStatus);
       base.weather = weatherAt(enriched.enrichment, evaluationAt.getTime(), defaultDetectorPolicy, context.mode);
       const refined = deps.domain.refineCandidates({ context, preferences, now, candidates: viable.map(entry => entry.candidate), evidence: enriched.enrichment });

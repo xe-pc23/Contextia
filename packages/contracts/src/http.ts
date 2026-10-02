@@ -20,7 +20,9 @@ export const GetMeResponseSchema = responseEnvelopeSchema(ProfileSchema);
 export const UpdatePreferencesRequestSchema = UserPreferencesSchema;
 export const UpdatePreferencesResponseSchema = responseEnvelopeSchema(z.strictObject({ updated: z.literal(true) }));
 export const ContextEvaluateRequestSchema = ContextInputSchema;
-export const EvaluationHeadersSchema = z.strictObject({ idempotencyKey: z.uuid().optional() });
+export const DemoFaultSchema = z.enum(['weather', 'routes']);
+export type DemoFault = z.infer<typeof DemoFaultSchema>;
+export const EvaluationHeadersSchema = z.strictObject({ idempotencyKey: z.uuid().optional(), demoFault: DemoFaultSchema.optional() });
 const deliveryFields = { wouldSuppress: z.boolean(), guardCodes: z.array(GuardCodeSchema) };
 export const DeliveryDiagnosticsSchema = z.discriminatedUnion('mode', [
   z.strictObject({ ...deliveryFields, mode: z.literal('preview'), status: z.literal('preview') }),

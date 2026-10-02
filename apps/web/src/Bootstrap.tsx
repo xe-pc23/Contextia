@@ -34,7 +34,7 @@ function AuthenticatedConsole({ config, auth }: { config: WebConfig; auth: WebAu
   const session = useSyncExternalStore(auth.subscribe, auth.getSnapshot);
   const [profile, setProfile] = useState<'loading' | 'ready' | 'error'>('loading');
   const [loginError, setLoginError] = useState<string | null>(null);
-  const evaluator = useMemo(() => createScenarioApiClient({ baseUrl: config.apiBaseUrl, getAccessToken: auth.getAccessToken, onUnauthorized: auth.invalidate }), [config.apiBaseUrl, auth]);
+  const evaluator = useMemo(() => createScenarioApiClient({ baseUrl: config.apiBaseUrl, stage: config.stage, getAccessToken: auth.getAccessToken, onUnauthorized: auth.invalidate }), [config.apiBaseUrl, config.stage, auth]);
   useEffect(() => { void auth.initialize(window.location.href); }, [auth]);
   useEffect(() => {
     if (session.status !== 'signed-in') { setProfile('loading'); return; }
@@ -52,5 +52,5 @@ function AuthenticatedConsole({ config, auth }: { config: WebConfig; auth: WebAu
   const control = session.status === 'signed-in'
     ? <button type="button" onClick={() => auth.signOut()}>ログアウト</button>
     : <button type="button" disabled={session.status === 'loading'} onClick={() => { void auth.signIn().catch(() => { setLoginError('ログインを開始できません。ブラウザの設定を確認してください。'); }); }}>ログイン</button>;
-  return <App key={access.status} access={access} mapConfig={config.map} accountControl={control} />;
+  return <App key={access.status} stage={config.stage} access={access} mapConfig={config.map} accountControl={control} />;
 }

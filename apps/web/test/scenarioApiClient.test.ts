@@ -42,6 +42,14 @@ describe('evaluate endpoint', () => {
 });
 
 describe('scenario API client request', () => {
+  it('sends a closed dev selector as a header, and refuses it in prod', async () => {
+    const { fetch, calls } = respondWith(() => json(200, envelope(notifyResult())));
+    await client(fetch, { stage: 'dev' }).evaluate(input, 'weather');
+    expect(new Headers(calls[0]?.init?.headers).get('x-contextia-demo-fault')).toBe('weather');
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual(input);
+    expect(await client(fetch, { stage: 'prod' }).evaluate(input, 'routes')).toMatchObject({ kind: 'invalid-request' });
+    expect(calls).toHaveLength(1);
+  });
   it('invalidates a rejected session when the API returns 401', async () => {
     let invalidated = 0;
     const response = await client(respondWith(() => json(401, { message: 'Unauthorized' })).fetch, { onUnauthorized: () => { invalidated++; } }).evaluate(input);

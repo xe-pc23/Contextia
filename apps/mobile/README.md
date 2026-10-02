@@ -23,6 +23,7 @@ Run CocoaPods from `apps/mobile/ios`; `--project-directory` from the repository 
 Podfile's Node subprocess the correct Expo resolution directory. Do not combine `--pnpm` with `--no-install`.
 Check ignored `.xcode.env.local` uses the repository Node 24 executable rather than Homebrew's Node 25.
 Debug builds require Metro; native compilation alone is not an executed app check.
+See [Simulator and member hardware checklist](../../docs/MOBILE_VALIDATION.md) for the current validation matrix.
 
 Dashboard now uses the backend's normalized `weather` reading for condition/temperature, labels forecast
 coverage and observation time, and displays missing/null temperature explicitly. It makes no direct weather call.
@@ -123,7 +124,7 @@ After D's dev integration, record the mobile commit, `/health` backend build ID,
 
 ## Verification status
 
-The current task environment has no ADB or Xcode executable on PATH and no Android SDK environment configuration. No APK/IPA compilation, connected device, Cognito live login, or deployed API smoke is claimed. JS export and deterministic tests are separate checks.
+The earlier Phase 2-E task environment had no ADB or Xcode executable on PATH and no Android SDK environment configuration. The current local Xcode/Simulator status is recorded above. No APK/IPA compilation, connected device, Cognito live login, or deployed API smoke is claimed. JS export and deterministic tests are separate checks.
 
 | Capability | iOS | Android |
 |---|---|---|
