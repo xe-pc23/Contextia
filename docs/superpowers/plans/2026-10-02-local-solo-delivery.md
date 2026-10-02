@@ -194,3 +194,22 @@ The local AWS profiles and GitHub access should be used where available. If boot
 - The corrected source passed lint, typecheck, 1,258 tests / 79 files, build and dev/prod CDK synth.
   Independent reviewers verified negative/positive provider pairs and profile race recovery. These
   fixes need dev deployment and live confirmation; browser/hardware/production gates stay open.
+
+## Live UI and follow-up audit — 2026-10-03 04:57 JST
+
+- Dev `53dfd72` passed OIDC validation/deploy and the first run's five-preview, step and real-transit
+  checks. Weather-fault positive failed once; a standalone probe later passed but did not read quota.
+  The CI retry failed fresh duplicate diagnostics while manual testing used the same identity.
+  Run the next mandatory smoke without concurrent manual evaluations of its dedicated user.
+- Actual dev browser PKCE callback, map rendering/clicking/coordinate editing, live step result and
+  logout clearing results/disabling Run were observed. Secret-free map proof is
+  `docs/hackathon/evidence/dev-map-53dfd72.jpg`. Mobile SRP resolved to the same owned profile as Web;
+  neither browser evidence nor the SRP script closes the native matrix.
+- Live UI exposed unclear Japanese prose and a selected Places card marked unused. Explicit resolved
+  language/field meanings and historical-prose-as-data instructions address the prose failure without
+  removing summaries or forcing notify. Selected validated cards establish `places` usage in both
+  stored and returned signals; unrelated successful provider calls do not. Regression tests and
+  read-only review cover these changes; live prose/provenance verification remains required.
+- The prose/provenance slice passed all five commands with 1,263 tests / 79 files. Dev-only fault
+  diagnostics are emitted before the assertion so a failed case still records fixed canonical status
+  codes without leaking model prose or private context. Infrastructure configuration is unchanged.

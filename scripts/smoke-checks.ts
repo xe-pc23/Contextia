@@ -188,8 +188,8 @@ export async function runAuthenticatedSmoke(target: SmokeTarget, tokens: { acces
   } else {
     if (!fault.ok) throw new SmokeCheckError('Dev fault preview failed');
     const result = ContextEvaluateResponseSchema.parse(await fault.json() as unknown);
-    assertWeatherFault(result.data);
     console.log(smokeProviderDiagnostic('step-goal', result));
+    assertWeatherFault(result.data);
     const after = await state.getState(ownedRead);
     if (after.status !== 'ok' && after.status !== 'degraded') throw new SmokeCheckError('Cannot verify fault preview delivery state');
     assertPreviewStateUnchanged(before.data, after.data);

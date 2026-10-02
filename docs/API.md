@@ -26,6 +26,12 @@ All IDs are opaque strings.
 
 All request bodies are runtime-validated with Zod.
 
+`usedSignals` describes facts that materially contributed to the recommendation. For a notify
+response, selected validated place cards establish `places` usage even if the model omits it.
+The stored recommendation and returned response share the deduplicated signal list. A successful
+provider call without a selected place does not establish that signal. Silent decisions retain
+the model's reported signals.
+
 `POST /v1/context/evaluate` also accepts `X-Contextia-Demo-Fault: weather|routes` only in `dev`,
 with the verified Web app client and simulation/preview input. The chosen provider returns
 `unavailable` / `DEMO_FORCED_UNAVAILABLE` only if candidate generation requests it. Other providers

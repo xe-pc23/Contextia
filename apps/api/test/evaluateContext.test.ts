@@ -98,6 +98,29 @@ function setup(options: Options = {}) {
 }
 
 describe('createEvaluateContext', () => {
+  it.each(['preview', 'proactive'] as const)('includes selected place provenance in returned and persisted %s signals', async mode => {
+    const decision = { ...notify, usedSignals: ['steps', 'location', 'steps'] as NotifyDecision['usedSignals'] };
+    const { evaluate, state } = setup({ decision: async () => ({ status: 'ok', data: decision }) });
+    const result = await evaluate({ userId: 'user-1', context: mode === 'preview' ? preview : proactive });
+    expect(result.usedSignals).toEqual(['steps', 'location', 'places']);
+    const stored = mode === 'preview' ? state.writeRecommendation.mock.calls[0]?.[0].recommendation
+      : state.commitProactiveRecommendation.mock.calls[0]?.[0].recommendation;
+    expect(stored?.usedSignals).toEqual(result.usedSignals);
+    expect(decision.usedSignals).toEqual(['steps', 'location', 'steps']);
+  });
+
+  it('does not infer a used place signal from an unselected successful Places request', async () => {
+    const decision: NotifyDecision = { ...notify, usedSignals: ['steps', 'location'], recommendations: [
+      { title: '少し休憩しましょう', reason: '歩数目標を達成しました。', action: { type: 'MAP' } }
+    ] };
+    const { evaluate, state, places } = setup({ decision: async () => ({ status: 'ok', data: decision }) });
+    const result = await evaluate({ userId: 'user-1', context: preview });
+    expect(result.providerStatus.places.status).toBe('ok');
+    expect(result.usedSignals).toEqual(['steps', 'location']);
+    expect(state.writeRecommendation.mock.calls[0]?.[0].recommendation.usedSignals).toEqual(result.usedSignals);
+    expect(places.getPlace).not.toHaveBeenCalled();
+  });
+
   it('excludes stale-day real activity from model input and stored context while preserving other candidates', async () => {
     const { evaluate, decide, state } = setup({ clock: () => new Date('2026-10-03T15:00:01Z') });
     await evaluate({ userId: 'user-1', context: { ...proactive, capturedAt: '2026-10-03T14:59:59Z' } });

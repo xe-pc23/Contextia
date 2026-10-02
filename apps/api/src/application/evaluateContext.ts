@@ -144,7 +144,11 @@ function validateDecision(raw: unknown, enrichment: ProviderEnrichment): { ok: t
   if (parsed.data.decision === 'silent') return { ok: true, value: null };
   const code = referenceError(parsed.data.recommendations, enrichment);
   if (code) return { ok: false, code };
-  return { ok: true, value: { decision: parsed.data } };
+  const usedSignals = [...new Set(parsed.data.usedSignals)];
+  // A selected, validated place materially contributes to the displayed recommendation.
+  // A successful unselected provider call alone does not establish signal usage.
+  if (parsed.data.recommendations.some(item => item.place) && !usedSignals.includes('places')) usedSignals.push('places');
+  return { ok: true, value: { decision: { ...parsed.data, usedSignals } } };
 }
 
 function candidateEnrichment(candidate: CandidateOpportunity, enrichment: ProviderEnrichment): ProviderEnrichment {
