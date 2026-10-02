@@ -350,6 +350,11 @@ Rules:
 - delete on logout if user requests.
 - SNS endpoint ARN may be stored instead of raw native token after registration.
 
+Proactive recommendation ID pointers also carry immutable `deliveryPath` (`client` or `remote`)
+and `deliveryStatus`. Remote claim adds an opaque `deliveryClaimId`; completion requires that same
+claim and never updates notification counters. Preview/older pointers without an intent cannot be
+remotely dispatched. These attributes expire with their recommendation pointer.
+
 ## 10. IDEMPOTENCY item
 
 Example:

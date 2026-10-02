@@ -78,7 +78,7 @@ export interface EvaluationDependencies extends EnrichmentProviders {
   idempotency?: IdempotencyRepository;
 }
 
-export interface EvaluateContextInput { userId: string; context: ContextInput; idempotencyKey?: string; demoFault?: DemoFault }
+export interface EvaluateContextInput { userId: string; context: ContextInput; idempotencyKey?: string; demoFault?: DemoFault; deliveryPath?: 'client' | 'remote' }
 export type EvaluateContext = (input: EvaluateContextInput) => Promise<EvaluationResult>;
 
 const NOT_REQUESTED: ProviderStatus = { status: 'not_requested' };
@@ -176,7 +176,8 @@ export function createEvaluateContext(deps: EvaluationDependencies): EvaluateCon
     throw new RangeError('contextTtlSeconds must exceed contextDedupSeconds so an expired snapshot is never a recent duplicate');
   }
 
-  return async ({ userId, context, idempotencyKey, demoFault }) => {
+  return async ({ userId, context, idempotencyKey, demoFault, deliveryPath = 'client' }) => {
+    if (deliveryPath === 'remote' && context.deliveryMode !== 'proactive') throw new ApiFailure('STATE_UNAVAILABLE');
     // One request-start instant keeps both guard passes on the same day and window.
     const now = deps.clock();
     const nowEpochSeconds = epochSeconds(now);
@@ -189,7 +190,7 @@ export function createEvaluateContext(deps: EvaluationDependencies): EvaluateCon
         const idempotency = deps.idempotency;
         if (!idempotency) throw new ApiFailure('STATE_UNAVAILABLE');
         const claim = await deadline.run(() => claimEvaluation({ state: idempotency, userId, context, key: idempotencyKey, now, ttlSeconds: policy.idempotencyTtlSeconds,
-          ...(demoFault ? { demoFault } : {}) }));
+          ...(demoFault ? { demoFault } : {}), deliveryPath }));
         if ('replay' in claim) return claim.replay;
         pendingClaim = claim;
         finish = (result, places = []) => {
@@ -347,7 +348,7 @@ export function createEvaluateContext(deps: EvaluationDependencies): EvaluateCon
         const activeKeys = new Set([...active.map(anchor => `${anchor.triggerType}#${anchor.anchorKey}`), `${candidate.type}#${candidate.anchorKey}`]);
         if (activeKeys.size > policy.maxRecentAnchors || policy.maxRecentAnchors < chosen.guard.maxDailyNotifications) throw new EvaluationFailure('STATE_UNAVAILABLE');
         const committed = await deadline.run(() => deps.state.commitProactiveRecommendation({ userId, recommendation, delivery: {
-          deliveryMode: 'proactive', evaluationId, recommendationId, notificationDay: chosen.guard.notificationDay,
+          path: deliveryPath, deliveryMode: 'proactive', evaluationId, recommendationId, notificationDay: chosen.guard.notificationDay,
           notificationsEnabled: preferences.notificationsEnabled, notificationFrequency: preferences.notificationFrequency,
           maxDailyNotifications: chosen.guard.maxDailyNotifications,
           contextFingerprint: fingerprint, triggerType: chosen.candidate.type, anchorKey: chosen.candidate.anchorKey,

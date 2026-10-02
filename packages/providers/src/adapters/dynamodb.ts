@@ -23,6 +23,9 @@ import {
   EvaluationResultSchema,
   GeoPointSchema,
   ProfileSchema,
+  RegisterDeviceRequestSchema,
+  OpaqueIdSchema,
+  DeviceIdSchema,
   ProviderPlaceSchema,
   ProviderStatusMapSchema,
   SignalNameSchema,
@@ -44,6 +47,7 @@ import type {
   ConversationMessage,
   ConversationRecord,
   DeliveryWriteResult,
+  DeliveryIntent,
   IdempotencyRecord,
   IdempotencyClaim,
   OwnedRead,
@@ -199,6 +203,7 @@ const RecommendationPointerSchema = z.object({
   updatedAt: TimestampSchema, deliveryRecordedAt: TimestampSchema.optional(), schemaVersion: z.literal(1)
 }).passthrough();
 const DeliveryInputSchema = z.strictObject({
+  path: z.enum(['client', 'remote']).default('client'),
   deliveryMode: z.literal('proactive'), evaluationId: z.string().min(1), recommendationId: z.string().min(1),
   notificationDay: z.iso.date(), notificationsEnabled: z.boolean(),
   notificationFrequency: UserPreferencesSchema.shape.notificationFrequency,
@@ -207,6 +212,13 @@ const DeliveryInputSchema = z.strictObject({
   at: TimestampSchema, contextDedupSeconds: z.number().int().nonnegative().max(86_400),
   anchorDedupSeconds: z.number().int().nonnegative().max(31 * 86_400), maxRecentAnchors: z.number().int().min(1).max(500)
 });
+const DeviceSchema = RegisterDeviceRequestSchema.extend({ enabled: z.boolean(), lastSeenAt: TimestampSchema, endpointArn: z.string().regex(/^arn:aws:sns:/).optional() });
+const DeviceItemSchema = DeviceSchema.extend({ PK: z.string(), SK: z.string(), entityType: z.literal('Device'), schemaVersion: z.literal(1) }).passthrough();
+const DeliveryIntentSchema = z.discriminatedUnion('path', [
+  z.strictObject({ path: z.literal('client'), status: z.literal('ready') }),
+  z.strictObject({ path: z.literal('remote'), status: z.enum(['reserved', 'claimed', 'sent', 'failed']) })
+]);
+const RemoteClaimSchema = z.strictObject({ userId: UserIdSchema, recommendationId: OpaqueIdSchema, nowEpochSeconds: PositiveEpochSchema, claimId: OpaqueIdSchema });
 const RecommendationRecordSchema = z.strictObject({
   id: z.string().min(1), evaluationId: z.string().min(1), contextReference: ContextReferenceSchema,
   createdAt: TimestampSchema, triggerType: TriggerTypeSchema, urgency: UrgencySchema, message: z.string().min(1),
@@ -842,6 +854,8 @@ export class DynamoDbStateRepository implements StateRepository {
     }
     const items = recommendationItems(parsed.data.userId, recommendation, delivery.at);
     if (items === null) return invalidRequest();
+    items.pointerItem.deliveryPath = delivery.path;
+    items.pointerItem.deliveryStatus = delivery.path === 'client' ? 'ready' : 'reserved';
     const pk = userKey(parsed.data.userId);
     try {
       const profileResponse = await this.send({ operation: 'get', input: {
@@ -1337,9 +1351,96 @@ export class DynamoDbStateRepository implements StateRepository {
       return mapFailure(error, elapsedSince(startedAt));
     }
   }
-  async upsertDevice(input: { userId: string; device: DeviceRegistration }): Promise<ProviderResult<null>> { return this.unsupported(input); }
-  async listDevices(input: { userId: string }): Promise<ProviderResult<DeviceRegistration[]>> { return this.unsupported(input); }
-  async deleteDevice(input: { userId: string; deviceId: string }): Promise<ProviderResult<null>> { return this.unsupported(input); }
+  async upsertDevice(input: { userId: string; device: DeviceRegistration }): Promise<ProviderResult<null>> {
+    const started = performance.now();
+    const parsed = z.strictObject({ userId: UserIdSchema, device: DeviceSchema }).safeParse(input);
+    if (!parsed.success) return invalidRequest();
+    const item = toDynamoItem({ ...parsed.data.device, PK: userKey(parsed.data.userId), SK: `DEVICE#${parsed.data.device.deviceId}`, entityType: 'Device', schemaVersion: 1 });
+    if (!item) return invalidRequest();
+    try {
+      await this.send({ operation: 'put', input: { TableName: this.tableName, Item: item } });
+      return available('ok', null, elapsedSince(started));
+    } catch (cause: unknown) { return mapFailure(cause, elapsedSince(started)); }
+  }
+  async listDevices(input: { userId: string }): Promise<ProviderResult<DeviceRegistration[]>> {
+    const started = performance.now(); const parsed = z.strictObject({ userId: UserIdSchema }).safeParse(input);
+    if (!parsed.success) return invalidRequest();
+    try {
+      const response = QueryResponseSchema.safeParse(await this.send({ operation: 'query', input: {
+        TableName: this.tableName, KeyConditionExpression: '#pk = :pk AND begins_with(#sk, :prefix)',
+        ExpressionAttributeNames: { '#pk': 'PK', '#sk': 'SK' }, ExpressionAttributeValues: { ':pk': userKey(parsed.data.userId), ':prefix': 'DEVICE#' }, ConsistentRead: true, Limit: 100
+      } }));
+      if (!response.success) return invalidStoredData();
+      if (response.data.LastEvaluatedKey !== undefined) return unavailable('error', elapsedSince(started), 'DEVICE_LIMIT_EXCEEDED');
+      const devices: DeviceRegistration[] = [];
+      for (const raw of response.data.Items ?? []) {
+        const device = DeviceItemSchema.safeParse(raw);
+        if (!device.success || device.data.PK !== userKey(parsed.data.userId) || device.data.SK !== `DEVICE#${device.data.deviceId}`) return invalidStoredData();
+        devices.push({ deviceId: device.data.deviceId, platform: device.data.platform, provider: device.data.provider, token: device.data.token, enabled: device.data.enabled, lastSeenAt: device.data.lastSeenAt, ...(device.data.endpointArn ? { endpointArn: device.data.endpointArn } : {}) });
+      }
+      return available('ok', devices, elapsedSince(started));
+    } catch (cause: unknown) { return mapFailure(cause, elapsedSince(started)); }
+  }
+  async deleteDevice(input: { userId: string; deviceId: string }): Promise<ProviderResult<null>> {
+    const started = performance.now(); const parsed = z.strictObject({ userId: UserIdSchema, deviceId: DeviceIdSchema }).safeParse(input);
+    if (!parsed.success) return invalidRequest();
+    try {
+      await this.send({ operation: 'delete', input: { TableName: this.tableName, Key: { PK: userKey(parsed.data.userId), SK: `DEVICE#${parsed.data.deviceId}` }, ConditionExpression: 'attribute_not_exists(#pk) OR #pk = :pk', ExpressionAttributeNames: { '#pk': 'PK' }, ExpressionAttributeValues: { ':pk': userKey(parsed.data.userId) } } });
+      return available('ok', null, elapsedSince(started));
+    } catch (cause: unknown) { return mapFailure(cause, elapsedSince(started)); }
+  }
+  async getDeliveryIntent(input: OwnedRead & { recommendationId: string }): Promise<ProviderResult<DeliveryIntent | null>> {
+    const started = performance.now();
+    const parsed = RemoteClaimSchema.omit({ claimId: true }).safeParse(input); if (!parsed.success) return invalidRequest();
+    try {
+      const raw = mapRecord(itemFromResponse(await this.send({ operation: 'get', input: { TableName: this.tableName, Key: { PK: userKey(parsed.data.userId), SK: `RECOMMENDATION_REF#${parsed.data.recommendationId}` }, ConsistentRead: true } })));
+      if (!raw || typeof raw.expiresAt !== 'number' || raw.expiresAt <= parsed.data.nowEpochSeconds) return available('ok', null, elapsedSince(started));
+      if (raw.PK !== userKey(parsed.data.userId) || raw.SK !== `RECOMMENDATION_REF#${parsed.data.recommendationId}` || raw.recommendationId !== parsed.data.recommendationId) return invalidStoredData();
+      const intent = DeliveryIntentSchema.safeParse({ path: raw.deliveryPath, status: raw.deliveryStatus });
+      // Preview and legacy records have no dispatch reservation.
+      return intent.success ? available('ok', intent.data, elapsedSince(started)) : available('ok', null, elapsedSince(started));
+    } catch (cause: unknown) { return mapFailure(cause, elapsedSince(started)); }
+  }
+  async claimRemoteDelivery(input: OwnedRead & { recommendationId: string; claimId: string; device?: DeviceRegistration }): Promise<ProviderResult<boolean>> {
+    const started = performance.now(); const parsed = RemoteClaimSchema.extend({ device: DeviceSchema.optional() }).safeParse(input); if (!parsed.success) return invalidRequest();
+    try {
+      const update: DynamoDbUpdateInput = {
+        TableName: this.tableName, Key: { PK: userKey(parsed.data.userId), SK: `RECOMMENDATION_REF#${parsed.data.recommendationId}` },
+        UpdateExpression: 'SET #status = :claimed, #claim = :claim',
+        ConditionExpression: '#path = :remote AND #status = :reserved AND #expires > :now AND #id = :id',
+        ExpressionAttributeNames: { '#path': 'deliveryPath', '#status': 'deliveryStatus', '#expires': 'expiresAt', '#id': 'recommendationId', '#claim': 'deliveryClaimId' },
+        ExpressionAttributeValues: { ':remote': 'remote', ':reserved': 'reserved', ':claimed': 'claimed', ':now': parsed.data.nowEpochSeconds, ':id': parsed.data.recommendationId, ':claim': parsed.data.claimId }
+      };
+      const device = parsed.data.device;
+      if (device) {
+        const values: Record<string, DynamoDbValue> = { ':token': device.token, ':seen': device.lastSeenAt, ':enabled': true, ':provider': device.provider };
+        const names: Record<string, string> = { '#token': 'token', '#seen': 'lastSeenAt', '#enabled': 'enabled', '#provider': 'provider', '#endpoint': 'endpointArn' };
+        let endpointCondition = 'attribute_not_exists(#endpoint)';
+        if (device.endpointArn) { values[':endpoint'] = device.endpointArn; endpointCondition = '#endpoint = :endpoint'; }
+        await this.send({ operation: 'transactWrite', input: { TransactItems: [
+          { ConditionCheck: { TableName: this.tableName, Key: { PK: userKey(parsed.data.userId), SK: 'PROFILE' }, ConditionExpression: '#prefs.#enabled = :enabled', ExpressionAttributeNames: { '#prefs': 'preferences', '#enabled': 'notificationsEnabled' }, ExpressionAttributeValues: { ':enabled': true } } },
+          { ConditionCheck: { TableName: this.tableName, Key: { PK: userKey(parsed.data.userId), SK: `DEVICE#${device.deviceId}` }, ConditionExpression: `#token = :token AND #seen = :seen AND #enabled = :enabled AND #provider = :provider AND ${endpointCondition}`, ExpressionAttributeNames: names, ExpressionAttributeValues: values } },
+          { Update: update }
+        ] } });
+      } else { await this.send({ operation: 'update', input: update }); }
+      return available('ok', true, elapsedSince(started));
+    } catch (cause: unknown) {
+      const reasons = isRecord(cause) && Array.isArray(cause.CancellationReasons) ? cause.CancellationReasons : [];
+      if (errorName(cause) === 'ConditionalCheckFailedException' || (errorName(cause) === 'TransactionCanceledException' && reasons.some(reason => isRecord(reason) && reason.Code === 'ConditionalCheckFailed') && reasons.every(reason => isRecord(reason) && (reason.Code === 'None' || reason.Code === 'ConditionalCheckFailed')))) return available('ok', false, elapsedSince(started));
+      return mapFailure(cause, elapsedSince(started));
+    }
+  }
+  async completeRemoteDelivery(input: OwnedRead & { recommendationId: string; claimId: string; status: 'sent' | 'failed' }): Promise<ProviderResult<null>> {
+    const started = performance.now(); const parsed = RemoteClaimSchema.extend({ status: z.enum(['sent', 'failed']) }).safeParse(input); if (!parsed.success) return invalidRequest();
+    try {
+      await this.send({ operation: 'update', input: { TableName: this.tableName, Key: { PK: userKey(parsed.data.userId), SK: `RECOMMENDATION_REF#${parsed.data.recommendationId}` },
+        UpdateExpression: 'SET #status = :result', ConditionExpression: '#path = :remote AND #status = :claimed AND #claim = :claim AND #expires > :now',
+        ExpressionAttributeNames: { '#path': 'deliveryPath', '#status': 'deliveryStatus', '#claim': 'deliveryClaimId', '#expires': 'expiresAt' },
+        ExpressionAttributeValues: { ':remote': 'remote', ':claimed': 'claimed', ':claim': parsed.data.claimId, ':result': parsed.data.status, ':now': parsed.data.nowEpochSeconds }
+      } });
+      return available('ok', null, elapsedSince(started));
+    } catch (cause: unknown) { return mapFailure(cause, elapsedSince(started)); }
+  }
   async deleteUserData(input: { userId: string; cursor?: string }): Promise<ProviderResult<{ deletedCount: number; nextCursor: string | null }>> { return this.unsupported(input); }
 
   private unsupported<T>(input: unknown): ProviderResult<T> {

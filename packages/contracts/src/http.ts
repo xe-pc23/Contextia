@@ -77,11 +77,12 @@ export const ChatRequestSchema = z.strictObject({ message: z.string().min(1).max
 export const ChatResponseSchema = responseEnvelopeSchema(z.strictObject({
   conversationId: OpaqueIdSchema, reply: z.string().min(1), recommendations: z.array(ApiRecommendationItemSchema).max(3), expiresAt: TimestampSchema
 }));
+export const DeviceIdSchema = OpaqueIdSchema.max(128);
 export const RegisterDeviceRequestSchema = z.strictObject({
-  deviceId: OpaqueIdSchema, platform: z.enum(['ios', 'android']), provider: z.enum(['expo', 'sns']), token: z.string().min(1)
+  deviceId: DeviceIdSchema, platform: z.enum(['ios', 'android']), provider: z.enum(['expo', 'sns']), token: z.string().min(1).max(4096)
 });
 export const RegisterDeviceResponseSchema = responseEnvelopeSchema(z.strictObject({ registered: z.literal(true) }));
-export const DeleteDeviceParamsSchema = z.strictObject({ deviceId: OpaqueIdSchema });
+export const DeleteDeviceParamsSchema = z.strictObject({ deviceId: DeviceIdSchema });
 export const LoadScenarioParamsSchema = z.strictObject({ scenarioId: ScenarioIdSchema });
 export const LoadScenarioResponseSchema = responseEnvelopeSchema(ScenarioContextInputSchema);
 

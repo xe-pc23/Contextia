@@ -263,6 +263,21 @@ declaration error; Nova Lite accepted a schema-valid response without that owner
 The authenticated smoke rebases fixture times to a future Tokyo daytime window and uses a precise
 public Shibuya Station address for event destinations. It preserves each fixture's timing gaps and
 requires actual geocoding/transit results; it does not substitute estimated transit times.
+
+If the original upcoming preset is outside the detector's departure lead window, the smoke adds
+one public Tokyo Tower → Tokyo Station case with an event 40 minutes ahead. The provider still
+supplies the timetable; the gate requires a validated scheduled transit/intermodal card and unchanged
+preview delivery state. It does not count successful pedestrian routes as transit proof.
+
+Runtime emits bounded CloudWatch EMF metrics to stdout for HTTP/evaluation count and latency,
+actual provider calls, and Bedrock initial/fallback/repair attempts. Dimensions contain only stage,
+provider, operation and status. Tokens, user IDs, coordinates, context and recommendation text are absent.
+
+Remote delivery defaults to Expo via `EXPO_PUSH_ENDPOINT` (optional `EXPO_PUSH_ACCESS_TOKEN`).
+SNS remains disabled until stage-specific platform credentials/applications and the minimum verified
+IAM policy are available. The adapter accepts `SNS_IOS_APPLICATION_ARN` / `SNS_ANDROID_APPLICATION_ARN`
+and `REMOTE_PUSH_PROVIDER=sns`; current CDK intentionally grants no SNS actions while it is disabled.
+Native push credentials and actual provider/OS delivery remain separate hardware/owner gates.
 | `MAP_KEY_EXPIRE_TIME` | Future UTC timestamp, `YYYY-MM-DDTHH:MM:SSZ`. Rotate before expiry |
 
 `pnpm deploy:dev` / `pnpm deploy:prod` verify STS account and Region, require deploy parameters, and set `BUILD_ID` to the actual Git HEAD. A supplied build marker must equal HEAD. Prod accepts only a manual main workflow, or the owner's local main checkout. Review `pnpm cdk:diff:dev` / `pnpm cdk:diff:prod` first. No script hardcodes a local AWS profile. Synth stays credential-free and does not need parameter values.

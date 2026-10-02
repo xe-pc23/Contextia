@@ -142,6 +142,27 @@ function hasFalseItems(value: unknown): boolean {
 }
 
 describe('BedrockRecommendationModel', () => {
+  it('counts initial and repair SDK attempts without payloads and isolates observer failures', async () => {
+    const entries: unknown[] = []; const fake = fakeClient([response({ private: 'invalid' }), response(notifyDecision)]);
+    const observed = new BedrockRecommendationModel({ client: fake.client, modelId: 'test', timeoutMs: 100, onAttempt: entry => { entries.push(entry); throw new Error('observer'); } });
+    expect(await observed.decide(modelInput())).toMatchObject({ status: 'degraded', code: 'REPAIRED_OUTPUT' });
+    expect(entries).toEqual([{ operation: 'decide', attempt: 'initial', status: 'ok', latencyMs: expect.any(Number) }, { operation: 'decide', attempt: 'repair', status: 'ok', latencyMs: expect.any(Number) }]);
+    expect(JSON.stringify(entries)).not.toContain('private');
+  });
+  it('hydrates compact references with exact supplied facts and excludes adapter metadata', async () => {
+    const wire = { ...notifyDecision, recommendations: [{ title: '休憩', reason: '近く', placeRef: 'place-0', routeRef: 'route-0', action: { type: 'MAP' } }] };
+    const fake = fakeClient([response(wire)]);
+    const result = await model(fake.client).decide(modelInput());
+    expect(result).toMatchObject({ status: 'ok', data: { recommendations: [{ place, route: { mode: route.mode, durationMinutes: route.durationMinutes, departAt: route.departAt, arriveAt: route.arriveAt, transfers: route.transfers } }] } });
+    expect(JSON.stringify(result)).not.toContain('placeRef'); expect(JSON.stringify(result)).not.toContain('routeId');
+  });
+  it('rejects unknown and unavailable compact references', async () => {
+    const wire = { ...notifyDecision, recommendations: [{ title: '休憩', reason: '近く', placeRef: 'place-999', action: { type: 'MAP' } }] };
+    expect(await model(fakeClient([response(wire), response(wire)]).client).decide(modelInput())).toMatchObject({ status: 'error', code: 'INVALID_MODEL_OUTPUT' });
+    const unavailable = modelInput({ enrichment: { geocoding: [], places: [{ need: 'places-near-current', anchorKey: 'current', result: { status: 'unavailable', data: null } }], weather: [], routes: [] } });
+    const missing = { ...wire, recommendations: [{ ...wire.recommendations[0], placeRef: 'place-0' }] };
+    expect(await model(fakeClient([response(missing), response(missing)]).client).decide(unavailable)).toMatchObject({ status: 'error', code: 'INVALID_MODEL_OUTPUT' });
+  });
   it('validates a single fenced JSON object without accepting surrounding prose', async () => {
     const fenced = { output: { message: { content: [{ text: `\`\`\`json\n${JSON.stringify(notifyDecision)}\n\`\`\`` }] } } };
     const fake = fakeClient([fenced]);

@@ -3,7 +3,8 @@ import { z } from 'zod';
 import {
   ChatRequestSchema, ChatResponseSchema, ContextEvaluateRequestSchema, ContextEvaluateResponseSchema,
   EvaluationHeadersSchema, GetMeResponseSchema, GetRecommendationResponseSchema, ListRecommendationsResponseSchema,
-  ProfileWriteHeadersSchema, RecommendationParamsSchema, RecommendationsQuerySchema, UpdatePreferencesRequestSchema, UpdatePreferencesResponseSchema
+  ProfileWriteHeadersSchema, RecommendationParamsSchema, RecommendationsQuerySchema, UpdatePreferencesRequestSchema, UpdatePreferencesResponseSchema,
+  RegisterDeviceRequestSchema, RegisterDeviceResponseSchema, DeleteDeviceParamsSchema
 } from '@contextia/contracts';
 import type { ContextEvaluateRequest, ContextEvaluateResponse, ErrorResponse, HealthResponse } from '@contextia/contracts';
 import { EvaluationFailure } from './application/evaluateContext.js';
@@ -11,10 +12,12 @@ import type { EvaluateContext } from './application/evaluateContext.js';
 import { ApiFailure } from './application/apiFailure.js';
 import type { AccountServices } from './application/account.js';
 import type { ChatWithRecommendation } from './application/chatWithRecommendation.js';
+import type { DeviceServices } from './application/devices.js';
+import type { createServerPushEvaluation } from './application/serverPushEvaluation.js';
 
 export const MAX_BODY_BYTES = 256 * 1024;
 
-export type RouteName = 'health' | 'evaluate' | 'me' | 'preferences' | 'recommendations' | 'recommendation' | 'chat' | 'not-found';
+export type RouteName = 'health' | 'evaluate' | 'me' | 'preferences' | 'recommendations' | 'recommendation' | 'chat' | 'devices' | 'delete-device' | 'not-found';
 
 export type RequestLog = {
   event: 'http_request';
@@ -43,6 +46,9 @@ export type HandlerOptions = {
   evaluate?: EvaluateContext;
   account?: AccountServices;
   chat?: ChatWithRecommendation;
+  devices?: DeviceServices;
+  /** Internal application command only. The HTTP router never selects it. */
+  serverPush?: ReturnType<typeof createServerPushEvaluation>;
 };
 
 /** Verified access-token claims supplied by the API Gateway JWT authorizer. */
@@ -198,6 +204,9 @@ export function createRequestHandler(options: HandlerOptions): (request: ApiRequ
     } else if (request.method === 'PUT' && request.path === '/v1/me/preferences') {
       route = 'preferences';
       result = await accountRoute(request, route, options);
+    } else if ((request.method === 'POST' && request.path === '/v1/devices') || (request.method === 'DELETE' && /^\/v1\/devices\/[^/]+$/.test(request.path))) {
+      route = request.method === 'POST' ? 'devices' : 'delete-device';
+      result = await deviceRoute(request, options);
     } else if (request.method === 'GET' && request.path === '/v1/recommendations') {
       route = 'recommendations';
       result = await accountRoute(request, route, options);
@@ -218,6 +227,31 @@ export function createRequestHandler(options: HandlerOptions): (request: ApiRequ
     });
     return response;
   };
+}
+
+async function deviceRoute(request: ApiRequest, options: HandlerOptions): Promise<Outcome> {
+  const { requestId } = request;
+  if (!request.claims) return error(401, requestId, 'UNAUTHORIZED', 'A valid access token is required.');
+  if (!options.clients?.mobileClientId || request.claims.clientId !== options.clients.mobileClientId) return error(403, requestId, 'FORBIDDEN', 'This client is not allowed to register devices.');
+  if (!options.devices) return error(503, requestId, 'SERVICE_UNAVAILABLE', 'Device registration is not available.');
+  try {
+    if (request.method === 'DELETE') {
+      let deviceId: string | undefined;
+      try { deviceId = decodeURIComponent(request.path.split('/')[3] ?? ''); } catch { /* validation below */ }
+      const parsed = DeleteDeviceParamsSchema.safeParse({ deviceId });
+      if (!parsed.success) return error(400, requestId, 'VALIDATION_ERROR', 'Device ID is invalid.');
+      await options.devices.delete(request.claims.sub, parsed.data.deviceId);
+      return { response: { statusCode: 204, headers: JSON_HEADERS, body: '' } };
+    }
+    const body = parseBody(request.body);
+    if (!body.ok) return error(body.tooLarge ? 413 : 400, requestId, body.tooLarge ? 'PAYLOAD_TOO_LARGE' : 'VALIDATION_ERROR', 'Device request is invalid.');
+    const parsed = RegisterDeviceRequestSchema.safeParse(body.value);
+    if (!parsed.success) return error(400, requestId, 'VALIDATION_ERROR', 'Device request is invalid.');
+    return { response: json(200, RegisterDeviceResponseSchema.parse({ requestId, data: await options.devices.register(request.claims.sub, parsed.data) })) };
+  } catch (cause: unknown) {
+    if (cause instanceof ApiFailure) return apiFailure(cause, requestId);
+    return error(500, requestId, 'INTERNAL_ERROR', 'Device request could not be completed.');
+  }
 }
 
 const JwtClaimsSchema = z.object({ sub: z.string().min(1), client_id: z.string().min(1), token_use: z.literal('access') });

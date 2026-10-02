@@ -221,7 +221,7 @@ export class ContextiaCoreStack extends Stack {
       apiName: `${prefix}-http-api`,
       corsPreflight: {
         allowOrigins: browserOrigins,
-        allowMethods: [CorsHttpMethod.GET, CorsHttpMethod.PUT, CorsHttpMethod.POST, CorsHttpMethod.OPTIONS],
+        allowMethods: [CorsHttpMethod.GET, CorsHttpMethod.PUT, CorsHttpMethod.POST, CorsHttpMethod.DELETE, CorsHttpMethod.OPTIONS],
         allowHeaders: ['authorization', 'content-type', 'accept', 'idempotency-key', 'if-none-match', ...(isDev ? ['x-contextia-demo-fault'] : [])],
         maxAge: Duration.hours(1)
       }
@@ -235,7 +235,8 @@ export class ContextiaCoreStack extends Stack {
     api.addRoutes({ path: '/v1/context/evaluate', methods: [HttpMethod.POST], integration, authorizer });
     for (const [path, method] of [
       ['/v1/me', HttpMethod.GET], ['/v1/me/preferences', HttpMethod.PUT], ['/v1/recommendations', HttpMethod.GET],
-      ['/v1/recommendations/{recommendationId}', HttpMethod.GET], ['/v1/recommendations/{recommendationId}/chat', HttpMethod.POST]
+      ['/v1/recommendations/{recommendationId}', HttpMethod.GET], ['/v1/recommendations/{recommendationId}/chat', HttpMethod.POST],
+      ['/v1/devices', HttpMethod.POST], ['/v1/devices/{deviceId}', HttpMethod.DELETE]
     ] as const) api.addRoutes({ path, methods: [method], integration, authorizer });
     const defaultStage = api.defaultStage?.node.defaultChild;
     if (defaultStage instanceof CfnStage) {

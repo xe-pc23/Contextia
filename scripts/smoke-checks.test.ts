@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { assertPreviewStateUnchanged, hasLiveTransitProof, liveSmokeContext, nextLiveSmokeTime, runPublicSmoke, smokeProviderDiagnostic } from './smoke-checks.js';
+import { assertPreviewStateUnchanged, hasLiveTransitProof, liveSmokeContext, liveTransitProofContext, nextLiveSmokeTime, runPublicSmoke, smokeProviderDiagnostic } from './smoke-checks.js';
 import { ContextEvaluateResponseSchema } from '@contextia/contracts';
 import { getScenarioInput } from '@contextia/test-fixtures';
 const target = { stage: 'dev' as const, buildId: 'sha-1', apiBaseUrl: 'https://api.example.com', webUrl: 'https://web.example.com/' };
@@ -28,6 +28,14 @@ describe('public deployment smoke', () => {
     expect(live.location.latitude).toBeCloseTo(35.658034, 5);
     expect(live.location.longitude).toBeCloseTo(139.701636, 5);
     expect(live.calendar[0]?.location).toContain('渋谷駅');
+  });
+  it('adds an explicit public transit case without altering the five preset timing gaps', () => {
+    const at = new Date('2026-10-03T05:10:00Z'); const preset = liveSmokeContext('upcoming-transit', at); const proof = liveTransitProofContext(at);
+    expect(Date.parse(proof.calendar[0]!.startAt) - at.getTime()).toBe(40 * 60_000);
+    expect(proof.calendar[0]!.location).toContain('東京駅');
+    expect(preset.calendar[0]!.startAt).not.toBe(proof.calendar[0]!.startAt);
+    expect(Date.parse(proof.calendar[0]!.endAt) - Date.parse(proof.calendar[0]!.startAt)).toBe(Date.parse(preset.calendar[0]!.endAt) - Date.parse(preset.calendar[0]!.startAt));
+    expect(proof.deliveryMode).toBe('preview');
   });
   it('selects the next daytime slot at least ten minutes ahead, including midnight and slot boundaries', () => {
     expect(nextLiveSmokeTime(new Date('2026-10-03T14:30:00Z')).toISOString()).toBe('2026-10-04T05:10:00.000Z');

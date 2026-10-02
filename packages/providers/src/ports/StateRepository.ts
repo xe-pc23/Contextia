@@ -44,6 +44,8 @@ export interface RecommendationRecord {
 export type StorageRecommendationItem = Omit<ApiRecommendationItem, 'place'> & { place?: StoragePlace | null };
 export type RecommendationWrite = Omit<RecommendationRecord, 'recommendations'> & { recommendations: StorageRecommendationItem[] };
 export interface ProactiveDeliveryWrite {
+  /** Immutable reservation. Public evaluation defaults to client; only internal commands select remote. */
+  path?: 'client' | 'remote';
   deliveryMode: 'proactive';
   evaluationId: string;
   recommendationId: string;
@@ -61,6 +63,7 @@ export interface ProactiveDeliveryWrite {
 }
 export type DeliveryGuardCode = Extract<GuardCode, 'NOTIFICATIONS_DISABLED' | 'DAILY_CAP_REACHED' | 'DUPLICATE_CONTEXT' | 'RECENT_SAME_TRIGGER'>;
 export type DeliveryWriteResult = { recorded: true } | { recorded: false; guardCodes: DeliveryGuardCode[]; reason?: 'superseded' };
+export type DeliveryIntent = { path: 'client'; status: 'ready' } | { path: 'remote'; status: 'reserved' | 'claimed' | 'sent' | 'failed' };
 export interface IdempotencyRecord {
   key: string;
   claimId: string;
@@ -109,6 +112,9 @@ export interface StateRepository {
   upsertDevice(input: { userId: string; device: DeviceRegistration }): Promise<ProviderResult<null>>;
   listDevices(input: { userId: string }): Promise<ProviderResult<DeviceRegistration[]>>;
   deleteDevice(input: { userId: string; deviceId: string }): Promise<ProviderResult<null>>;
+  getDeliveryIntent(input: OwnedRead & { recommendationId: string }): Promise<ProviderResult<DeliveryIntent | null>>;
+  claimRemoteDelivery(input: OwnedRead & { recommendationId: string; claimId: string; device?: DeviceRegistration }): Promise<ProviderResult<boolean>>;
+  completeRemoteDelivery(input: OwnedRead & { recommendationId: string; claimId: string; status: 'sent' | 'failed' }): Promise<ProviderResult<null>>;
   // Delete owned data (including expired items/chat/idempotency) in bounded batches, never Cognito here.
   deleteUserData(input: { userId: string; cursor?: string }): Promise<ProviderResult<{ deletedCount: number; nextCursor: string | null }>>;
 }

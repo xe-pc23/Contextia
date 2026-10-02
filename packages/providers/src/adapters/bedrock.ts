@@ -5,7 +5,7 @@ import {
 import type { ConverseCommandInput } from '@aws-sdk/client-bedrock-runtime';
 import {
   ChatReplySchema,
-  RecommendationDecisionSchema
+  RecommendationDecisionSchema, NotifyDecisionSchema, SilentDecisionSchema, ActionSchema
 } from '@contextia/contracts';
 import type {
   ChatReply,
@@ -38,8 +38,8 @@ const SYSTEM_PROMPT = [
   'Return only a JSON data object, never the JSON schema itself or Markdown. Do not provide internal reasoning; give concise, user-facing reasons in preferences.locale.',
   'The decision object has exactly six top-level fields: decision, decisionReason, usedSignals, urgency, message, recommendations. Do not add fields such as $schema, anyOf, properties or triggerType.',
   'decision is exactly "notify" or "silent". For "silent", urgency and message are null and recommendations is []. For "notify", urgency is "low", "medium" or "high", message is a nonempty string, and recommendations has one to three cards.',
-  'usedSignals is an array using only the supplied signal names. Every card has title, reason, action and only optional supplied place/route facts.',
-  'Copy supplied place names, IDs, coordinates and route facts exactly; do not translate source place names. A place has only provider, placeId, name, latitude, longitude and optional distanceMeters. A route has only mode, durationMinutes, optional departAt, arriveAt, transfers and attributions; exclude routeId, legs and warnings.'
+  'Prefer one useful concise card. usedSignals uses only supplied signal names. Every card has title, reason, action, and optional placeRef/routeRef from referenceCatalog.',
+  'Return references such as place-0 and route-0, never place/route objects, coordinates, times, or extra provider metadata. Source facts are attached by the application. Keep title, reason and message short.'
 ].join(' ');
 
 const FOLLOW_UP_SYSTEM_PROMPT = [
@@ -49,8 +49,42 @@ const FOLLOW_UP_SYSTEM_PROMPT = [
   'Never invent or change place names, coordinates, distances, route modes, travel times, departure or arrival times, or transfers.',
   'If a fact is unavailable, say so. Keep the reply to one to three concise sentences in the user locale.',
   'Stay within this recommendation. Return only the requested reply object, with at most three recommendation cards.',
+  'Cards contain title, reason, action and optional placeRef/routeRef from referenceCatalog. Never copy place/route objects or metadata. Prefer one concise card.',
   'Do not provide internal reasoning.'
 ].join(' ');
+
+const ReferenceCardSchema = z.strictObject({ title: z.string().min(1).max(100), reason: z.string().min(1).max(200), action: ActionSchema,
+  placeRef: z.string().regex(/^place-\d+$/).nullable().optional(), routeRef: z.string().regex(/^route-\d+$/).nullable().optional() });
+const ReferenceDecisionSchema = z.discriminatedUnion('decision', [
+  NotifyDecisionSchema.omit({ recommendations: true }).extend({ recommendations: z.array(ReferenceCardSchema).min(1).max(3) }), SilentDecisionSchema
+]);
+const ReferenceReplySchema = ChatReplySchema.omit({ recommendations: true }).extend({ recommendations: z.array(ReferenceCardSchema).max(3) });
+type ReferenceCatalog = { places: { ref: string; value: NonNullable<RecommendationItem['place']> }[]; routes: { ref: string; value: NonNullable<RecommendationItem['route']> }[] };
+
+function referenceCatalog(enrichment: ProviderEnrichment, saved: RecommendationItem[] = []): ReferenceCatalog {
+  const places = [...candidatePlaces(enrichment), ...saved.flatMap(item => item.place ? [item.place] : [])].map(place => ({
+    provider: place.provider, placeId: place.placeId, name: place.name, latitude: place.latitude, longitude: place.longitude,
+    ...(place.distanceMeters === undefined ? {} : { distanceMeters: place.distanceMeters })
+  }));
+  const routes = [...candidateRoutes(enrichment), ...saved.flatMap(item => item.route ? [item.route] : [])].map(route => ({
+    mode: route.mode, durationMinutes: route.durationMinutes, ...(route.departAt === undefined ? {} : { departAt: route.departAt }),
+    ...(route.arriveAt === undefined ? {} : { arriveAt: route.arriveAt }), ...(route.transfers === undefined ? {} : { transfers: route.transfers }),
+    ...(route.attributions === undefined ? {} : { attributions: route.attributions })
+  }));
+  // Identical facts share one reference; conflicting facts retain distinct, unambiguous references.
+  return { places: [...new Map(places.map(value => [JSON.stringify(value), value])).values()].map((value, index) => ({ ref: `place-${index}`, value })),
+    routes: [...new Map(routes.map(value => [JSON.stringify(value), value])).values()].map((value, index) => ({ ref: `route-${index}`, value })) };
+}
+function hydrateCards(cards: z.infer<typeof ReferenceCardSchema>[], catalog: ReferenceCatalog): RecommendationItem[] | null {
+  const result: RecommendationItem[] = [];
+  for (const card of cards) {
+    const place = card.placeRef ? catalog.places.find(item => item.ref === card.placeRef)?.value : undefined;
+    const route = card.routeRef ? catalog.routes.find(item => item.ref === card.routeRef)?.value : undefined;
+    if ((card.placeRef && !place) || (card.routeRef && !route)) return null;
+    result.push({ title: card.title, reason: card.reason, action: card.action, ...(place ? { place } : {}), ...(route ? { route } : {}) });
+  }
+  return result;
+}
 
 const UNSUPPORTED_SCHEMA_KEYS = new Set([
   'maximum', 'maxItems', 'maxLength', 'minimum', 'minLength', 'multipleOf', 'pattern', 'prefixItems'
@@ -78,6 +112,7 @@ export interface BedrockRecommendationAdapterOptions {
   modelId: string;
   timeoutMs: number;
   structuredOutput?: boolean;
+  onAttempt?: (entry: { operation: 'decide' | 'followUp'; attempt: 'initial' | 'fallback' | 'repair'; status: 'ok' | 'error' | 'timeout'; latencyMs: number }) => void;
 }
 
 export interface BedrockRecommendationConfig {
@@ -85,6 +120,7 @@ export interface BedrockRecommendationConfig {
   modelId: string;
   timeoutMs: number;
   structuredOutput?: boolean;
+  onAttempt?: BedrockRecommendationAdapterOptions['onAttempt'];
 }
 
 function sdkBackedClient(client: BedrockRuntimeClient): BedrockConverseClient {
@@ -134,7 +170,8 @@ function modelPayload(input: RecommendationModelInput): Record<string, unknown> 
       weather: input.enrichment.weather,
       routes: input.enrichment.routes
     },
-    recentRecommendations: input.recentRecommendations
+    recentRecommendations: input.recentRecommendations,
+    referenceCatalog: referenceCatalog(input.enrichment)
   };
 }
 
@@ -161,13 +198,13 @@ function requestFor(
           jsonSchema: {
             name: 'recommendation_decision',
             description: 'A Contextia recommendation decision',
-            schema: outputSchema(RecommendationDecisionSchema)
+            schema: outputSchema(ReferenceDecisionSchema)
           }
         }
       }
     };
   } else {
-    request.messages[0]!.content.push({ text: `Return JSON matching this schema: ${outputSchema(RecommendationDecisionSchema)}` });
+    request.messages[0]!.content.push({ text: `Return JSON matching this schema: ${outputSchema(ReferenceDecisionSchema)}` });
   }
   return request;
 }
@@ -188,6 +225,7 @@ function followUpRequestFor(
     context: input.context,
     preferences: input.preferences,
     providerResults: input.enrichment,
+    referenceCatalog: referenceCatalog(input.enrichment, [...input.recommendations, ...input.messages.flatMap(message => message.role === 'assistant' ? message.recommendations : [])]),
     messages: input.messages.map(message => ({
       role: message.role, content: message.content, createdAt: message.createdAt,
       ...(message.role === 'assistant' ? { recommendations: message.recommendations } : {})
@@ -199,7 +237,7 @@ function followUpRequestFor(
     messages: [{ role: 'user', content: [{ text: `${instructions}\n${JSON.stringify(payload)}` }] }],
     inferenceConfig: { maxTokens: 1200, temperature: 0.2 }
   };
-  const schema = outputSchema(ChatReplySchema);
+  const schema = outputSchema(ReferenceReplySchema);
   if (structuredOutput) {
     request.outputConfig = {
       textFormat: {
@@ -280,18 +318,26 @@ function parseModelJson(response: unknown): unknown {
 }
 
 function parseDecision(response: unknown, enrichment: ProviderEnrichment): RecommendationDecision | null {
-  const parsedDecision = RecommendationDecisionSchema.safeParse(parseModelJson(response));
+  const json = parseModelJson(response);
+  const wire = ReferenceDecisionSchema.safeParse(json);
+  const hydrated = wire.success ? hydrateCards(wire.data.recommendations, referenceCatalog(enrichment)) : undefined;
+  if (hydrated === null) return null;
+  // Existing validated object responses remain accepted; both paths enforce identical public guards.
+  const parsedDecision = RecommendationDecisionSchema.safeParse(wire.success ? { ...wire.data, recommendations: hydrated } : json);
   if (!parsedDecision.success || !usesOnlySuppliedReferences(parsedDecision.data.recommendations, enrichment)) return null;
   return parsedDecision.data;
 }
 
 function parseFollowUp(response: unknown, input: RecommendationFollowUpInput): ChatReply | null {
-  const parsedReply = ChatReplySchema.safeParse(parseModelJson(response));
-  if (!parsedReply.success) return null;
   const savedRecommendations = [
     ...input.recommendations,
     ...input.messages.flatMap(message => message.role === 'assistant' ? message.recommendations : [])
   ];
+  const json = parseModelJson(response); const wire = ReferenceReplySchema.safeParse(json);
+  const hydrated = wire.success ? hydrateCards(wire.data.recommendations, referenceCatalog(input.enrichment, savedRecommendations)) : undefined;
+  if (hydrated === null) return null;
+  const parsedReply = ChatReplySchema.safeParse(wire.success ? { ...wire.data, recommendations: hydrated } : json);
+  if (!parsedReply.success) return null;
   return usesOnlySuppliedReferences(parsedReply.data.recommendations, input.enrichment, savedRecommendations)
     ? parsedReply.data
     : null;
@@ -323,32 +369,35 @@ export class BedrockRecommendationModel implements RecommendationModel {
   private readonly modelId: string;
   private readonly timeoutMs: number;
   private readonly structuredOutput: boolean;
+  private readonly onAttempt: BedrockRecommendationAdapterOptions['onAttempt'];
 
   constructor(options: BedrockRecommendationAdapterOptions) {
     this.client = options.client;
     this.modelId = options.modelId;
     this.timeoutMs = options.timeoutMs;
     this.structuredOutput = options.structuredOutput ?? true;
+    this.onAttempt = options.onAttempt;
   }
 
   async decide(input: RecommendationModelInput): Promise<ProviderResult<RecommendationDecision>> {
     if (input.candidates.length === 0) return { status: 'not_requested', data: null };
     return this.generate(
       (structuredOutput, isRepair) => requestFor(this.modelId, input, structuredOutput, isRepair),
-      response => parseDecision(response, input.enrichment)
+      response => parseDecision(response, input.enrichment), 'decide'
     );
   }
 
   async followUp(input: RecommendationFollowUpInput): Promise<ProviderResult<ChatReply>> {
     return this.generate(
       (structuredOutput, isRepair) => followUpRequestFor(this.modelId, input, structuredOutput, isRepair),
-      response => parseFollowUp(response, input)
+      response => parseFollowUp(response, input), 'followUp'
     );
   }
 
   private async generate<T>(
     request: (structuredOutput: boolean, isRepair: boolean) => BedrockConverseRequest,
-    parse: (response: unknown) => T | null
+    parse: (response: unknown) => T | null,
+    operation: 'decide' | 'followUp'
   ): Promise<ProviderResult<T>> {
     const startedAt = performance.now();
     const remainingTimeoutMs = () => this.timeoutMs - (performance.now() - startedAt);
@@ -357,11 +406,14 @@ export class BedrockRecommendationModel implements RecommendationModel {
     let useStructuredOutput = this.structuredOutput;
     let decision: T | null;
     let firstResponse: unknown;
+    const attempt = async (input: BedrockConverseRequest, timeoutMs: number, kind: 'initial' | 'fallback' | 'repair'): Promise<unknown> => {
+      const started = performance.now(); let status: 'ok' | 'error' | 'timeout' = 'ok';
+      try { return await withTimeout(signal => this.client.converse(input, signal), timeoutMs); }
+      catch (cause: unknown) { status = mapAwsError(cause).status; throw cause; }
+      finally { try { this.onAttempt?.({ operation, attempt: kind, status, latencyMs: elapsedSince(started) }); } catch { /* Observability cannot affect model correctness. */ } }
+    };
     try {
-      firstResponse = await withTimeout(
-        signal => this.client.converse(request(useStructuredOutput, false), signal),
-        this.timeoutMs
-      );
+      firstResponse = await attempt(request(useStructuredOutput, false), this.timeoutMs, 'initial');
     } catch (error: unknown) {
       if (!useStructuredOutput || !isStructuredOutputUnsupported(error)) {
         return mapBedrockFailure(error, elapsedSince(startedAt));
@@ -370,10 +422,7 @@ export class BedrockRecommendationModel implements RecommendationModel {
       const remaining = remainingTimeoutMs();
       if (remaining <= 0) return timeoutResult();
       try {
-        firstResponse = await withTimeout(
-          signal => this.client.converse(request(false, false), signal),
-          remaining
-        );
+        firstResponse = await attempt(request(false, false), remaining, 'fallback');
       } catch (fallbackError: unknown) {
         return mapBedrockFailure(fallbackError, elapsedSince(startedAt));
       }
@@ -384,10 +433,7 @@ export class BedrockRecommendationModel implements RecommendationModel {
     const remaining = remainingTimeoutMs();
     if (remaining <= 0) return timeoutResult();
     try {
-      const repairedResponse = await withTimeout(
-        signal => this.client.converse(request(useStructuredOutput, true), signal),
-        remaining
-      );
+      const repairedResponse = await attempt(request(useStructuredOutput, true), remaining, 'repair');
       decision = parse(repairedResponse);
     } catch (error: unknown) {
       return mapBedrockFailure(error, elapsedSince(startedAt));
@@ -408,6 +454,7 @@ export function createBedrockRecommendationModel(
     client,
     modelId: config.modelId,
     timeoutMs: config.timeoutMs,
-    ...(config.structuredOutput === undefined ? {} : { structuredOutput: config.structuredOutput })
+    ...(config.structuredOutput === undefined ? {} : { structuredOutput: config.structuredOutput }),
+    ...(config.onAttempt === undefined ? {} : { onAttempt: config.onAttempt })
   });
 }

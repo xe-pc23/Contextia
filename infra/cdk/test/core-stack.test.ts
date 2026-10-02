@@ -58,7 +58,7 @@ describe.each(stages)('%s core stack', (stage) => {
         AllowOrigins: isDev ? Match.arrayWith(localOrigins) : [Match.anyValue()]
       })
     });
-    template.resourceCountIs('AWS::ApiGatewayV2::Route', 7);
+    template.resourceCountIs('AWS::ApiGatewayV2::Route', 9);
     template.hasResourceProperties('AWS::ApiGatewayV2::Route', { RouteKey: 'GET /health', AuthorizationType: 'NONE' });
     template.hasResourceProperties('AWS::ApiGatewayV2::Route', { RouteKey: 'POST /v1/context/evaluate', AuthorizationType: 'JWT', AuthorizerId: Match.anyValue() });
     for (const route of ['GET /v1/me', 'PUT /v1/me/preferences', 'GET /v1/recommendations', 'GET /v1/recommendations/{recommendationId}', 'POST /v1/recommendations/{recommendationId}/chat']) {

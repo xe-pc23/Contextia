@@ -18,16 +18,16 @@ function canonical(value: unknown): unknown {
   return value;
 }
 
-export function evaluationRequestHash(userId: string, context: ContextInput, demoFault?: DemoFault): string {
-  return createHash('sha256').update(JSON.stringify(canonical({ operation: 'POST /v1/context/evaluate', userId, context, ...(demoFault ? { demoFault } : {}) }))).digest('hex');
+export function evaluationRequestHash(userId: string, context: ContextInput, demoFault?: DemoFault, deliveryPath: 'client' | 'remote' = 'client'): string {
+  return createHash('sha256').update(JSON.stringify(canonical({ operation: 'POST /v1/context/evaluate', userId, context, ...(demoFault ? { demoFault } : {}), ...(deliveryPath === 'remote' ? { deliveryPath } : {}) }))).digest('hex');
 }
 
 export async function claimEvaluation(input: {
-  state: IdempotencyRepository; userId: string; context: ContextInput; key: string; now: Date; ttlSeconds: number; demoFault?: DemoFault;
+  state: IdempotencyRepository; userId: string; context: ContextInput; key: string; now: Date; ttlSeconds: number; demoFault?: DemoFault; deliveryPath?: 'client' | 'remote';
 }): Promise<Claim> {
   const { state, userId, context, key, now } = input;
   const nowEpochSeconds = Math.floor(now.getTime() / 1000);
-  const requestHash = evaluationRequestHash(userId, context, input.demoFault);
+  const requestHash = evaluationRequestHash(userId, context, input.demoFault, input.deliveryPath);
   const expiresAt = nowEpochSeconds + input.ttlSeconds;
   const claimId = randomUUID();
   const result = await state.claimIdempotency({

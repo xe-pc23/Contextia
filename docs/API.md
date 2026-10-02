@@ -648,6 +648,13 @@ Security:
 - never log token
 - encrypt at rest through AWS defaults
 - replace previous token for same logical device when rotated
+- device IDs are 1–128 characters; tokens are 1–4096 characters
+- only the configured Mobile Cognito client may register/delete devices
+
+SNS registration resolves a native token to a stage-specific endpoint and reconciles its token/enabled
+attributes. Endpoint ARNs remain internal storage fields. Removing a device removes the owned DynamoDB
+registration; no further dispatch may claim that removed revision. The remote read is bounded to 100
+devices and fails closed if DynamoDB returns a continuation key.
 
 Response: HTTP 200 with `{ "requestId": "req_...", "data": { "registered": true } }`. Deleting a device returns HTTP 204 without a body.
 
@@ -656,6 +663,27 @@ Response: HTTP 200 with `{ "requestId": "req_...", "data": { "registered": true 
 Auth: yes
 
 Removes push delivery registration.
+
+### Immutable delivery path
+
+| Evaluation | Result status | Delivery |
+|---|---|---|
+| Scenario preview | `preview` | No notification or quota increment |
+| Foreground Mobile | `ready` | In-app result only |
+| Background Mobile | `ready` | Local notification only |
+| Trusted internal server push | `sent` / `failed` | One configured remote adapter; no local fallback |
+| Silent | `suppressed` | No delivery |
+
+Public `/context/evaluate` always reserves the client path. Its body cannot choose server push.
+The internal server command reserves `remote` atomically with history, ID pointer, quota and dedup
+anchors. A separate owned, unexpired `reserved` → `claimed` transition checks current notification
+preferences and device revision before sending. Claim/complete do not consume quota again. Client
+reservations and preview/legacy pointers cannot be upgraded to remote delivery.
+
+`sent` means provider acceptance, not OS display. A provider timeout, process crash after claim, or
+completion-write failure cannot prove whether a device received the message; retries do not send
+again and the client never falls back to local delivery. Quota counts reserved proactive opportunities,
+including foreground `ready` results; it is separate from the actual provider-acceptance metric.
 
 ## 13. POST /demo/scenarios/{scenarioId}/load
 

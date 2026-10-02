@@ -5,6 +5,8 @@ export type * from './ports/RouteProvider.js';
 export type * from './ports/RecommendationModel.js';
 export type * from './ports/StateRepository.js';
 export type * from './ports/NotificationProvider.js';
+export { createExpoNotificationProvider, createSnsNotificationProvider } from './adapters/notifications.js';
+export type { SnsNotificationClient, SnsNotificationRequest } from './adapters/notifications.js';
 export { BedrockRecommendationModel, createBedrockRecommendationModel } from './adapters/bedrock.js';
 export type { BedrockConverseClient, BedrockConverseRequest, BedrockRecommendationAdapterOptions, BedrockRecommendationConfig } from './adapters/bedrock.js';
 export { DynamoDbStateRepository, createDynamoDbStateRepository } from './adapters/dynamodb.js';

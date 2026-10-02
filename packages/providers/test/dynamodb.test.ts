@@ -397,7 +397,7 @@ describe('DynamoDbStateRepository', () => {
     const stateUpdate = request.input.TransactItems.find(item => 'Update' in item && item.Update.Key.SK === 'STATE');
     expect(target?.ConditionExpression).toContain('attribute_not_exists');
     expect(pointer?.Item).toMatchObject({
-      SK: 'RECOMMENDATION_REF#rec-1', deliveryRecordedAt: new Date(Date.parse(delivery.at)).toISOString()
+      SK: 'RECOMMENDATION_REF#rec-1', deliveryRecordedAt: new Date(Date.parse(delivery.at)).toISOString(), deliveryPath: 'client', deliveryStatus: 'ready'
     });
     expect(pointer?.ConditionExpression).toContain('attribute_not_exists');
     expect(stateUpdate).toBeDefined();
@@ -405,6 +405,52 @@ describe('DynamoDbStateRepository', () => {
     if (!profileCheck || !('ConditionCheck' in profileCheck)) throw new Error('Expected profile condition');
     expect(profileCheck.ConditionCheck.ConditionExpression).toContain('#notificationFrequency = :frequency');
     expect(profileCheck.ConditionCheck.ExpressionAttributeValues).toMatchObject({ ':frequency': 'normal' });
+  });
+
+  it('reserves remote intent in the same proactive history/quota transaction', async () => {
+    const fake = fakeClient([{ Item: storedProfile() }, { Item: storedState({ notificationsSentToday: 0 }) }, {}]);
+    expect(await repository(fake.client).commitProactiveRecommendation({ userId: 'user-1', recommendation: recommendation(), delivery: { ...delivery, path: 'remote' } })).toMatchObject({ status: 'ok', data: { recorded: true } });
+    const transaction = fake.requests[2];
+    if (transaction?.operation !== 'transactWrite') throw new Error('Expected transaction');
+    const pointer = transaction.input.TransactItems.flatMap(item => 'Put' in item ? [item.Put.Item] : []).find(item => item.entityType === 'RecommendationRef');
+    expect(pointer).toMatchObject({ deliveryPath: 'remote', deliveryStatus: 'reserved' });
+  });
+  it('claims an unexpired remote reservation once with ownership and status guards, without quota changes', async () => {
+    const race = Object.assign(new Error('private'), { name: 'ConditionalCheckFailedException' });
+    const fake = fakeClient([{}, race]); const repo = repository(fake.client);
+    const input = { userId: 'user-1', recommendationId: 'rec-1', claimId: 'claim-1', nowEpochSeconds: 1 };
+    expect(await repo.claimRemoteDelivery(input)).toMatchObject({ status: 'ok', data: true });
+    expect(await repo.claimRemoteDelivery(input)).toMatchObject({ status: 'ok', data: false });
+    const request = fake.requests[0];
+    if (request?.operation !== 'update') throw new Error('Expected claim update');
+    expect(request.input.Key).toEqual({ PK: 'USER#user-1', SK: 'RECOMMENDATION_REF#rec-1' });
+    expect(request.input.ConditionExpression).toContain('#path = :remote');
+    expect(request.input.ConditionExpression).toContain('#status = :reserved');
+    expect(request.input.ConditionExpression).toContain('#expires > :now');
+    expect(JSON.stringify(request)).not.toContain('notificationsSentToday');
+  });
+  it('stores device rotation under its owner, returns normalized devices, and deletes only that owned device', async () => {
+    const device = { deviceId: 'install-1', platform: 'ios' as const, provider: 'expo' as const, token: 'private-token', enabled: true, lastSeenAt: processedAt };
+    const fake = fakeClient([{}, { Items: [{ PK: 'USER#user-1', SK: 'DEVICE#install-1', entityType: 'Device', schemaVersion: 1, ...device }] }, {}]);
+    const repo = repository(fake.client);
+    expect(await repo.upsertDevice({ userId: 'user-1', device })).toMatchObject({ status: 'ok' });
+    expect(await repo.listDevices({ userId: 'user-1' })).toMatchObject({ status: 'ok', data: [device] });
+    expect(await repo.deleteDevice({ userId: 'user-1', deviceId: 'install-1' })).toMatchObject({ status: 'ok' });
+    expect(fake.requests[0]?.input).toMatchObject({ Item: { PK: 'USER#user-1', SK: 'DEVICE#install-1', token: device.token } });
+    expect(fake.requests[2]?.input).toMatchObject({ Key: { PK: 'USER#user-1', SK: 'DEVICE#install-1' } });
+  });
+  it('fails closed instead of choosing a stale endpoint from a truncated device page', async () => {
+    const fake = fakeClient([{ Items: [], LastEvaluatedKey: { PK: 'USER#user-1', SK: 'DEVICE#last' } }]);
+    expect(await repository(fake.client).listDevices({ userId: 'user-1' })).toMatchObject({ status: 'error', code: 'DEVICE_LIMIT_EXCEEDED' });
+  });
+  it('atomically rechecks notification preferences and the current device revision when claiming a send', async () => {
+    const fake = fakeClient([{}]);
+    const device = { deviceId: 'd1', platform: 'ios' as const, provider: 'expo' as const, token: 'private', enabled: true, lastSeenAt: processedAt };
+    expect(await repository(fake.client).claimRemoteDelivery({ userId: 'user-1', recommendationId: 'rec-1', claimId: 'claim-1', nowEpochSeconds: 1, device })).toMatchObject({ status: 'ok', data: true });
+    const request = fake.requests[0]; if (request?.operation !== 'transactWrite') throw new Error('Expected transaction');
+    expect(request.input.TransactItems).toHaveLength(3);
+    expect(request.input.TransactItems[0]).toMatchObject({ ConditionCheck: { Key: { PK: 'USER#user-1', SK: 'PROFILE' }, ConditionExpression: '#prefs.#enabled = :enabled' } });
+    expect(request.input.TransactItems[1]).toMatchObject({ ConditionCheck: { Key: { PK: 'USER#user-1', SK: 'DEVICE#d1' }, ConditionExpression: expect.stringContaining('#token = :token') } });
   });
 
   it('suppresses a stale evaluation after notification frequency changes', async () => {
@@ -619,7 +665,7 @@ describe('DynamoDbStateRepository', () => {
 
   it('returns NOT_IMPLEMENTED for later ports without database access', async () => {
     const fake = fakeClient();
-    const result = await repository(fake.client).listDevices({ userId: 'user-1' });
+    const result = await repository(fake.client).deleteUserData({ userId: 'user-1' });
 
     expect(result).toMatchObject({ status: 'error', data: null, code: 'NOT_IMPLEMENTED' });
     expect(fake.requests).toHaveLength(0);

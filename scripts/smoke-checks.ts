@@ -38,6 +38,14 @@ export function hasLiveTransitProof(data: ContextEvaluateResponse['data']): bool
   return ['ok', 'degraded'].includes(data.providerStatus.routes.status) && data.recommendations.some(card =>
     card.route && ['transit', 'intermodal'].includes(card.route.mode) && card.route.departAt && card.route.arriveAt);
 }
+/** A second public case places departure inside the detector's ten-minute lead window.
+ * The five presets retain their original gaps; this case still requires a real provider schedule. */
+export function liveTransitProofContext(evaluationAt: Date) {
+  const base = liveSmokeContext('upcoming-transit', evaluationAt);
+  return ScenarioContextInputSchema.parse({ ...base, calendar: base.calendar.map(event => ({ ...event,
+    location: '東京都千代田区丸の内1丁目9番1号 東京駅',
+    startAt: new Date(Date.parse(event.startAt) - 10 * 60_000).toISOString(), endAt: new Date(Date.parse(event.endAt) - 10 * 60_000).toISOString() })) });
+}
 export function assertPreviewStateUnchanged(before: UserState | null, after: UserState | null): void {
   const delivery = (state: UserState | null) => ({ notificationsSentToday: state?.notificationsSentToday ?? 0, recentAnchors: state?.recentAnchors ?? [], latestRecommendationAt: state?.latestRecommendationAt ?? null });
   if (JSON.stringify(delivery(before)) !== JSON.stringify(delivery(after))) throw new SmokeCheckError('Preview mutated notification quota or delivery anchors');
@@ -96,6 +104,7 @@ export async function runAuthenticatedSmoke(target: SmokeTarget, tokens: { acces
   const evaluationAt = nextLiveSmokeTime(new Date());
   let ownershipChecked = false;
   let chatUrl: string | null = null;
+  let transitProven = false;
   const readinessFailures: string[] = [];
   const ownedRead = { userId: profile.data.userId, nowEpochSeconds: Math.floor(Date.now() / 1000) };
   const before = await state.getState(ownedRead);
@@ -110,7 +119,7 @@ export async function runAuthenticatedSmoke(target: SmokeTarget, tokens: { acces
     const second = ContextEvaluateResponseSchema.parse(await json(fetcher, `${api}/v1/context/evaluate`, request));
     if (first.data.delivery.mode !== 'preview' || first.data.delivery.status !== 'preview') throw new SmokeCheckError('Scenario smoke did not use preview');
     if (first.requestId === second.requestId || JSON.stringify(first.data) !== JSON.stringify(second.data)) throw new SmokeCheckError('Idempotency replay did not preserve the result with a fresh request ID');
-    if (scenario.id === 'upcoming-transit' && !hasLiveTransitProof(first.data)) readinessFailures.push(`Live scheduled transit card is not ready: ${smokeProviderDiagnostic(scenario.id, first)}`);
+    if (scenario.id === 'upcoming-transit') transitProven = hasLiveTransitProof(first.data);
     if (scenario.id === 'step-goal' && (first.data.decision !== 'notify' || first.data.triggerType !== 'STEP_GOAL_REST' || !['ok', 'degraded'].includes(first.data.providerStatus.places.status) || !['ok', 'degraded'].includes(first.data.providerStatus.bedrock.status))) readinessFailures.push(`Step-goal live Places/Bedrock slice is not ready: ${smokeProviderDiagnostic(scenario.id, first)}`);
     const fresh = ContextEvaluateResponseSchema.parse(await json(fetcher, `${api}/v1/context/evaluate`, { ...request, headers: { ...headers, 'idempotency-key': randomUUID() } }));
     if (fresh.data.evaluationId === first.data.evaluationId || fresh.data.delivery.mode !== 'preview' || fresh.data.delivery.status !== 'preview' || !fresh.data.delivery.guardCodes.includes('DUPLICATE_CONTEXT') || !fresh.data.delivery.wouldSuppress) throw new SmokeCheckError('Fresh repeated preview did not expose duplicate diagnostics');
@@ -129,6 +138,14 @@ export async function runAuthenticatedSmoke(target: SmokeTarget, tokens: { acces
       chatUrl ??= `${url}/chat`;
       ownershipChecked = true;
     }
+  }
+  if (!transitProven) {
+    const proof = ContextEvaluateResponseSchema.parse(await json(fetcher, `${api}/v1/context/evaluate`, { method: 'POST', headers: { ...headers, 'idempotency-key': randomUUID() }, body: JSON.stringify(liveTransitProofContext(evaluationAt)) }));
+    console.log(smokeProviderDiagnostic('upcoming-transit', proof));
+    if (!hasLiveTransitProof(proof.data)) readinessFailures.push(`Live scheduled transit card is not ready: ${smokeProviderDiagnostic('upcoming-transit', proof)}`);
+    const after = await state.getState(ownedRead);
+    if (after.status !== 'ok' && after.status !== 'degraded') throw new SmokeCheckError('Cannot verify transit preview delivery state');
+    assertPreviewStateUnchanged(before.data, after.data);
   }
   if (readinessFailures.length) throw new SmokeCheckError(readinessFailures.join('; '));
   if (!ownershipChecked) throw new SmokeCheckError('No recommendation was available to prove the ownership boundary');
