@@ -15,7 +15,7 @@ function RouteSummary({ route, timeZone }: { route: NonNullable<ApiRecommendatio
   const times = route.departAt && route.arriveAt ? `${formatClock(route.departAt, timeZone)} 発 → ${formatClock(route.arriveAt, timeZone)} 着` : null;
   return (
     <div className="route">
-      <p>経路: {routeModeLabels[route.mode]} {Math.round(route.durationMinutes)}分
+      <p>経路: {routeModeLabels[route.mode]} {Math.ceil(route.durationMinutes)}分
         {times ? `（${times}）` : null}
         {route.transfers === undefined ? null : ` 乗換${route.transfers}回`}</p>
       {route.attributions?.length ? (

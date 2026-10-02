@@ -85,6 +85,13 @@ describe('notify result', () => {
     expect(html).toContain('Transit terms');
   });
 
+  it('rounds a fractional route duration upward in the recommendation card', () => {
+    const item = { ...recommendationItem(1), route: { mode: 'transit' as const, durationMinutes: 601 / 60 } };
+    const html = success({ ...notifyResult(1), recommendations: [item] });
+    expect(html).toContain('公共交通 11分');
+    expect(html).not.toContain('公共交通 10分');
+  });
+
   it('escapes response text', () => {
     const html = success({ ...notifyResult(1), message: '<script>alert(1)</script>' });
     expect(html).not.toContain('<script>');
