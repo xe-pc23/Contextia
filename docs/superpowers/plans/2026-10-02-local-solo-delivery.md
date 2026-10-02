@@ -62,10 +62,10 @@ On 2026-10-02, this checkout is `feature/phase0-d-platform` at `7b3091b` and is 
 
 **Produces:** Judge sign-in through the Web Cognito app client, an authenticated Scenario Console, and stage-derived API/config values. The Web must never show fixture prose as a live result.
 
-- [ ] Write failing Web tests for signed-out, login callback/session expiry, invalid runtime config, 401 recovery, five editable presets, map/coordinate sync, and a repeated preview with `wouldSuppress` shown.
-- [ ] Implement the smallest Cognito authorization-code/PKCE session flow. Preserve one stage-neutral Web build; read the existing CDK-generated `/config.json` at runtime. Keep tokens out of logs and URLs after callback processing.
-- [ ] Make `main.tsx` construct a real schema-validating evaluator only for an authenticated session; retain a clear disconnected/error state otherwise.
-- [ ] Run targeted Web tests, browser interaction checks with test doubles, and the five repository commands. Have a fresh subagent review auth state, token handling, preview semantics, and runtime stage config.
+- [x] Write failing Web tests for signed-out, login callback/session expiry, invalid runtime config, 401 recovery, five editable presets, map/coordinate sync, and a repeated preview with `wouldSuppress` shown.
+- [x] Implement the smallest Cognito authorization-code/PKCE session flow. Preserve one stage-neutral Web build; read the existing CDK-generated `/config.json` at runtime. Keep tokens out of logs and URLs after callback processing.
+- [x] Make `main.tsx` construct a real schema-validating evaluator only for an authenticated session; retain a clear disconnected/error state otherwise.
+- [x] Run targeted Web tests, browser interaction checks with test doubles, and the five repository commands. Have a fresh subagent review auth state, token handling, preview semantics, and runtime stage config.
 
 **Gate:** Web auth/API behavior passes against test doubles and the built artifact reads stage-derived runtime configuration; Task 3 proves real sign-in and preview after dev deployment. No hard-coded endpoint/model ID or fake recommendation remains in the production path.
 

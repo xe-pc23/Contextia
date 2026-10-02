@@ -1,17 +1,18 @@
-# Web Scenario Console — Phase 2-C
+# Web Scenario Console — local integration
 
 React/Vite/strict TypeScript console for judges. It edits synthetic device context and sends it to the same `POST /v1/context/evaluate` endpoint used by mobile, fixed to `mode="simulation"` and `deliveryMode="preview"`.
 
-**Current state:** all five input presets, multiple calendar-event editing, request validation, the API client, provider/delivery diagnostics, and sent-context inspection are implemented. The API URL, Cognito login, and MapLibre map are **not connected yet**. Until then the screen says so and the Run button is disabled.
+**Current state:** runtime `/config.json` loading, Cognito authorization code/PKCE login and logout, in-memory token refresh, first-login profile creation, MapLibre/Amazon Location Maps V2 selection, all five editable presets, and the validating preview API client are connected. Missing config/auth or failed profile loading keeps evaluation disabled. Live AWS sign-in/maps/evaluation proof remains Task 3.
 
-**Phase 1-B is still pending.** This branch starts at the common integration commit `bbdee8e` on `feature/phase0-d-platform`; it does not incorporate the unmerged B provider branch. Five presets are available for input editing, but live provider/persistence behavior and the five-scenario backend integration are unverified. Test transports and synthetic API responses exist only under `test/`. The product renders only validated responses from the shared backend.
+The local integration branch includes A/B/C/D/E Phase 2 implementations. Test transports and synthetic responses exist only under `test/`; the production build excludes them. The product renders only validated responses from the shared backend.
 
 ## Structure
 
 ```text
 src/
 ├── App.tsx                     # layout, editor state, run wiring
-├── main.tsx                    # mounts App as "unconnected" until D's config exists
+├── main.tsx / Bootstrap.tsx     # runtime config, authenticated evaluator and profile readiness
+├── runtimeConfig.ts / auth/    # validated stage config, PKCE and session lifecycle
 ├── scenario/
 │   ├── form.ts                 # editor state, reducer, buildScenarioRequest (contract-validated)
 │   ├── time.ts                 # datetime-local <-> RFC 3339 with an IANA timezone offset
@@ -23,7 +24,7 @@ src/
 │   ├── runState.ts / useScenarioRun.ts
 │   └── RunControls.tsx
 ├── result/                     # decision, ≤3 cards, used signals, provider status, delivery, debug context
-└── map/MapPanel.tsx            # placeholder until MapLibre is available
+└── map/MapPanel.tsx            # Maps V2, click selection and editor/marker synchronization
 ```
 
 ## Behavior
@@ -67,7 +68,13 @@ pnpm exec vitest run apps/web        # web tests only
 - `scenarioApiClient.test.ts`: endpoint rules, bearer header, never sending invalid or proactive input, response schema rejection (more than 3 cards, non-preview delivery, unknown fields, unsafe URLs, non-JSON bodies), the error envelope, network errors, and timeouts.
 - `resultPanel.test.tsx` and `app.test.tsx`: static rendering of every state, all six provider statuses, each delivery guard and combined guards without hiding preview cards, the sent-context toggle and edited-input notice, and all five preset controls using `react-dom/server`.
 
-Test doubles live only under `test/`. Interactive DOM tests (clicking the map, typing into inputs) need a DOM environment that is not yet in the lockfile. Those interactions are covered by pure reducer tests plus a manual Chromium check. Playwright E2E is Phase 3.
+Test doubles live only under `test/`. Run `pnpm dev:web` and open `/test/browser.html` for the local interaction fixture. It explicitly labels synthetic responses, checks real editor/request/result wiring, and can simulate a 401. Production entry builds exclude this page. PKCE state/expiry, token refresh/logout, runtime config failures and profile bootstrap have focused unit coverage.
+
+### Local integration validation — 2026-10-02
+
+All five repository checks passed (1,060 tests / 59 files); two additional logout/refresh assertions also passed. In-app browser interaction verified invalid-coordinate blocking, schema-valid result rendering, repeated preview `wouldSuppress=true`/`DUPLICATE_CONTEXT`, and 401 session invalidation. [Preview screenshot](../../docs/hackathon/evidence/task2-preview.jpg) is test-double evidence, not a live AWS result. Review found and fixed profile requests losing a configured API base path.
+
+For local development, supply a dev `/config.json` at the git-ignored `apps/web/public/config.json`, matching CDK's config including `buildId`. Tokens are never written there. Dev localhost callback uses the current local origin; prod requires the configured HTTPS origin.
 
 ### Initial validation — 2026-10-02 (`645e1ca`)
 
@@ -93,7 +100,9 @@ Node.js 24.13.1 / pnpm 10.29.3, on the same C-only worktree:
 
 These review fixes do not add live-provider, authenticated smoke or notification-counter proof; the integration work above remains pending.
 
-## Pending requests to lane D
+## Historical Phase 2-C handoff requests
+
+The lane assignments below describe the original handoff. Runtime/auth/map connections are now implemented locally; live evidence and backend normalized-context coverage remain to be verified.
 
 C does not edit the root lockfile or CDK. The Console needs the following from D.
 

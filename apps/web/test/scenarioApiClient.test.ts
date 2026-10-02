@@ -42,6 +42,12 @@ describe('evaluate endpoint', () => {
 });
 
 describe('scenario API client request', () => {
+  it('invalidates a rejected session when the API returns 401', async () => {
+    let invalidated = 0;
+    const response = await client(respondWith(() => json(401, { message: 'Unauthorized' })).fetch, { onUnauthorized: () => { invalidated++; } }).evaluate(input);
+    expect(response.kind).toBe('http-error');
+    expect(invalidated).toBe(1);
+  });
   it('posts the validated preview context with the bearer token', async () => {
     const { fetch, calls } = respondWith(() => json(200, envelope(notifyResult())));
     await client(fetch).evaluate(input);

@@ -1,4 +1,6 @@
 import { useMemo, useReducer } from 'react';
+import type { ReactNode } from 'react';
+import type { WebConfig } from './runtimeConfig.js';
 import { RunControls } from './execution/RunControls.js';
 import type { ScenarioEvaluator } from './execution/scenarioApiClient.js';
 import { useScenarioRun } from './execution/useScenarioRun.js';
@@ -20,7 +22,7 @@ export type EvaluationAccess =
 const NO_ERRORS: FieldErrors = {};
 const systemNow = () => new Date();
 
-export function App({ access, now = systemNow }: { access: EvaluationAccess; now?: () => Date }) {
+export function App({ access, now = systemNow, mapConfig, accountControl }: { access: EvaluationAccess; now?: () => Date; mapConfig?: WebConfig['map']; accountControl?: ReactNode }) {
   const [form, dispatch] = useReducer(scenarioFormReducer, undefined, () => formFromScenarioInput(createPresetInput(DEFAULT_PRESET_ID, now())));
   const build = useMemo(() => buildScenarioRequest(form), [form]);
   const errors = build.ok ? NO_ERRORS : build.errors;
@@ -35,9 +37,9 @@ export function App({ access, now = systemNow }: { access: EvaluationAccess; now
           <span className="brand">Contextia</span>
           <span className="product">Scenario Console</span>
         </div>
-        {access.status === 'ready'
+        <div className="account-controls">{access.status === 'ready'
           ? <span className="badge badge-ready">{access.accountLabel ?? 'ログイン中'}</span>
-          : <span className="badge">未接続</span>}
+          : <span className="badge">未接続</span>}{accountControl}</div>
       </header>
 
       {access.status === 'unconnected' ? (
@@ -51,7 +53,7 @@ export function App({ access, now = systemNow }: { access: EvaluationAccess; now
       <div className="workspace">
         <section className="panel" aria-labelledby="location-heading">
           <h2 id="location-heading">地図と位置</h2>
-          <MapPanel latitude={form.latitude} longitude={form.longitude} />
+          <MapPanel latitude={form.latitude} longitude={form.longitude} {...(mapConfig ? { config: mapConfig } : {})} onSelect={point => dispatch({ type: 'setLocation', ...point })} />
           <LocationEditor form={form} errors={errors} dispatch={dispatch} />
         </section>
 

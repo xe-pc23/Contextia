@@ -34,6 +34,9 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0
 .product { color: var(--accent); font-weight: 600; }
 .badge { background: #e6ecf0; color: #405663; border-radius: 999px; padding: 6px 12px; font-size: 13px; white-space: nowrap; }
 .badge-ready { background: var(--ok-bg); color: var(--ok); }
+.account-controls { display: flex; align-items: center; gap: 12px; }
+.live-map { height: 320px; border: 1px solid var(--line); border-radius: 12px; }
+.map-panel { margin-bottom: 16px; }
 
 .banner { background: var(--warn-bg); border: 1px solid #f0d9a0; border-radius: 12px; padding: 16px 20px; margin-bottom: 20px; }
 .banner h2 { font-size: 16px; margin-bottom: 8px; color: var(--warn); }

@@ -38,6 +38,7 @@ export interface ScenarioApiClientOptions {
   readonly getAccessToken: () => string | null | Promise<string | null>;
   readonly fetch?: typeof fetch;
   readonly timeoutMs?: number;
+  readonly onUnauthorized?: () => void;
 }
 
 /** Resolves the evaluate endpoint, rejecting non-HTTPS origins other than localhost. */
@@ -131,6 +132,7 @@ export function createScenarioApiClient(options: ScenarioApiClientOptions): Scen
           cache: 'no-store',
           redirect: 'error'
         });
+        if (response.status === 401) options.onUnauthorized?.();
         return interpret(response.status, response.ok, await readJson(response));
       } catch {
         return timedOut ? { kind: 'timeout', timeoutMs } : { kind: 'network-error' };
