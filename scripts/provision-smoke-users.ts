@@ -7,6 +7,8 @@ import { z } from 'zod';
 import { EXPECTED_AWS_ACCOUNT, EXPECTED_AWS_REGION } from '@contextia/config';
 
 try {
+  // Local proof is the default. Exporting generated passwords requires a separate explicit invocation/authorization.
+  const destination = z.enum(['local', 'github-dev']).parse(process.argv[2] ?? 'local');
   const region = process.env.AWS_REGION ?? EXPECTED_AWS_REGION;
   const identity = await new STSClient({ region }).send(new GetCallerIdentityCommand({}));
   if (identity.Account !== EXPECTED_AWS_ACCOUNT || region !== EXPECTED_AWS_REGION) throw new Error('Wrong target');
@@ -32,11 +34,15 @@ try {
   mkdirSync('.superpowers', { recursive: true });
   const path = '.superpowers/smoke-dev.credentials.json';
   writeFileSync(path, JSON.stringify(credentials), { mode: 0o600 }); chmodSync(path, 0o600);
-  for (const [name, value] of Object.entries(credentials)) {
-    const saved = spawnSync('gh', ['secret', 'set', name, '--repo', 'xe-pc23/Contextia', '--env', 'dev'], { input: value, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
-    if (saved.status !== 0) throw new Error('Dev secret storage failed');
+  if (destination === 'github-dev') {
+    for (const [name, value] of Object.entries(credentials)) {
+      const saved = spawnSync('gh', ['secret', 'set', name, '--repo', 'xe-pc23/Contextia', '--env', 'dev'], { input: value, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+      if (saved.status !== 0) throw new Error('Dev secret storage failed');
+    }
   }
-  console.log('Two dedicated dev smoke users configured; credentials stored in protected dev secrets and an ignored owner-only local file.');
+  console.log(destination === 'github-dev'
+    ? 'Two dedicated dev smoke users configured; credentials stored in protected dev secrets and an ignored owner-only local file.'
+    : 'Two dedicated dev smoke users configured; credentials stored only in an ignored owner-only local file.');
 } catch {
   console.error('Dev smoke-user setup failed. Inspect stage pool/client readiness and local deployment/GitHub permissions without printing credentials.');
   process.exitCode = 1;

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { assertPreviewStateUnchanged, runPublicSmoke } from './smoke-checks.js';
+import { assertPreviewStateUnchanged, runPublicSmoke, smokeProviderDiagnostic } from './smoke-checks.js';
+import { ContextEvaluateResponseSchema } from '@contextia/contracts';
 const target = { stage: 'dev' as const, buildId: 'sha-1', apiBaseUrl: 'https://api.example.com', webUrl: 'https://web.example.com/' };
 function server(buildId = 'sha-1', protectedStatus = 401) {
   return vi.fn<typeof fetch>(async input => {
@@ -12,6 +13,17 @@ function server(buildId = 'sha-1', protectedStatus = 401) {
   });
 }
 describe('public deployment smoke', () => {
+  it('keeps provider diagnostics useful without response prose or arbitrary codes', () => {
+    const result = ContextEvaluateResponseSchema.parse({ requestId: 'req-safe', data: {
+      evaluationId: 'eval-1', recommendationId: null, decision: 'silent', triggerType: null, urgency: null,
+      decisionReason: 'private prose', message: null, recommendations: [], usedSignals: [], contextExpiresAt: '2026-10-04T00:00:00Z',
+      delivery: { mode: 'preview', status: 'preview', wouldSuppress: false, guardCodes: [] },
+      providerStatus: { geocoding: { status: 'not_requested' }, places: { status: 'error', code: 'UPSTREAM_AUTH' }, weather: { status: 'not_requested' }, routes: { status: 'unavailable', code: 'private-token' }, bedrock: { status: 'timeout', code: 'TIMEOUT' } }
+    } });
+    const diagnostic = smokeProviderDiagnostic('step-goal', result);
+    expect(diagnostic).toContain('req-safe'); expect(diagnostic).toContain('UPSTREAM_AUTH'); expect(diagnostic).toContain('TIMEOUT');
+    expect(diagnostic).not.toContain('private');
+  });
   it('verifies the exact SHA, runtime config, built JS and unauthorized API boundary', async () => {
     const fetcher = server(); await runPublicSmoke(target, fetcher);
     expect(fetcher).toHaveBeenCalledTimes(5);

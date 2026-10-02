@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { EvaluationResultSchema } from '@contextia/contracts';
 import type { NotifyDecision, RecommendationItem } from '@contextia/contracts';
-import type { GeocodingProvider, PlacesProvider, RecommendationModel, RouteProvider, WeatherProvider } from '@contextia/providers';
+import type { GeocodingProvider, PlacesProvider, RecommendationModel, RouteProvider, UserState, WeatherProvider } from '@contextia/providers';
 import { scenarios } from '@contextia/test-fixtures';
 import type { ScenarioFixture } from '@contextia/test-fixtures';
 import { phase2Detectors } from '@contextia/domain';
@@ -56,6 +56,59 @@ function setup(fixture: ScenarioFixture, primaryOnly = false) {
 }
 
 describe('Phase 2: five fixtures through the same evaluation pipeline', () => {
+  it.each(scenarios)('$id repeats preview with persisted duplicate diagnostics and unchanged delivery state', async fixture => {
+    const { evaluate, state } = setup(fixture, true);
+    const domain = createEvaluationDomain({ detectors: phase2Detectors.filter(value => value.type === fixture.primaryTrigger) });
+    const candidate = (await domain.detectCandidates({ context: fixture.context, preferences: fixture.preferences, now: NOW }))[0];
+    if (!candidate) throw new Error('Missing primary candidate');
+    const initial: UserState = { notificationDay: '2026-10-01', notificationsSentToday: 2, latestRecommendationAt: NOW.toISOString(), recentAnchors: [{ triggerType: candidate.type, anchorKey: candidate.anchorKey, notifiedAt: NOW.toISOString() }] };
+    let stored: UserState = structuredClone(initial);
+    state.getState.mockImplementation(async () => ok(stored));
+    state.writeContextSnapshot.mockImplementation(async input => {
+      stored = { ...stored, latestContext: { evaluationId: input.snapshot.evaluationId, capturedAt: input.snapshot.capturedAt }, latestContextFingerprint: input.fingerprint, latestContextProcessedAt: input.processedAt };
+      return ok(null);
+    });
+    const first = await evaluate({ userId: 'user-1', context: fixture.context });
+    const second = await evaluate({ userId: 'user-1', context: fixture.context });
+    expect(first).toMatchObject({ decision: 'notify', triggerType: fixture.primaryTrigger, delivery: { mode: 'preview', status: 'preview', wouldSuppress: true } });
+    expect(second).toMatchObject({ decision: 'notify', triggerType: fixture.primaryTrigger, delivery: { mode: 'preview', status: 'preview', wouldSuppress: true } });
+    expect(second.evaluationId).not.toBe(first.evaluationId);
+    expect(second.delivery.guardCodes).toEqual(expect.arrayContaining(['DUPLICATE_CONTEXT', 'RECENT_SAME_TRIGGER']));
+    expect(stored.notificationsSentToday).toBe(initial.notificationsSentToday);
+    expect(stored.recentAnchors).toEqual(initial.recentAnchors);
+    expect(stored.latestRecommendationAt).toBe(initial.latestRecommendationAt);
+    expect(state.commitProactiveRecommendation).not.toHaveBeenCalled();
+  });
+  it('rejects altered model route facts even when a legitimate route was supplied', async () => {
+    const fixture = scenarios.find(value => value.id === 'upcoming-transit');
+    if (!fixture) throw new Error('Missing fixture');
+    const { evaluate, model, state } = setup(fixture, true);
+    model.decide.mockImplementation(async input => {
+      const route = input.enrichment.routes[0]?.result.data;
+      if (!route) throw new Error('Expected a legitimate supplied route');
+      return ok({ decision: 'notify', decisionReason: 'Route', urgency: 'low', message: 'Route', usedSignals: ['calendar', 'transit'], recommendations: [{ title: 'Route', reason: 'Route', route: { ...publicRoute(route), durationMinutes: route.durationMinutes + 1 }, action: { type: 'TRANSIT' } }] });
+    });
+    const result = await evaluate({ userId: 'user-1', context: fixture.context });
+    expect(result).toMatchObject({ decision: 'silent', providerStatus: { bedrock: { status: 'error', code: 'UNKNOWN_ROUTE_REFERENCE' } } });
+    expect(state.writeRecommendation).not.toHaveBeenCalled();
+    expect(state.commitProactiveRecommendation).not.toHaveBeenCalled();
+  });
+  it('rejects a provider route from a candidate excluded from model input', async () => {
+    const fixture = scenarios.find(value => value.id === 'free-time');
+    const excludedRoute = fixture?.providers.routes.data?.[0];
+    if (!fixture || !excludedRoute) throw new Error('Missing fixture route');
+    const { evaluate, model, routes, state } = setup(fixture);
+    model.decide.mockImplementation(async input => {
+      expect(input.candidates[0]?.type).toBe('STEP_GOAL_REST');
+      expect(input.enrichment.routes).toEqual([]);
+      return ok({ decision: 'notify', decisionReason: 'Route', urgency: 'low', message: 'Route', usedSignals: ['steps'], recommendations: [{ title: 'Route', reason: 'Route', route: publicRoute(excludedRoute), action: { type: 'NONE' } }] });
+    });
+    const result = await evaluate({ userId: 'user-1', context: { ...fixture.context, activity: { ...fixture.context.activity, stepsToday: 12_000 } } });
+    expect(routes.getRoute).toHaveBeenCalled();
+    expect(result).toMatchObject({ decision: 'silent', providerStatus: { bedrock: { status: 'error', code: 'UNKNOWN_ROUTE_REFERENCE' } } });
+    expect(state.writeRecommendation).not.toHaveBeenCalled();
+    expect(state.commitProactiveRecommendation).not.toHaveBeenCalled();
+  });
   it.each(['weather', 'routes'] as const)('forces only %s for this preview and leaves the next request unchanged', async demoFault => {
     const fixture = scenarios.find(value => value.id === 'free-time');
     if (!fixture) throw new Error('Missing fixture');
