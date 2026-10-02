@@ -6,6 +6,23 @@ import { changeRoutes, primaryCandidates, refined } from './detectorHarness.js';
 const event = upcomingTransit.context.calendar[0];
 if (!event) throw new Error('Upcoming fixture must contain an event');
 
+function scheduledEvidence(schedules: readonly { routeId: string; departAt: string; arriveAt: string }[]) {
+  const evidence = getScenarioEvidence(upcomingTransit);
+  const entry = evidence.routes[0];
+  if (!entry || (entry.result.status !== 'ok' && entry.result.status !== 'degraded')) throw new Error('Expected transit fixture');
+  const result = entry.result;
+  evidence.routes = schedules.map(schedule => ({
+    ...entry, result: { ...result, data: {
+      ...result.data, ...schedule,
+      durationMinutes: (Date.parse(schedule.arriveAt) - Date.parse(schedule.departAt)) / 60_000
+    } }
+  }));
+  return evidence;
+}
+
+const earlyJourney = { routeId: 'early', departAt: '2026-10-01T15:10:00+09:00', arriveAt: '2026-10-01T15:44:00+09:00' };
+const latestJourney = { routeId: 'latest', departAt: '2026-10-01T15:30:00+09:00', arriveAt: '2026-10-01T15:44:00+09:00' };
+
 describe('UPCOMING_EVENT_TRANSIT', () => {
   it('requires real geocoding/transit and considers the supplied departure', async () => {
     const seeds = await primaryCandidates(upcomingTransit);
@@ -51,6 +68,59 @@ describe('UPCOMING_EVENT_TRANSIT', () => {
     ['2026-10-01T15:10:00.001+09:00', 0]
   ])('checks the leave-soon window using provider time: %s', async (scenarioTime, count) => {
     expect((await refined(upcomingTransit, { scenarioTime })).candidates).toHaveLength(count);
+  });
+
+  it.each([false, true])('waits for the latest feasible departure before applying leave-soon, reversed=%s', async reverse => {
+    const schedules = [earlyJourney, latestJourney];
+    const evidence = scheduledEvidence(reverse ? schedules.toReversed() : schedules);
+    expect((await refined(upcomingTransit, {}, evidence)).candidates).toEqual([]);
+  });
+
+  it.each([false, true])('selects the latest departure within the lead window independently of route order, reversed=%s', async reverse => {
+    const schedules = [earlyJourney, { ...latestJourney, departAt: '2026-10-01T15:12:00+09:00' }];
+    const result = await refined(upcomingTransit, {}, scheduledEvidence(reverse ? schedules.toReversed() : schedules));
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0]?.facts).toMatchObject({ routeId: 'latest', latestDepartureAt: '2026-10-01T06:12:00.000Z' });
+  });
+
+  it.each([false, true])('breaks equal-departure ties consistently instead of using provider order, reversed=%s', async reverse => {
+    const schedules = [{ ...earlyJourney, routeId: 'a' }, { ...earlyJourney, routeId: 'b' }];
+    const result = await refined(upcomingTransit, {}, scheduledEvidence(reverse ? schedules.toReversed() : schedules));
+    expect(result.candidates[0]?.facts).toMatchObject({ routeId: 'a', latestDepartureAt: '2026-10-01T06:10:00.000Z' });
+  });
+
+  it('excludes a later route that misses the arrival buffer before choosing the departure', async () => {
+    const evidence = scheduledEvidence([earlyJourney, { ...latestJourney, arriveAt: '2026-10-01T15:50:00.001+09:00' }]);
+    expect((await refined(upcomingTransit, {}, evidence)).candidates[0]?.facts).toMatchObject({
+      routeId: 'early', latestDepartureAt: '2026-10-01T06:10:00.000Z'
+    });
+  });
+
+  it.each([
+    ['2026-10-01T15:19:59.999+09:00', 0],
+    ['2026-10-01T15:20:00+09:00', 1],
+    ['2026-10-01T15:30:00+09:00', 1],
+    ['2026-10-01T15:30:00.001+09:00', 0]
+  ])('applies the lead and elapsed-departure boundaries to the latest feasible route at %s', async (scenarioTime, count) => {
+    const result = await refined(upcomingTransit, { scenarioTime }, scheduledEvidence([earlyJourney, latestJourney]));
+    expect(result.candidates).toHaveLength(count);
+    if (count) expect(result.candidates[0]?.facts.latestDepartureAt).toBe('2026-10-01T06:30:00.000Z');
+  });
+
+  it('compares supplied duration budgets with scheduled routes before applying the lead window', async () => {
+    const evidence = scheduledEvidence([earlyJourney]);
+    const entry = evidence.routes[0];
+    if (!entry || entry.result.status !== 'ok') throw new Error('Expected transit fixture');
+    const durationOnly = { ...entry.result.data, routeId: 'duration-only', durationMinutes: 20 };
+    delete durationOnly.departAt;
+    delete durationOnly.arriveAt;
+    evidence.routes.push({ ...entry, result: { status: 'ok', data: durationOnly } });
+    expect((await refined(upcomingTransit, {}, evidence)).candidates).toEqual([]);
+    const result = await refined(upcomingTransit, { scenarioTime: '2026-10-01T15:20:00+09:00' }, evidence);
+    expect(result.candidates[0]?.facts).toMatchObject({
+      routeId: 'duration-only', departureSource: 'duration-budget', latestDepartureAt: '2026-10-01T06:30:00.000Z'
+    });
+    expect(result.candidates[0]?.facts).not.toHaveProperty('providerDepartAt');
   });
 
   it('leaves other candidates eligible when public transit is unavailable', async () => {

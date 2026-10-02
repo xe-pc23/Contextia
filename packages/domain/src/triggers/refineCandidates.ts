@@ -147,23 +147,29 @@ function assessUpcoming(
   if (!routes.length) return { ok: false, code: 'PROVIDER_UNAVAILABLE' };
   const now = evaluationMillis(context);
   const deadline = Date.parse(event.startAt) - policy.arrivalBufferMinutes * MINUTE_MS;
-  for (const route of routes) {
+  const feasible = routes.map(route => {
     const departure = route.departAt ? Date.parse(route.departAt)
       : (route.arriveAt ? Date.parse(route.arriveAt) : deadline) - route.durationMinutes * MINUTE_MS;
     const arrival = route.arriveAt ? Date.parse(route.arriveAt) : departure + route.durationMinutes * MINUTE_MS;
-    if (departure < now || departure > now + policy.departureLeadMinutes * MINUTE_MS || arrival > deadline) continue;
-    return { ok: true, value: {
-      ...seed, confidence: Math.min(seed.confidence, destination.value.confidence),
-      facts: {
-        ...seed.facts, destinationPlaceId: destination.value.placeId, routeId: route.routeId,
-        routeDurationMinutes: route.durationMinutes, latestDepartureAt: new Date(departure).toISOString(),
-        departureSource: route.departAt ? 'provider' : 'duration-budget',
-        ...(route.departAt ? { providerDepartAt: route.departAt } : {}),
-        ...(route.arriveAt ? { providerArriveAt: route.arriveAt } : {})
-      }
-    } };
-  }
-  return { ok: true, value: null };
+    return { route, departure, arrival };
+  }).filter(journey => journey.departure >= now && journey.arrival <= deadline)
+    .sort((a, b) => b.departure - a.departure || a.arrival - b.arrival ||
+      a.route.durationMinutes - b.route.durationMinutes ||
+      (a.route.routeId < b.route.routeId ? -1 : a.route.routeId > b.route.routeId ? 1 : 0));
+  // First choose the latest feasible departure; an earlier route cannot create urgency while a later one fits.
+  const latest = feasible[0];
+  if (!latest || latest.departure > now + policy.departureLeadMinutes * MINUTE_MS) return { ok: true, value: null };
+  const { route, departure } = latest;
+  return { ok: true, value: {
+    ...seed, confidence: Math.min(seed.confidence, destination.value.confidence),
+    facts: {
+      ...seed.facts, destinationPlaceId: destination.value.placeId, routeId: route.routeId,
+      routeDurationMinutes: route.durationMinutes, latestDepartureAt: new Date(departure).toISOString(),
+      departureSource: route.departAt ? 'provider' : 'duration-budget',
+      ...(route.departAt ? { providerDepartAt: route.departAt } : {}),
+      ...(route.arriveAt ? { providerArriveAt: route.arriveAt } : {})
+    }
+  } };
 }
 
 function assessActivity(
@@ -234,7 +240,7 @@ function assessWeather(
   calendarAvailable: boolean
 ): Assessment {
   const now = evaluationMillis(context);
-  const current = weatherAt(evidence, now, policy);
+  const current = weatherAt(evidence, now, policy, context.mode);
   const window = calendarWindow(context);
   const event = window.nextTimedEvent;
   const forecasts = (!current || !weatherIssues(current, policy).length) && calendarAvailable && event &&

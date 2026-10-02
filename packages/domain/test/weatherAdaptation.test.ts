@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { getScenarioEvidence, weatherAdaptation, weatherAdaptationClear, weatherAdaptationUnavailable } from '@contextia/test-fixtures';
-import { WeatherSnapshotSchema } from '@contextia/contracts';
-import type { CalendarEventContext, WeatherSnapshot } from '@contextia/contracts';
-import { refineCandidates } from '../src/index.js';
+import { RealContextInputSchema, WeatherSnapshotSchema } from '@contextia/contracts';
+import type { CalendarEventContext, CandidateEvidence, WeatherSnapshot } from '@contextia/contracts';
+import { createDetectorRegistry, normalizeDetectorContext, refineCandidates } from '../src/index.js';
 import { normalized, refined, primaryCandidates } from './detectorHarness.js';
 
 function weatherEvidence(patch: Partial<WeatherSnapshot> = {}) {
@@ -10,6 +10,17 @@ function weatherEvidence(patch: Partial<WeatherSnapshot> = {}) {
   const snapshot = WeatherSnapshotSchema.parse(evidence.weather[0]?.result.data);
   evidence.weather = [{ need: 'weather-today', result: { status: 'ok', data: { ...snapshot, ...patch } } }];
   return evidence;
+}
+
+async function refinedRealWeather(at: string, evidence: CandidateEvidence) {
+  const context = normalizeDetectorContext({
+    context: RealContextInputSchema.parse({ ...weatherAdaptation.context, mode: 'real', deliveryMode: 'proactive' }),
+    preferences: weatherAdaptation.preferences, profileTimezone: weatherAdaptation.preferences.timezone,
+    clock: { now: () => new Date(at) }
+  });
+  const detector = createDetectorRegistry().find(value => value.type === 'WEATHER_ADAPTATION');
+  if (!detector) throw new Error('Expected weather detector');
+  return refineCandidates({ context, candidates: await detector.detect(context), evidence });
 }
 
 const upcomingEvent: CalendarEventContext = {
@@ -145,8 +156,8 @@ describe('WEATHER_ADAPTATION', () => {
   it.each([
     ['2026-10-01T15:29:59.999+09:00', 1],
     ['2026-10-01T15:30:00+09:00', 0]
-  ])('bounds the freshness of the source observation at %s', async (scenarioTime, count) => {
-    expect((await refined(weatherAdaptation, { scenarioTime }, weatherEvidence({ forecast: [] }))).candidates).toHaveLength(count);
+  ])('bounds current-observation freshness in real mode at %s', async (at, count) => {
+    expect((await refinedRealWeather(at, weatherEvidence({ forecast: [] }))).candidates).toHaveLength(count);
   });
 
   it.each([
@@ -160,6 +171,58 @@ describe('WEATHER_ADAPTATION', () => {
     expect(result.candidates).toHaveLength(count);
     if (count) expect(result.candidates[0]?.facts.weather).toMatchObject({ source: 'forecast', condition: 'rain' });
     else expect(result.exclusions[0]?.code).toBe('PROVIDER_UNAVAILABLE');
+  });
+
+  it.each([
+    '2026-10-01T15:00:00+09:00',
+    '2026-10-01T15:15:00+09:00',
+    '2026-10-01T15:29:59.999+09:00',
+    '2026-10-01T15:30:00+09:00',
+    '2026-10-01T15:59:59.999+09:00'
+  ])('uses the covering rainy forecast throughout a future simulation at %s', async scenarioTime => {
+    const evidence = worseningForecast('2026-10-01T15:00:00+09:00', '2026-10-01T16:00:00+09:00');
+    const result = await refined(weatherAdaptation, { scenarioTime }, evidence);
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0]?.facts).toMatchObject({
+      nextEventId: null, weatherAssessmentAt: new Date(scenarioTime).toISOString(),
+      weather: { source: 'forecast', condition: 'rain', sourceTimestamp: '2026-10-01T14:30:00+09:00' }
+    });
+    expect(result.candidates[0]?.requiredSignals).not.toContain('calendar');
+  });
+
+  it.each([
+    '2026-10-01T15:00:00+09:00',
+    '2026-10-01T15:15:00+09:00',
+    '2026-10-01T15:29:59.999+09:00',
+    '2026-10-01T15:30:00+09:00'
+  ])('does not project a rainy current observation into a clear future forecast at %s', async scenarioTime => {
+    const evidence = weatherEvidence({ forecast: [{
+      startAt: '2026-10-01T15:00:00+09:00', endAt: '2026-10-01T16:00:00+09:00',
+      condition: 'clear', temperatureCelsius: 24, precipitationProbability: 0, precipitationMillimeters: 0
+    }] });
+    expect((await refined(weatherAdaptation, { scenarioTime }, evidence)).candidates).toEqual([]);
+  });
+
+  it.each(['2026-10-01T14:30:00.001+09:00', '2026-10-01T15:15:00+09:00'])('does not apply a fresh past observation to an uncovered future simulation at %s', async scenarioTime => {
+    const result = await refined(weatherAdaptation, { scenarioTime }, weatherEvidence({ forecast: [] }));
+    expect(result.candidates).toEqual([]);
+    expect(result.exclusions[0]?.code).toBe('PROVIDER_UNAVAILABLE');
+  });
+
+  it('does not fall back to a fresh observation at the forecast end boundary in simulation', async () => {
+    const evidence = weatherEvidence({ sourceTimestamp: '2026-10-01T15:30:00+09:00' });
+    const result = await refined(weatherAdaptation, { scenarioTime: '2026-10-01T16:00:00+09:00' }, evidence);
+    expect(result.candidates).toEqual([]);
+    expect(result.exclusions[0]?.code).toBe('PROVIDER_UNAVAILABLE');
+  });
+
+  it('keeps fresh current observations usable at real time instead of treating real time as a future simulation', async () => {
+    const evidence = weatherEvidence({ forecast: [{
+      startAt: '2026-10-01T15:00:00+09:00', endAt: '2026-10-01T16:00:00+09:00',
+      condition: 'clear', temperatureCelsius: 24, precipitationProbability: 0, precipitationMillimeters: 0
+    }] });
+    const result = await refinedRealWeather('2026-10-01T15:15:00+09:00', evidence);
+    expect(result.candidates[0]?.facts.weather).toMatchObject({ source: 'current', condition: 'rain' });
   });
 
   it('does not apply a future current observation or a daily maximum to the scenario moment', async () => {

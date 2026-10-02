@@ -1,5 +1,5 @@
 import type {
-  CandidateDiagnosticCode, CandidateEvidence, DetectorPolicy, GeocodedPlace, GeoPoint,
+  CandidateDiagnosticCode, CandidateEvidence, ContextInput, DetectorPolicy, GeocodedPlace, GeoPoint,
   ProviderNeed, ProviderPlace, RouteSummary, WeatherSnapshot
 } from '@contextia/contracts';
 import { distanceMeters, MINUTE_MS } from './calendar.js';
@@ -94,10 +94,14 @@ function forecastReading(snapshot: WeatherSnapshot, window: WeatherSnapshot['for
   };
 }
 
-export function weatherAt(evidence: CandidateEvidence, at: number, policy: Readonly<DetectorPolicy>): WeatherReading | null {
+export function weatherAt(
+  evidence: CandidateEvidence, at: number, policy: Readonly<DetectorPolicy>, mode: ContextInput['mode']
+): WeatherReading | null {
   for (const snapshot of weatherSnapshots(evidence)) {
     const sourceAt = Date.parse(snapshot.sourceTimestamp);
-    if (sourceAt <= at && at < sourceAt + policy.currentWeatherMaxAgeMinutes * MINUTE_MS) return {
+    // Freshness makes an observation usable at real time; it cannot project that observation into a future simulation.
+    const observationApplies = mode === 'real' || at === sourceAt;
+    if (observationApplies && sourceAt <= at && at < sourceAt + policy.currentWeatherMaxAgeMinutes * MINUTE_MS) return {
       ...weatherValues(snapshot), source: 'current', sourceTimestamp: snapshot.sourceTimestamp
     };
     const window = snapshot.forecast.find(value => Date.parse(value.startAt) <= at && at < Date.parse(value.endAt));
