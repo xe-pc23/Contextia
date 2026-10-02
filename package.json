@@ -12,6 +12,11 @@
     "build": "pnpm -r build",
     "cdk:synth": "node --import tsx scripts/cdk.ts synth",
     "cdk:diff:dev": "node --import tsx scripts/cdk.ts diff dev",
+    "cdk:diff:prod": "node --import tsx scripts/cdk.ts diff prod",
+    "deploy:dev": "node --import tsx scripts/cdk.ts deploy dev",
+    "deploy:prod": "node --import tsx scripts/cdk.ts deploy prod",
+    "smoke:dev": "node --import tsx scripts/smoke.ts dev",
+    "smoke:prod": "node --import tsx scripts/smoke.ts prod",
     "dev:api": "pnpm --filter @contextia/api dev",
     "dev:web": "pnpm --filter @contextia/web dev",
     "dev:mobile": "pnpm --filter @contextia/mobile dev"
@@ -26,6 +31,7 @@
     "tsx": "4.23.15",
     "typescript": "5.9.3",
     "typescript-eslint": "8.71.0",
-    "vitest": "5.0.3"
+    "vitest": "5.0.3",
+    "zod": "4.6.5"
   }
 }

@@ -25,4 +25,9 @@ describe('contextFingerprint', () => {
     expect(fingerprint).not.toBe(contextFingerprint(base));
     expect(hashCalendarId('device-event-1')).not.toContain('device-event-1');
   });
+  it('ignores simulation time in a real input', () => {
+    const real = { ...base, mode: 'real' as const, deliveryMode: 'proactive' as const };
+    expect(contextFingerprint({ ...real, scenarioTime: '2026-10-04T14:20:00+09:00' })).toBe(contextFingerprint(real));
+    expect(contextFingerprint({ ...real, capturedAt: '2026-10-04T14:20:00+09:00' })).not.toBe(contextFingerprint(real));
+  });
 });

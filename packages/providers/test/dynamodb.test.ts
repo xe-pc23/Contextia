@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { UserPreferences } from '@contextia/contracts';
+import { EvaluationResultSchema } from '@contextia/contracts';
 import type { DynamoDbClient, DynamoDbRequest, DynamoDbUpdateInput } from '../src/adapters/dynamodb.js';
 import { DynamoDbStateRepository } from '../src/adapters/dynamodb.js';
 import type { ContextSnapshot, ProactiveDeliveryWrite, RecommendationWrite } from '../src/ports/StateRepository.js';
@@ -92,6 +93,22 @@ function fakeClient(responses: unknown[] = []): { client: DynamoDbClient; reques
   const requests: DynamoDbRequest[] = [];
   const send = vi.fn(async (request: DynamoDbRequest): Promise<unknown> => {
     requests.push(request);
+    const inputs = request.operation === 'transactWrite'
+      ? request.input.TransactItems.map(item => 'Update' in item ? item.Update : 'Put' in item ? item.Put : item.ConditionCheck)
+      : [request.input];
+    for (const input of inputs) {
+      const fields = input as unknown as Record<string, unknown>;
+      const expression = ['UpdateExpression', 'ConditionExpression', 'KeyConditionExpression', 'FilterExpression']
+        .map(key => fields[key]).filter(value => typeof value === 'string').join(' ');
+      const used = new Set(expression.match(/[#:]\w+/g) ?? []);
+      for (const key of ['ExpressionAttributeNames', 'ExpressionAttributeValues']) {
+        const attributes = fields[key];
+        if (typeof attributes !== 'object' || attributes === null) continue;
+        for (const name of Object.keys(attributes)) {
+          if (!used.has(name)) throw Object.assign(new Error('Unused expression attribute'), { name: 'ValidationException' });
+        }
+      }
+    }
     const next = responses.shift();
     if (next instanceof Error) throw next;
     return next ?? {};
@@ -358,8 +375,8 @@ describe('DynamoDbStateRepository', () => {
     expect(stateUpdate).toBeDefined();
   });
 
-  it('does not persist a proactive recommendation when the atomic delivery recheck cancels', async () => {
-    const cancellation = Object.assign(new Error('private database detail'), { name: 'TransactionCanceledException' });
+  it('classifies a confirmed atomic conditional race without persisting the recommendation', async () => {
+    const cancellation = Object.assign(new Error('private database detail'), { name: 'TransactionCanceledException', CancellationReasons: [{ Code: 'ConditionalCheckFailed' }, { Code: 'None' }, { Code: 'None' }, { Code: 'None' }] });
     const fake = fakeClient([{ Item: storedProfile() }, { Item: storedState({ notificationsSentToday: 0 }) }, cancellation]);
     const repo = repository(fake.client) as unknown as {
       commitProactiveRecommendation(input: { userId: string; recommendation: RecommendationWrite; delivery: ProactiveDeliveryWrite }): Promise<unknown>
@@ -367,9 +384,33 @@ describe('DynamoDbStateRepository', () => {
 
     const result = await repo.commitProactiveRecommendation({ userId: 'user-1', recommendation: recommendation(), delivery });
 
-    expect(result).toMatchObject({ status: 'ok', data: { recorded: false } });
+    expect(result).toMatchObject({ status: 'ok', data: { recorded: false, reason: 'superseded' } });
     expect(fake.requests.map(request => request.operation)).toEqual(['get', 'get', 'transactWrite']);
     expect(JSON.stringify(result)).not.toContain('private database detail');
+  });
+
+  it.each(['2026-10-01', '2026-09-30'])('uses only referenced expression attributes on day %s', async notificationDay => {
+    const fake = fakeClient([{ Item: storedProfile() }, { Item: storedState({ notificationDay, notificationsSentToday: 0 }) }, {}]);
+    expect(await repository(fake.client).commitProactiveRecommendation({ userId: 'user-1', recommendation: recommendation(), delivery }))
+      .toMatchObject({ status: 'ok', data: { recorded: true } });
+  });
+
+  it('keeps unclassified or throttled transaction failures as provider errors', async () => {
+    for (const CancellationReasons of [undefined, [{ Code: 'ConditionalCheckFailed' }, { Code: 'ThrottlingError' }]]) {
+      const failure = Object.assign(new Error('private detail'), { name: 'TransactionCanceledException', CancellationReasons });
+      const fake = fakeClient([{ Item: storedProfile() }, { Item: storedState() }, failure]);
+      expect(await repository(fake.client).commitProactiveRecommendation({ userId: 'user-1', recommendation: recommendation(), delivery }))
+        .toMatchObject({ status: 'error', data: null });
+    }
+  });
+
+  it('distinguishes a superseded snapshot from a missing state', async () => {
+    const newer = fakeClient([{ Item: storedProfile() }, { Item: storedState({ latestContextEvaluationId: 'eval-newer', latestContextFingerprint: 'sha256:newer' }) }]);
+    expect(await repository(newer.client).commitProactiveRecommendation({ userId: 'user-1', recommendation: recommendation(), delivery }))
+      .toMatchObject({ status: 'ok', data: { recorded: false, reason: 'superseded' } });
+    const missing = fakeClient([{ Item: storedProfile() }, {}]);
+    expect(await repository(missing.client).commitProactiveRecommendation({ userId: 'user-1', recommendation: recommendation(), delivery }))
+      .toMatchObject({ status: 'error', code: 'STATE_NOT_FOUND' });
   });
 
   it('resolves a recommendation through its owner-scoped pointer and validates the target evaluation', async () => {
@@ -541,5 +582,109 @@ describe('DynamoDbStateRepository', () => {
 
     expect(result).toMatchObject({ status: 'error', data: null, code: 'NOT_IMPLEMENTED' });
     expect(fake.requests).toHaveLength(0);
+  });
+});
+
+describe('DynamoDB evaluation idempotency', () => {
+  const key = '76c7d65e-854f-431a-95b6-513de73102d7';
+  const claimId = '430338e7-6d18-4752-9a8b-9f21a6de818b';
+  const requestHash = 'a'.repeat(64);
+  const nowEpochSeconds = Math.floor(Date.parse(processedAt) / 1000);
+  const record = { key, claimId, requestHash, responsePointer: null, createdAt: processedAt, expiresAt: nowEpochSeconds + 3600 };
+  const owner = { userId: 'user-1', key, claimId, requestHash };
+  const stored = (overrides: Record<string, unknown> = {}) => ({ ...record, PK: 'IDEMPOTENCY#user-1', SK: `KEY#${key}`,
+    entityType: 'Idempotency', updatedAt: processedAt, schemaVersion: 1, ...overrides });
+  const conditionalFailure = () => Object.assign(new Error('private condition'), { name: 'ConditionalCheckFailedException' });
+  const result = EvaluationResultSchema.parse({ evaluationId: 'eval-1', recommendationId: null, decision: 'silent',
+    triggerType: null, urgency: null, message: null, recommendations: [], decisionReason: 'No candidate.', usedSignals: [],
+    delivery: { mode: 'preview', status: 'preview', wouldSuppress: false, guardCodes: [] },
+    contextExpiresAt: new Date((nowEpochSeconds + 86400) * 1000).toISOString(), providerStatus: recommendation().providerStatus });
+
+  it('claims with an atomic logical-expiry condition before DynamoDB TTL deletion', async () => {
+    const fake = fakeClient();
+    expect(await repository(fake.client).claimIdempotency({ userId: 'user-1', record, nowEpochSeconds }))
+      .toMatchObject({ status: 'ok', data: { status: 'claimed' } });
+    expect(fake.requests[0]).toMatchObject({ operation: 'put', input: {
+      Item: { PK: 'IDEMPOTENCY#user-1', SK: `KEY#${key}`, claimId, responsePointer: null },
+      ConditionExpression: 'attribute_not_exists(PK) OR #expiresAt <= :now', ExpressionAttributeValues: { ':now': nowEpochSeconds }
+    } });
+  });
+
+  it.each([requestHash, 'b'.repeat(64)])('returns only an active owned claim and detects hash conflicts', async storedHash => {
+    const fake = fakeClient([conditionalFailure(), { Item: stored({ requestHash: storedHash }) }]);
+    expect(await repository(fake.client).claimIdempotency({ userId: 'user-1', record, nowEpochSeconds }))
+      .toMatchObject({ status: 'ok', data: { status: storedHash === requestHash ? 'existing' : 'conflict' } });
+    expect(fake.requests[1]).toMatchObject({ operation: 'get', input: { ConsistentRead: true, Key: { PK: 'IDEMPOTENCY#user-1' } } });
+  });
+
+  it.each([{}, { Item: stored({ expiresAt: nowEpochSeconds }) }])('reclaims a released or expired claim after a conditional race', async response => {
+    const fake = fakeClient([conditionalFailure(), response, {}]);
+    expect(await repository(fake.client).claimIdempotency({ userId: 'user-1', record, nowEpochSeconds }))
+      .toMatchObject({ status: 'ok', data: { status: 'claimed' } });
+    expect(fake.requests.map(request => request.operation)).toEqual(['put', 'get', 'put']);
+  });
+
+  it('bounds retry when another request keeps replacing expired claims', async () => {
+    const fake = fakeClient([conditionalFailure(), {}, conditionalFailure(), {}]);
+    expect(await repository(fake.client).claimIdempotency({ userId: 'user-1', record, nowEpochSeconds }))
+      .toMatchObject({ status: 'error', code: 'IDEMPOTENCY_CLAIM_RACE' });
+    expect(fake.requests).toHaveLength(4);
+  });
+
+  it('releases only the owned pending claim and preserves completed/replacement claims', async () => {
+    for (const response of [{}, conditionalFailure()]) {
+      const fake = fakeClient([response]);
+      expect(await repository(fake.client).releaseIdempotency(owner)).toMatchObject({ status: 'ok' });
+      expect(fake.requests[0]).toMatchObject({ operation: 'delete', input: {
+        Key: { PK: 'IDEMPOTENCY#user-1', SK: `KEY#${key}` },
+        ConditionExpression: '#claimId = :claimId AND #requestHash = :hash AND #responsePointer = :pending',
+        ExpressionAttributeValues: { ':claimId': claimId, ':hash': requestHash, ':pending': null }
+      } });
+    }
+  });
+
+  it('atomically completes the claim and owner-scoped result, then replays without a request ID', async () => {
+    const write = fakeClient();
+    expect(await repository(write.client).completeIdempotency({ ...owner, result, storagePlaces: [], expiresAt: record.expiresAt }))
+      .toMatchObject({ status: 'ok' });
+    const transaction = write.requests[0];
+    if (transaction?.operation !== 'transactWrite') throw new Error('Missing cache transaction');
+    const cache = transaction.input.TransactItems.find(item => 'Put' in item);
+    const update = transaction.input.TransactItems.find(item => 'Update' in item);
+    expect(update).toMatchObject({ Update: { ExpressionAttributeValues: { ':claimId': claimId, ':pending': null, ':expiry': record.expiresAt } } });
+    expect(cache).toMatchObject({ Put: { Item: { PK: 'USER#user-1', SK: 'EVALUATION_RESULT#eval-1', result, expiresAt: record.expiresAt } } });
+    if (!cache || !('Put' in cache)) throw new Error('Missing cache');
+    const read = fakeClient([{ Item: stored({ responsePointer: result.evaluationId }) }, { Item: cache.Put.Item }]);
+    expect(await repository(read.client).getIdempotencyResponse({ userId: owner.userId, key, requestHash, nowEpochSeconds }))
+      .toMatchObject({ status: 'ok', data: result });
+    expect(JSON.stringify(cache)).not.toContain('requestId');
+  });
+
+  it('requires Storage facts matching the returned place, and handles cards without places', async () => {
+    const storage = recommendation().recommendations[0]?.place;
+    if (!storage) throw new Error('Missing Storage fixture');
+    const { provider, placeId, name, latitude, longitude, distanceMeters } = storage.place;
+    const notify = EvaluationResultSchema.parse({ ...result, decision: 'notify', recommendationId: 'rec-1', triggerType: 'FREE_TIME_NEARBY',
+      urgency: 'low', message: 'Nearby.', recommendations: [{ id: 'item-1', title: 'Rest', reason: 'Nearby.',
+        place: { provider, placeId, name, latitude, longitude, distanceMeters }, action: { type: 'MAP' } }] });
+    const fake = fakeClient();
+    expect(await repository(fake.client).completeIdempotency({ ...owner, result: notify, storagePlaces: [storage], expiresAt: record.expiresAt })).toMatchObject({ status: 'ok' });
+    const invalid = fakeClient();
+    expect(await repository(invalid.client).completeIdempotency({ ...owner, result: notify, storagePlaces: [], expiresAt: record.expiresAt })).toMatchObject({ status: 'error', code: 'INVALID_REQUEST' });
+    const discovery = EvaluationResultSchema.parse({ ...notify, recommendations: notify.recommendations.map(card => ({ ...card, place: { ...card.place, name: 'SingleUse name' } })) });
+    expect(await repository(invalid.client).completeIdempotency({ ...owner, result: discovery, storagePlaces: [storage], expiresAt: record.expiresAt })).toMatchObject({ status: 'error', code: 'INVALID_REQUEST' });
+    expect(invalid.requests).toHaveLength(0);
+    const noPlace = EvaluationResultSchema.parse({ ...notify, recommendations: [{ id: 'item-1', title: 'Rest', reason: 'Nearby.', action: { type: 'NONE' } }] });
+    expect(await repository(fake.client).completeIdempotency({ ...owner, result: noPlace, storagePlaces: [], expiresAt: record.expiresAt })).toMatchObject({ status: 'ok' });
+  });
+
+  it('rejects an injected foreign owner and skips expired or mismatched responses', async () => {
+    const foreign = fakeClient([conditionalFailure(), { Item: stored({ PK: 'IDEMPOTENCY#user-2' }) }]);
+    expect(await repository(foreign.client).claimIdempotency({ userId: 'user-1', record, nowEpochSeconds })).toMatchObject({ status: 'error', code: 'INVALID_STORED_DATA' });
+    for (const item of [stored({ expiresAt: nowEpochSeconds }), stored({ requestHash: 'b'.repeat(64) }), stored()]) {
+      const fake = fakeClient([{ Item: item }]);
+      expect(await repository(fake.client).getIdempotencyResponse({ userId: 'user-1', key, requestHash, nowEpochSeconds })).toMatchObject({ status: 'ok', data: null });
+      expect(fake.requests).toHaveLength(1);
+    }
   });
 });

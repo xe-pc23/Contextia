@@ -8,6 +8,7 @@ import type {
 } from '@aws-sdk/lib-dynamodb';
 import {
   DynamoDBDocumentClient,
+  DeleteCommand,
   GetCommand,
   PutCommand,
   QueryCommand,
@@ -18,6 +19,7 @@ import {
   ApiRecommendationItemSchema,
   CalendarDateSchema,
   CalendarEventContextSchema,
+  EvaluationResultSchema,
   GeoPointSchema,
   ProfileSchema,
   ProviderPlaceSchema,
@@ -89,6 +91,7 @@ export type DynamoDbTransactionItem =
   | { ConditionCheck: { TableName: string; Key: DynamoDbKey; ConditionExpression: string; ExpressionAttributeNames?: Record<string, string>; ExpressionAttributeValues?: Record<string, DynamoDbValue> } };
 export type DynamoDbRequest =
   | { operation: 'get'; input: { TableName: string; Key: DynamoDbKey; ConsistentRead?: boolean } }
+  | { operation: 'delete'; input: { TableName: string; Key: DynamoDbKey; ConditionExpression: string } & DynamoDbExpressionOptions }
   | { operation: 'put'; input: { TableName: string; Item: DynamoDbItem; ConditionExpression?: string; ExpressionAttributeNames?: Record<string, string>; ExpressionAttributeValues?: Record<string, DynamoDbValue> } }
   | { operation: 'update'; input: DynamoDbUpdateInput }
   | { operation: 'query'; input: DynamoDbQueryInput }
@@ -206,6 +209,20 @@ const RecommendationRecordSchema = z.strictObject({
 });
 const CursorSchema = z.strictObject({ PK: z.string(), SK: z.string() });
 const QueryResponseSchema = z.object({ Items: z.array(z.unknown()).optional(), LastEvaluatedKey: z.unknown().optional() }).passthrough();
+const IdempotencyRecordSchema = z.strictObject({
+  key: z.uuid(), claimId: z.uuid(), requestHash: z.string().regex(/^[a-f0-9]{64}$/),
+  responsePointer: z.string().min(1).nullable(), createdAt: TimestampSchema, expiresAt: PositiveEpochSchema
+});
+const IdempotencyItemSchema = IdempotencyRecordSchema.extend({
+  PK: z.string(), SK: z.string(), entityType: z.literal('Idempotency'), updatedAt: TimestampSchema, schemaVersion: z.literal(1)
+});
+const EvaluationItemSchema = z.strictObject({
+  PK: z.string(), SK: z.string(), entityType: z.literal('EvaluationResult'), result: EvaluationResultSchema,
+  expiresAt: PositiveEpochSchema, createdAt: TimestampSchema, updatedAt: TimestampSchema, schemaVersion: z.literal(1)
+});
+const IdempotencyOwnerSchema = z.strictObject({
+  userId: UserIdSchema, key: z.uuid(), claimId: z.uuid(), requestHash: z.string().regex(/^[a-f0-9]{64}$/)
+});
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -302,6 +319,7 @@ function sdkBackedClient(client: DynamoDBDocumentClient): DynamoDbClient {
           const input: GetCommandInput = { ...request.input };
           return client.send(new GetCommand(input), { abortSignal: signal });
         }
+        case 'delete': return client.send(new DeleteCommand(request.input), { abortSignal: signal });
         case 'put': {
           const input: PutCommandInput = { ...request.input };
           return client.send(new PutCommand(input), { abortSignal: signal });
@@ -803,14 +821,14 @@ export class DynamoDbStateRepository implements StateRepository {
         TableName: this.tableName, Key: { PK: pk, SK: 'STATE' }, ConsistentRead: true
       } });
       const rawState = itemFromResponse(stateResponse);
-      if (rawState === undefined) return available('ok', { recorded: false, guardCodes: [] }, elapsedSince(startedAt));
+      if (rawState === undefined) return unavailable('error', elapsedSince(startedAt), 'STATE_NOT_FOUND');
       const parsedState = StateItemSchema.safeParse(rawState);
       if (!parsedState.success) return invalidStoredData();
       const state = parsedState.data;
       const guards = deliveryGuards(state, delivery);
       if (guards.length > 0) return available('ok', { recorded: false, guardCodes: guards }, elapsedSince(startedAt));
       if (state.latestContextEvaluationId !== delivery.evaluationId || state.latestContextFingerprint !== delivery.contextFingerprint) {
-        return available('ok', { recorded: false, guardCodes: [] }, elapsedSince(startedAt));
+        return available('ok', { recorded: false, guardCodes: [], reason: 'superseded' }, elapsedSince(startedAt));
       }
 
       const stateUpdate = proactiveDeliveryStateUpdate(this.tableName, pk, state, delivery);
@@ -829,8 +847,13 @@ export class DynamoDbStateRepository implements StateRepository {
       ] } });
       return available('ok', { recorded: true }, elapsedSince(startedAt));
     } catch (error: unknown) {
-      if (errorName(error) === 'TransactionCanceledException' || errorName(error) === 'ConditionalCheckFailedException') {
-        return available('ok', { recorded: false, guardCodes: [] }, elapsedSince(startedAt));
+      const reasons = isRecord(error) && Array.isArray(error.CancellationReasons) ? error.CancellationReasons : [];
+      const conditionalRace = errorName(error) === 'ConditionalCheckFailedException'
+        || (errorName(error) === 'TransactionCanceledException'
+          && reasons.some(reason => isRecord(reason) && reason.Code === 'ConditionalCheckFailed')
+          && reasons.every(reason => isRecord(reason) && (reason.Code === 'None' || reason.Code === 'ConditionalCheckFailed')));
+      if (conditionalRace) {
+        return available('ok', { recorded: false, guardCodes: [], reason: 'superseded' }, elapsedSince(startedAt));
       }
       return mapFailure(error, elapsedSince(startedAt));
     }
@@ -999,9 +1022,127 @@ export class DynamoDbStateRepository implements StateRepository {
     }
   }
 
-  async claimIdempotency(input: { userId: string; record: IdempotencyRecord; nowEpochSeconds: number }): Promise<ProviderResult<IdempotencyClaim>> { return this.unsupported(input); }
-  async completeIdempotency(input: { userId: string; key: string; requestHash: string; result: EvaluationResult; storagePlaces: StoragePlace[]; expiresAt: number }): Promise<ProviderResult<null>> { return this.unsupported(input); }
-  async getIdempotencyResponse(input: OwnedRead & { key: string; requestHash: string }): Promise<ProviderResult<EvaluationResult | null>> { return this.unsupported(input); }
+  async claimIdempotency(input: { userId: string; record: IdempotencyRecord; nowEpochSeconds: number }): Promise<ProviderResult<IdempotencyClaim>> {
+    const startedAt = performance.now();
+    const parsed = z.strictObject({ userId: UserIdSchema, record: IdempotencyRecordSchema, nowEpochSeconds: PositiveEpochSchema }).safeParse(input);
+    if (!parsed.success || parsed.data.record.responsePointer !== null || parsed.data.record.expiresAt <= parsed.data.nowEpochSeconds
+      || parsed.data.record.expiresAt > parsed.data.nowEpochSeconds + 3600) return invalidRequest();
+    const { userId, record, nowEpochSeconds } = parsed.data;
+    const key = { PK: `IDEMPOTENCY#${userId}`, SK: `KEY#${record.key}` };
+    const item = toDynamoItem({ ...key, ...record, entityType: 'Idempotency',
+      createdAt: canonicalTimestamp(record.createdAt), updatedAt: canonicalTimestamp(record.createdAt), schemaVersion: 1 });
+    if (!item) return invalidRequest();
+    try {
+      // Retry once if a concurrent release or TTL rollover removed the conflicting claim.
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          await this.send({ operation: 'put', input: {
+            TableName: this.tableName, Item: item, ConditionExpression: 'attribute_not_exists(PK) OR #expiresAt <= :now',
+            ExpressionAttributeNames: { '#expiresAt': 'expiresAt' }, ExpressionAttributeValues: { ':now': nowEpochSeconds }
+          } });
+          return available('ok', { status: 'claimed' }, elapsedSince(startedAt));
+        } catch (error: unknown) {
+          if (errorName(error) !== 'ConditionalCheckFailedException') throw error;
+        }
+        const response = await this.send({ operation: 'get', input: { TableName: this.tableName, Key: key, ConsistentRead: true } });
+        const raw = itemFromResponse(response);
+        if (raw === undefined) continue;
+        const existing = IdempotencyItemSchema.safeParse(raw);
+        if (!existing.success || existing.data.PK !== key.PK || existing.data.SK !== key.SK || existing.data.key !== record.key) return invalidStoredData();
+        if (existing.data.expiresAt <= nowEpochSeconds) continue;
+        if (existing.data.requestHash !== record.requestHash) return available('ok', { status: 'conflict' }, elapsedSince(startedAt));
+        return available('ok', { status: 'existing', record: IdempotencyRecordSchema.parse({
+          key: existing.data.key, claimId: existing.data.claimId, requestHash: existing.data.requestHash,
+          responsePointer: existing.data.responsePointer, createdAt: existing.data.createdAt, expiresAt: existing.data.expiresAt
+        }) }, elapsedSince(startedAt));
+      }
+      return unavailable('error', elapsedSince(startedAt), 'IDEMPOTENCY_CLAIM_RACE');
+    } catch (error: unknown) {
+      return mapFailure(error, elapsedSince(startedAt));
+    }
+  }
+
+  async completeIdempotency(input: { userId: string; key: string; claimId: string; requestHash: string; result: EvaluationResult; storagePlaces: StoragePlace[]; expiresAt: number }): Promise<ProviderResult<null>> {
+    const startedAt = performance.now();
+    const parsed = IdempotencyOwnerSchema.extend({ result: EvaluationResultSchema, storagePlaces: z.array(StoredPlaceSchema).max(3), expiresAt: PositiveEpochSchema }).safeParse(input);
+    if (!parsed.success) return invalidRequest();
+    const { userId, key, claimId, requestHash, result, storagePlaces, expiresAt } = parsed.data;
+    const cards: StorageRecommendationItem[] = [];
+    for (const card of result.recommendations) {
+      const storage = card.place ? storagePlaces.find(place => place.place.placeId === card.place?.placeId) : null;
+      if (card.place && !storage) return invalidRequest();
+      if (card.action.type === 'WEBSITE' && storage?.place.websiteUrl !== card.action.url) return invalidRequest();
+      cards.push({ ...card, place: storage ?? null });
+    }
+    const projected = projectStorageRecommendations(cards);
+    if (!projected) return invalidRequest();
+    // Reject discovery facts instead of changing the result between its first response and replay.
+    if (JSON.stringify(projected) !== JSON.stringify(result.recommendations.map(card => ApiRecommendationItemSchema.parse({ ...card, place: card.place ?? null })))) return invalidRequest();
+    const timestamp = new Date().toISOString();
+    const cache = toDynamoItem({ PK: userKey(userId), SK: `EVALUATION_RESULT#${result.evaluationId}`,
+      entityType: 'EvaluationResult', result, expiresAt, createdAt: timestamp, updatedAt: timestamp, schemaVersion: 1 });
+    if (!cache) return invalidRequest();
+    try {
+      await this.send({ operation: 'transactWrite', input: { TransactItems: [
+        { Update: { TableName: this.tableName, Key: { PK: `IDEMPOTENCY#${userId}`, SK: `KEY#${key}` },
+          UpdateExpression: 'SET #responsePointer = :pointer, #updatedAt = :at',
+          ConditionExpression: '#claimId = :claimId AND #requestHash = :hash AND #responsePointer = :pending AND #expiresAt = :expiry',
+          ExpressionAttributeNames: { '#responsePointer': 'responsePointer', '#claimId': 'claimId', '#requestHash': 'requestHash', '#expiresAt': 'expiresAt', '#updatedAt': 'updatedAt' },
+          ExpressionAttributeValues: { ':pointer': result.evaluationId, ':claimId': claimId, ':hash': requestHash, ':pending': null, ':expiry': expiresAt, ':at': timestamp }
+        } },
+        { Put: { TableName: this.tableName, Item: cache, ConditionExpression: 'attribute_not_exists(PK)' } }
+      ] } });
+      return available('ok', null, elapsedSince(startedAt));
+    } catch (error: unknown) {
+      return mapFailure(error, elapsedSince(startedAt), 'IDEMPOTENCY_CONFLICT');
+    }
+  }
+
+  async releaseIdempotency(input: { userId: string; key: string; claimId: string; requestHash: string }): Promise<ProviderResult<null>> {
+    const startedAt = performance.now();
+    const parsed = IdempotencyOwnerSchema.safeParse(input);
+    if (!parsed.success) return invalidRequest();
+    const { userId, key, claimId, requestHash } = parsed.data;
+    try {
+      await this.send({ operation: 'delete', input: {
+        TableName: this.tableName, Key: { PK: `IDEMPOTENCY#${userId}`, SK: `KEY#${key}` },
+        ConditionExpression: '#claimId = :claimId AND #requestHash = :hash AND #responsePointer = :pending',
+        ExpressionAttributeNames: { '#claimId': 'claimId', '#requestHash': 'requestHash', '#responsePointer': 'responsePointer' },
+        ExpressionAttributeValues: { ':claimId': claimId, ':hash': requestHash, ':pending': null }
+      } });
+      return available('ok', null, elapsedSince(startedAt));
+    } catch (error: unknown) {
+      if (errorName(error) === 'ConditionalCheckFailedException') return available('ok', null, elapsedSince(startedAt));
+      return mapFailure(error, elapsedSince(startedAt));
+    }
+  }
+
+  async getIdempotencyResponse(input: OwnedRead & { key: string; requestHash: string }): Promise<ProviderResult<EvaluationResult | null>> {
+    const startedAt = performance.now();
+    const parsed = z.strictObject({ userId: UserIdSchema, nowEpochSeconds: PositiveEpochSchema, key: z.uuid(), requestHash: z.string().regex(/^[a-f0-9]{64}$/) }).safeParse(input);
+    if (!parsed.success) return invalidRequest();
+    const { userId, key, requestHash, nowEpochSeconds } = parsed.data;
+    const ownerKey = { PK: `IDEMPOTENCY#${userId}`, SK: `KEY#${key}` };
+    try {
+      const response = await this.send({ operation: 'get', input: { TableName: this.tableName, Key: ownerKey, ConsistentRead: true } });
+      const raw = itemFromResponse(response);
+      if (raw === undefined) return available('ok', null, elapsedSince(startedAt));
+      const record = IdempotencyItemSchema.safeParse(raw);
+      if (!record.success || record.data.PK !== ownerKey.PK || record.data.SK !== ownerKey.SK || record.data.key !== key) return invalidStoredData();
+      if (record.data.requestHash !== requestHash || record.data.expiresAt <= nowEpochSeconds || !record.data.responsePointer) return available('ok', null, elapsedSince(startedAt));
+      const cacheKey = { PK: userKey(userId), SK: `EVALUATION_RESULT#${record.data.responsePointer}` };
+      const cached = await this.send({ operation: 'get', input: { TableName: this.tableName, Key: cacheKey, ConsistentRead: true } });
+      const rawCache = itemFromResponse(cached);
+      if (rawCache === undefined) return available('ok', null, elapsedSince(startedAt));
+      const cache = EvaluationItemSchema.safeParse(rawCache);
+      if (!cache.success || cache.data.PK !== cacheKey.PK || cache.data.SK !== cacheKey.SK
+        || cache.data.result.evaluationId !== record.data.responsePointer || cache.data.expiresAt !== record.data.expiresAt) return invalidStoredData();
+      if (cache.data.expiresAt <= nowEpochSeconds) return available('ok', null, elapsedSince(startedAt));
+      return available('ok', cache.data.result, elapsedSince(startedAt));
+    } catch (error: unknown) {
+      return mapFailure(error, elapsedSince(startedAt));
+    }
+  }
   async getConversation(input: OwnedRead & { recommendationId: string }): Promise<ProviderResult<ConversationRecord | null>> { return this.unsupported(input); }
   async appendConversationTurn(input: OwnedRead & { recommendationId: string; conversationId: string; messageId: string; userMessage: string; reply: string; recommendations: StorageRecommendationItem[]; at: string; expiresAt: number; maxUserTurns: number }): Promise<ProviderResult<ConversationRecord>> { return this.unsupported(input); }
   async upsertDevice(input: { userId: string; device: DeviceRegistration }): Promise<ProviderResult<null>> { return this.unsupported(input); }

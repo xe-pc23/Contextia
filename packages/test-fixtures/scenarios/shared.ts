@@ -33,3 +33,7 @@ export const event = {
   id: 'synthetic-event-1', title: 'Synthetic meeting', startAt: '2026-10-01T16:00:00+09:00',
   endAt: '2026-10-01T17:00:00+09:00', location: 'Tokyo Station', allDay: false
 };
+
+export function walkingRoute(routeId: string, origin: GeoPoint, destination: GeoPoint, durationMinutes: number): RouteSummary {
+  return { routeId, origin: { latitude: origin.latitude, longitude: origin.longitude }, destination: { latitude: destination.latitude, longitude: destination.longitude }, mode: 'pedestrian', durationMinutes, legs: [{ mode: 'pedestrian', durationMinutes }], warnings: [] };
+}

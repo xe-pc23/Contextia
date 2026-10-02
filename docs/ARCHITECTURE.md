@@ -393,6 +393,13 @@ Suggested provider timeout budget:
 - Routes: 3.0 s
 - Bedrock: 7.0 s
 
+Phase 2-D additionally applies a shared monotonic 20-second evaluation deadline to
+repository reads, enrichment, model, selected Storage lookups, recommendation
+writes and idempotency completion. Later stages do not start after exhaustion.
+Pending-claim cleanup before a write has at most two extra seconds. The deployed
+Lambda retains a 28-second hard timeout to leave room for bounded in-flight
+adapter calls; the application budget follows the 15–20-second target below.
+
 Overall Lambda timeout: 15–20 s.
 
 ## 8. Trigger architecture
@@ -586,11 +593,11 @@ contextia-prod-core
 
 Phase 1 keeps the web hosting (private S3, CloudFront OAC, BucketDeployment) in the same `contextia-{stage}-core` stack as Cognito, the HTTP API and DynamoDB. A separate `-web` stack would create a cycle: the web client's callback URL needs the CloudFront domain, and `config.json` needs the API URL and the client ID.
 
-The Scenario Console reads its runtime configuration from `/config.json`. CDK generates it from the stack's own values, so one web build serves both stages. It contains `stage`, `apiBaseUrl` (without `/v1`), `auth.cognitoDomain`, `auth.clientId`, `auth.redirectUri`, `auth.scopes`, and `map` (currently `null`, until the restricted map key is added). The hashed assets are deployed with an immutable cache. `index.html` and `config.json` are deployed with `no-cache`, and CloudFront invalidates them on each deploy.
+CDK generates `/config.json` with `stage`, `buildId`, `apiBaseUrl` (without `/v1`), `auth.cognitoDomain`, `auth.clientId`, `auth.redirectUri`, `auth.scopes`, and `map.{region,styleName,apiKey}`. One web build serves both stages. The browser key permits only `geo-maps:GetTile` on the Region's provider/default, restricts referrers to that stage's CloudFront origin (plus localhost in dev), and requires an owner-supplied expiration. CloudFormation exposes the key name rather than its value, so a scoped DescribeKey custom resource obtains the public map key with response logging disabled. Map keys are retained on stack teardown; rotation/expiry is the owner's task. The hashed assets have immutable caching; `index.html` and `config.json` use `no-cache` and are invalidated on deployment. C must consume this runtime configuration; its UI integration is separate from D's infrastructure.
 
 ## 14. CI/CD architecture
 
-### Pull Request
+### Pull Request validation / owner dev deployment
 - checkout
 - setup pnpm/node
 - install with frozen lockfile
@@ -599,14 +606,14 @@ The Scenario Console reads its runtime configuration from `/config.json`. CDK ge
 - unit tests
 - build all
 - `cdk synth`
-- assume `GitHubDevDeployRole` via OIDC
-- deploy dev
-- run live smoke/integration test
+- the owner starts the separate manual deploy workflow for the validated feature commit
+- assume `GitHubDevDeployRole` via OIDC, deploy dev, run public smoke
+- run authenticated scenario/ownership/idempotency smoke with two transient access tokens
 
 Serialize dev deployment:
 ```yaml
 concurrency:
-  group: deploy-dev
+  group: contextia-deploy-dev
   cancel-in-progress: false
 ```
 
@@ -626,6 +633,13 @@ Restrict GitHub OIDC role by:
 - branch/environment where possible
 
 Prod role must not be assumable from arbitrary feature branches.
+
+The repository uses immutable GitHub OIDC subjects. Both roles require the exact
+verified prefix `repo:xe-pc23@208585459/Contextia@1395735696` and their respective
+`:environment:dev` / `:environment:prod` suffix, with audience `sts.amazonaws.com`.
+There is no feature-branch subject alternative. GitHub Environment protection
+must restrict prod to main. Invalid prod dispatches fail an authorization job
+before the credentialed deploy job can run.
 
 ## 15. Coding agent → AWS connection
 

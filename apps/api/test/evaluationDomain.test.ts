@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ContextInput } from '@contextia/contracts';
 import { getScenarioInput, scenarios } from '@contextia/test-fixtures';
-import { createEvaluationDomain, secondsSinceLocalMidnight, toGuardState } from '../src/composition/evaluationDomain.js';
+import { createEvaluationDomain, phase1Detectors, secondsSinceLocalMidnight, toGuardState } from '../src/composition/evaluationDomain.js';
 import type { PersistedUserState } from '../src/composition/evaluationDomain.js';
 
 // 2026-10-01 14:10 Asia/Tokyo
@@ -11,7 +11,7 @@ if (!fixture) throw new Error('step-goal fixture missing');
 const preferences = fixture.preferences;
 const preview: ContextInput = getScenarioInput('step-goal');
 const proactive: ContextInput = { ...preview, mode: 'real', deliveryMode: 'proactive', location: { ...preview.location, source: 'gps' } };
-const domain = createEvaluationDomain();
+const domain = createEvaluationDomain({ detectors: phase1Detectors });
 const state = (overrides: Partial<PersistedUserState> = {}): PersistedUserState => ({
   notificationDay: '2026-10-01', notificationsSentToday: 0, recentAnchors: [], ...overrides
 });
@@ -45,7 +45,7 @@ describe('createEvaluationDomain (lane A guards and detectors)', () => {
   });
 
   it('passes the local-day anchor window to the repository recheck as seconds since local midnight', () => {
-    expect(guard('proactive', null, { type: 'STEP_GOAL_REST', anchorKey: '2026-10-01' }).anchorDedupSeconds).toBe(14 * 3600 + 10 * 60);
+    expect(guard('proactive', null, { type: 'STEP_GOAL_REST', anchorKey: '2026-10-01' }).anchorDedupSeconds).toBe(14 * 3600 + 10 * 60 + 1);
   });
 
   it('does not throw on a repeated context while the server processing time is missing (#5)', () => {
@@ -77,5 +77,13 @@ describe('secondsSinceLocalMidnight', () => {
   it('uses the IANA timezone', () => {
     expect(secondsSinceLocalMidnight(NOW, 'Asia/Tokyo')).toBe(50_400 + 600);
     expect(secondsSinceLocalMidnight(NOW, 'UTC')).toBe(5 * 3600 + 600);
+  });
+  it.each([
+    ['2026-03-08T07:30:00.000Z', 2.5 * 3600], // 03:30 local, spring day has only 23 hours.
+    ['2026-11-01T06:30:00.000Z', 2.5 * 3600], // second 01:30 after fall-back.
+    ['2026-11-02T04:59:59.000Z', 25 * 3600 - 1],
+    ['2026-11-02T05:00:00.000Z', 0]
+  ])('uses actual elapsed time across DST: %s', (instant, seconds) => {
+    expect(secondsSinceLocalMidnight(new Date(instant), 'America/New_York')).toBe(seconds);
   });
 });

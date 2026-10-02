@@ -1,13 +1,20 @@
 import type { APIGatewayProxyEventV2, APIGatewayProxyEventV2WithJWTAuthorizer } from 'aws-lambda';
 import { z } from 'zod';
-import { ContextEvaluateRequestSchema } from '@contextia/contracts';
+import {
+  ChatRequestSchema, ChatResponseSchema, ContextEvaluateRequestSchema, ContextEvaluateResponseSchema,
+  EvaluationHeadersSchema, GetMeResponseSchema, GetRecommendationResponseSchema, ListRecommendationsResponseSchema,
+  RecommendationParamsSchema, RecommendationsQuerySchema, UpdatePreferencesRequestSchema, UpdatePreferencesResponseSchema
+} from '@contextia/contracts';
 import type { ContextEvaluateRequest, ContextEvaluateResponse, ErrorResponse, HealthResponse } from '@contextia/contracts';
 import { EvaluationFailure } from './application/evaluateContext.js';
 import type { EvaluateContext } from './application/evaluateContext.js';
+import { ApiFailure } from './application/apiFailure.js';
+import type { AccountServices } from './application/account.js';
+import type { ChatWithRecommendation } from './application/chatWithRecommendation.js';
 
 export const MAX_BODY_BYTES = 256 * 1024;
 
-export type RouteName = 'health' | 'evaluate' | 'not-found';
+export type RouteName = 'health' | 'evaluate' | 'me' | 'preferences' | 'recommendations' | 'recommendation' | 'chat' | 'not-found';
 
 export type RequestLog = {
   event: 'http_request';
@@ -33,12 +40,17 @@ export type HandlerOptions = {
   clients?: ClientConfig;
   /** Absent until provider adapters are composed; the route then reports 503 instead of fabricating results. */
   evaluate?: EvaluateContext;
+  account?: AccountServices;
+  chat?: ChatWithRecommendation;
 };
 
 /** Verified access-token claims supplied by the API Gateway JWT authorizer. */
 export type AuthClaims = { sub: string; clientId: string };
 
-export type ApiRequest = { method: string; path: string; requestId: string; body?: string | null; claims?: AuthClaims | null };
+export type ApiRequest = {
+  method: string; path: string; requestId: string; body?: string | null; claims?: AuthClaims | null;
+  query?: Record<string, string | undefined>; idempotencyKey?: string;
+};
 
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
 
@@ -78,6 +90,8 @@ async function evaluate(request: ApiRequest, clients: ClientConfig, evaluateCont
     return error(400, requestId, 'VALIDATION_ERROR', 'Request body is invalid.', details);
   }
   const mode = parsed.data.mode;
+  const headers = EvaluationHeadersSchema.safeParse(request.idempotencyKey === undefined ? {} : { idempotencyKey: request.idempotencyKey });
+  if (!headers.success) return { ...error(400, requestId, 'VALIDATION_ERROR', 'Idempotency-Key must be a UUID.'), mode };
   // Preview is limited to the Scenario Console client; proactive delivery to the mobile client.
   const allowedClient = mode === 'simulation' ? clients.webClientId : clients.mobileClientId;
   if (!allowedClient || request.claims.clientId !== allowedClient) {
@@ -85,9 +99,11 @@ async function evaluate(request: ApiRequest, clients: ClientConfig, evaluateCont
   }
   if (!evaluateContext) return { ...error(503, requestId, 'EVALUATION_UNAVAILABLE', 'Context evaluation is not available yet.'), mode };
   try {
-    const data = await evaluateContext({ userId: request.claims.sub, context: parsed.data });
-    return { response: json(200, { requestId, data } satisfies ContextEvaluateResponse), mode };
+    const data = await evaluateContext({ userId: request.claims.sub, context: parsed.data,
+      ...(headers.data.idempotencyKey === undefined ? {} : { idempotencyKey: headers.data.idempotencyKey }) });
+    return { response: json(200, ContextEvaluateResponseSchema.parse({ requestId, data } satisfies ContextEvaluateResponse)), mode };
   } catch (cause) {
+    if (cause instanceof ApiFailure) return { ...apiFailure(cause, requestId), mode };
     if (cause instanceof EvaluationFailure) {
       return cause.code === 'PROFILE_NOT_FOUND'
         ? { ...error(404, requestId, 'PROFILE_NOT_FOUND', 'No profile exists for this user.'), mode }
@@ -95,6 +111,62 @@ async function evaluate(request: ApiRequest, clients: ClientConfig, evaluateCont
     }
     // Never echo internal error messages; the request ID correlates with the structured log.
     return { ...error(500, requestId, 'INTERNAL_ERROR', 'Context evaluation failed.'), mode };
+  }
+}
+
+function apiFailure(cause: ApiFailure, requestId: string): Outcome {
+  const mapping: Record<ApiFailure['code'], { status: number; message: string }> = {
+    PROFILE_NOT_FOUND: { status: 404, message: 'No profile exists for this user.' },
+    RECOMMENDATION_NOT_FOUND: { status: 404, message: 'Recommendation not found.' },
+    STATE_UNAVAILABLE: { status: 503, message: 'User state is temporarily unavailable.' },
+    MODEL_UNAVAILABLE: { status: 503, message: 'Recommendation chat is temporarily unavailable.' },
+    INVALID_MODEL_OUTPUT: { status: 502, message: 'The recommendation model returned an unusable reply.' },
+    INVALID_CURSOR: { status: 400, message: 'Pagination cursor is invalid.' },
+    CHAT_LIMIT_REACHED: { status: 429, message: 'This conversation has reached its message limit.' },
+    IDEMPOTENCY_CONFLICT: { status: 409, message: 'This idempotency key belongs to a different request.' },
+    IDEMPOTENCY_IN_PROGRESS: { status: 409, message: 'This evaluation is still in progress.' },
+    EVALUATION_SUPERSEDED: { status: 409, message: 'A newer evaluation or preference update superseded this evaluation.' },
+    EVALUATION_TIMEOUT: { status: 503, message: 'The evaluation deadline was exceeded.' }
+  };
+  const value = mapping[cause.code];
+  return error(value.status, requestId, cause.code, value.message);
+}
+
+async function accountRoute(request: ApiRequest, route: RouteName, options: HandlerOptions, recommendationId?: string): Promise<Outcome> {
+  if (!request.claims) return error(401, request.requestId, 'UNAUTHORIZED', 'A valid access token is required.');
+  const clientIds = [options.clients?.webClientId, options.clients?.mobileClientId].filter(Boolean);
+  if (!clientIds.includes(request.claims.clientId)) return error(403, request.requestId, 'FORBIDDEN', 'This client is not allowed to access this API.');
+  const userId = request.claims.sub;
+  const requestId = request.requestId;
+  if (!options.account || (route === 'chat' && !options.chat)) return error(503, requestId, 'SERVICE_UNAVAILABLE', 'This service is not available yet.');
+  try {
+    if (route === 'me') return { response: json(200, GetMeResponseSchema.parse({ requestId, data: await options.account.getMe(userId) })) };
+    if (route === 'recommendations') {
+      const query = RecommendationsQuerySchema.safeParse(request.query ?? {});
+      if (!query.success) return error(400, requestId, 'VALIDATION_ERROR', 'Recommendation query is invalid.');
+      return { response: json(200, ListRecommendationsResponseSchema.parse({ requestId, data: await options.account.listRecommendations(userId, query.data) })) };
+    }
+    if (route === 'recommendation' || route === 'chat') {
+      const params = RecommendationParamsSchema.safeParse({ recommendationId });
+      if (!params.success) return error(400, requestId, 'VALIDATION_ERROR', 'Recommendation ID is invalid.');
+      if (route === 'recommendation') return { response: json(200, GetRecommendationResponseSchema.parse({ requestId, data: await options.account.getRecommendation(userId, params.data.recommendationId) })) };
+    }
+    const body = parseBody(request.body);
+    if (!body.ok) return body.tooLarge
+      ? error(413, requestId, 'PAYLOAD_TOO_LARGE', 'Request body is too large.')
+      : error(400, requestId, 'VALIDATION_ERROR', 'Request body must be a JSON object.');
+    if (route === 'preferences') {
+      const parsed = UpdatePreferencesRequestSchema.safeParse(body.value);
+      if (!parsed.success) return error(400, requestId, 'VALIDATION_ERROR', 'Preferences are invalid.');
+      return { response: json(200, UpdatePreferencesResponseSchema.parse({ requestId, data: await options.account.putPreferences(userId, parsed.data) })) };
+    }
+    const parsed = ChatRequestSchema.safeParse(body.value);
+    if (!parsed.success) return error(400, requestId, 'VALIDATION_ERROR', 'Chat message is invalid.');
+    if (!options.chat || !recommendationId) return error(503, requestId, 'SERVICE_UNAVAILABLE', 'This service is not available yet.');
+    return { response: json(200, ChatResponseSchema.parse({ requestId, data: await options.chat({ userId, recommendationId, message: parsed.data.message }) })) };
+  } catch (cause) {
+    if (cause instanceof ApiFailure) return apiFailure(cause, requestId);
+    return error(500, requestId, 'INTERNAL_ERROR', 'Request could not be completed.');
   }
 }
 
@@ -109,6 +181,21 @@ export function createRequestHandler(options: HandlerOptions): (request: ApiRequ
     } else if (request.method === 'POST' && request.path === '/v1/context/evaluate') {
       route = 'evaluate';
       result = await evaluate(request, clients, options.evaluate);
+    } else if (request.method === 'GET' && request.path === '/v1/me') {
+      route = 'me';
+      result = await accountRoute(request, route, options);
+    } else if (request.method === 'PUT' && request.path === '/v1/me/preferences') {
+      route = 'preferences';
+      result = await accountRoute(request, route, options);
+    } else if (request.method === 'GET' && request.path === '/v1/recommendations') {
+      route = 'recommendations';
+      result = await accountRoute(request, route, options);
+    } else if (/^\/v1\/recommendations\/[^/]+(?:\/chat)?$/.test(request.path)
+      && ((request.method === 'POST' && request.path.endsWith('/chat')) || (request.method === 'GET' && !request.path.endsWith('/chat')))) {
+      route = request.method === 'POST' ? 'chat' : 'recommendation';
+      let recommendationId: string | undefined;
+      try { recommendationId = decodeURIComponent(request.path.split('/')[3] ?? ''); } catch { /* validated below */ }
+      result = await accountRoute(request, route, options, recommendationId);
     } else {
       result = error(404, request.requestId, 'NOT_FOUND', 'Route not found.');
     }
@@ -138,12 +225,11 @@ export function createLambdaHandler(options: HandlerOptions): (event: APIGateway
     path: event.rawPath,
     requestId: event.requestContext.requestId,
     body: event.body === undefined ? null : event.isBase64Encoded ? Buffer.from(event.body, 'base64').toString('utf8') : event.body,
-    claims: claimsFromEvent(event)
+    claims: claimsFromEvent(event),
+    query: event.queryStringParameters ?? {},
+    ...(() => {
+      const key = Object.entries(event.headers).find(([name]) => name.toLowerCase() === 'idempotency-key')?.[1];
+      return key === undefined ? {} : { idempotencyKey: key };
+    })()
   });
 }
-
-export const handler = createLambdaHandler({
-  version: process.env.BUILD_ID ?? 'development',
-  clients: { webClientId: process.env.WEB_CLIENT_ID ?? null, mobileClientId: process.env.MOBILE_CLIENT_ID ?? null },
-  log: (entry) => { console.log(JSON.stringify(entry)); }
-});

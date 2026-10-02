@@ -7,7 +7,7 @@ import { EvaluationFailure, createEvaluateContext, defaultEvaluationPolicy } fro
 import type { EvaluationDependencies, EvaluationStateRepository } from '../src/application/evaluateContext.js';
 import type { EvaluationDomain, GuardCheckInput } from '../src/application/evaluationDomain.js';
 import { contextFingerprint } from '../src/application/fingerprint.js';
-import { createEvaluationDomain } from '../src/composition/evaluationDomain.js';
+import { createEvaluationDomain, phase1Detectors } from '../src/composition/evaluationDomain.js';
 
 const NOW = new Date('2026-10-01T05:10:00.000Z');
 const fixture = scenarios.find(value => value.id === 'step-goal');
@@ -56,9 +56,10 @@ function setup(options: Options = {}) {
     checkDeliveryGuards(input) {
       guardCalls.push(input);
       const guardCodes = [...(options.guardCodes ?? []), ...(input.opportunity ? options.candidateGuardCodes ?? [] : [])];
-      return { shouldEvaluate: input.deliveryMode === 'preview' || guardCodes.length === 0, guardCodes, notificationDay: '2026-10-01', maxDailyNotifications: 3, anchorDedupSeconds: 1800 };
+      return { shouldEvaluate: input.deliveryMode === 'preview' || guardCodes.length === 0, guardCodes, notificationDay: '2026-10-01', maxDailyNotifications: 3, anchorDedupSeconds: 1800, timezone: 'Asia/Tokyo' };
     },
-    detectCandidates: () => Promise.resolve(options.candidates ?? [candidate])
+    detectCandidates: () => Promise.resolve(options.candidates ?? [candidate]),
+    refineCandidates: input => input.candidates
   };
   const state = {
     getProfile: vi.fn<EvaluationStateRepository['getProfile']>(() => Promise.resolve(
@@ -117,7 +118,7 @@ describe('createEvaluateContext', () => {
   it('shows provider place data, never model-invented fields, and persists only the Storage lookup', async () => {
     const { evaluate, places, state } = setup();
     const result = await evaluate({ userId: 'user-1', context: preview });
-    expect(result.recommendations[0]?.place).toEqual(cafePlace);
+    expect(result.recommendations[0]?.place).toEqual({ ...cafePlace, name: 'Storage name' });
     expect(places.getPlace).toHaveBeenCalledWith(expect.objectContaining({ placeId: cafe.placeId, persistenceIntent: 'storage' }));
     const stored = state.writeRecommendation.mock.calls[0]?.[0].recommendation;
     expect(stored?.recommendations[0]?.place).toMatchObject({ persistenceIntent: 'storage', place: { name: 'Storage name' } });
@@ -314,7 +315,7 @@ describe('server processing time for duplicate-context guards (Issue #5)', () =>
 
 describe('createEvaluateContext with the lane A domain', () => {
   it('shows the same preview result on a re-run without consuming delivery quota', async () => {
-    const { evaluate, state } = setup({ domain: createEvaluationDomain() });
+    const { evaluate, state } = setup({ domain: createEvaluationDomain({ detectors: phase1Detectors }) });
     const first = await evaluate({ userId: 'user-1', context: preview });
     const second = await evaluate({ userId: 'user-1', context: preview });
     for (const result of [first, second]) {
@@ -324,17 +325,17 @@ describe('createEvaluateContext with the lane A domain', () => {
   });
 
   it('commits proactive recommendation and delivery together with the local-day anchor window', async () => {
-    const { evaluate, state } = setup({ domain: createEvaluationDomain() });
+    const { evaluate, state } = setup({ domain: createEvaluationDomain({ detectors: phase1Detectors }) });
     expect(await evaluate({ userId: 'user-1', context: proactive })).toMatchObject({ decision: 'notify', delivery: { status: 'ready' } });
     expect(state.commitProactiveRecommendation).toHaveBeenCalledWith(expect.objectContaining({
       userId: 'user-1', recommendation: expect.objectContaining({ id: 'rec-2' }),
-      delivery: expect.objectContaining({ recommendationId: 'rec-2', anchorKey: '2026-10-01', anchorDedupSeconds: 14 * 3600 + 10 * 60 })
+      delivery: expect.objectContaining({ recommendationId: 'rec-2', anchorKey: '2026-10-01', anchorDedupSeconds: 14 * 3600 + 10 * 60 + 1 })
     }));
     expect(state.writeRecommendation).not.toHaveBeenCalled();
   });
 
   it('stays silent below the step goal', async () => {
-    const { evaluate, decide } = setup({ domain: createEvaluationDomain() });
+    const { evaluate, decide } = setup({ domain: createEvaluationDomain({ detectors: phase1Detectors }) });
     const result = await evaluate({ userId: 'user-1', context: { ...proactive, activity: { ...proactive.activity, stepsToday: 100 } } });
     expect(result).toMatchObject({ decision: 'silent', delivery: { guardCodes: ['NO_CANDIDATE'] } });
     expect(decide).not.toHaveBeenCalled();
@@ -342,7 +343,7 @@ describe('createEvaluateContext with the lane A domain', () => {
 
   it('diagnoses DUPLICATE_CONTEXT on a preview re-run within the dedup window (issue #5)', async () => {
     let now = NOW;
-    const { evaluate } = setup({ domain: createEvaluationDomain(), memory: true, clock: () => now });
+    const { evaluate } = setup({ domain: createEvaluationDomain({ detectors: phase1Detectors }), memory: true, clock: () => now });
     await evaluate({ userId: 'user-1', context: preview });
     now = new Date(NOW.getTime() + 60_000);
     expect(await evaluate({ userId: 'user-1', context: preview })).toMatchObject({
@@ -352,7 +353,7 @@ describe('createEvaluateContext with the lane A domain', () => {
 
   it('suppresses a duplicate proactive context before Places or Bedrock (issue #5)', async () => {
     let now = NOW;
-    const { evaluate, places, decide } = setup({ domain: createEvaluationDomain(), memory: true, clock: () => now });
+    const { evaluate, places, decide } = setup({ domain: createEvaluationDomain({ detectors: phase1Detectors }), memory: true, clock: () => now });
     await evaluate({ userId: 'user-1', context: proactive });
     now = new Date(NOW.getTime() + 60_000);
     expect(await evaluate({ userId: 'user-1', context: proactive })).toMatchObject({
