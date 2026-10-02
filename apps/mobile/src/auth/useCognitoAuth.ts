@@ -16,6 +16,7 @@ export type CognitoAuthState = {
   signOut: () => Promise<void>;
   getAccessToken: () => Promise<string | null>;
   getSessionSignal: () => AbortSignal;
+  rejectAccessToken: (accessToken: string, sessionSignal: AbortSignal | undefined) => Promise<void>;
 };
 
 function toSession(token: AuthSession.TokenResponse, previousRefreshToken?: string): StoredSession | null {
@@ -46,9 +47,14 @@ export function useCognitoAuth(config: CognitoConfiguration): CognitoAuthState {
     onSessionChange: signedIn => setStatus(signedIn ? 'signed-in' : 'signed-out'),
     refresh: async stored => {
       const tokenEndpoint = discoveryRef.current?.tokenEndpoint;
-      if (!tokenEndpoint || !stored.refreshToken) return null;
-      const token = await AuthSession.refreshAsync({ clientId: config.clientId, refreshToken: stored.refreshToken }, { tokenEndpoint });
-      return toSession(token, stored.refreshToken);
+      if (!tokenEndpoint || !stored.refreshToken) return { kind: 'unavailable' };
+      try {
+        const token = await AuthSession.refreshAsync({ clientId: config.clientId, refreshToken: stored.refreshToken }, { tokenEndpoint });
+        const session = toSession(token, stored.refreshToken);
+        return session ? { kind: 'success', session } : { kind: 'unavailable' };
+      } catch (error) {
+        return { kind: error instanceof AuthSession.TokenError && error.code === 'invalid_grant' ? 'rejected' : 'unavailable' };
+      }
     }
   }), [config.stage, config.clientId]);
 
@@ -150,5 +156,8 @@ export function useCognitoAuth(config: CognitoConfiguration): CognitoAuthState {
     }
   }, [config.clientId, config.redirectUri, discovery, manager]);
 
-  return { status, busy, message, signIn, signOut, getAccessToken: manager.getAccessToken, getSessionSignal: manager.getSessionSignal };
+  return {
+    status, busy, message, signIn, signOut, getAccessToken: manager.getAccessToken,
+    getSessionSignal: manager.getSessionSignal, rejectAccessToken: manager.rejectAccessToken
+  };
 }

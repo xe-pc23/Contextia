@@ -5,7 +5,8 @@ import { deferred, historyItem, notify, profile, realInput, silent } from './sup
 function json(data: unknown, status = 200) { return new Response(JSON.stringify(data), { status }); }
 function setup(response: () => Response | Promise<Response>, token: () => Promise<string | null> = async () => 'test-access-token') {
   const fetch = vi.fn<typeof globalThis.fetch>(async () => response());
-  return { fetch, client: createBackendClient({ baseUrl: 'https://api.example.test/dev', getAccessToken: token, fetch, timeoutMs: 100 }) };
+  const createIdempotencyKey = vi.fn<() => string>(() => globalThis.crypto.randomUUID());
+  return { fetch, createIdempotencyKey, client: createBackendClient({ baseUrl: 'https://api.example.test/dev', getAccessToken: token, createIdempotencyKey, fetch, timeoutMs: 100 }) };
 }
 
 describe('mobile API URL and request boundary', () => {
@@ -19,6 +20,22 @@ describe('mobile API URL and request boundary', () => {
     expect(options).toMatchObject({ method: 'POST', credentials: 'omit', cache: 'no-store', redirect: 'error', headers: { authorization: 'Bearer test-access-token' } });
     expect(JSON.parse(String(options?.body))).toEqual(realInput);
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it('assigns a validated, distinct UUID header to each new evaluation', async () => {
+    const { client, fetch } = setup(() => json({ requestId: 'req-test', data: notify }));
+    await client.evaluate(realInput); await client.evaluate(realInput);
+    const keys = fetch.mock.calls.map(([, options]) => new Headers(options?.headers).get('Idempotency-Key'));
+    expect(keys[0]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(keys[1]).not.toBe(keys[0]);
+  });
+  it.each(['invalid', 'throws'])('does not send an evaluation when UUID generation is %s', async behavior => {
+    const { client, fetch, createIdempotencyKey } = setup(() => json(null));
+    createIdempotencyKey.mockImplementation(() => {
+      if (behavior === 'throws') throw new Error('private random failure');
+      return 'invalid';
+    });
+    expect(await client.evaluate(realInput)).toEqual({ kind: 'invalid-request', fields: ['idempotencyKey'] });
+    expect(fetch).not.toHaveBeenCalled();
   });
   it.each([
     { ...realInput, mode: 'simulation', deliveryMode: 'preview' },
@@ -48,6 +65,7 @@ describe('mobile API URL and request boundary', () => {
       'https://api.example.test/dev/v1/recommendations?limit=20&cursor=cursor%2B%2F%3D',
       'https://api.example.test/dev/v1/recommendations/rec%20%2F%3F'
     ]);
+    expect(fetch.mock.calls.every(([, options]) => !new Headers(options?.headers).has('Idempotency-Key'))).toBe(true);
   });
 });
 
@@ -72,12 +90,38 @@ describe('mobile API response boundary', () => {
     const detail = setup(() => json({ requestId: 'req-test', data: historyItem }));
     expect(await detail.client.getRecommendation('another-id')).toEqual({ kind: 'invalid-response' });
   });
-  it.each([401, 403, 404, 429, 503])('maps HTTP %i without exposing the upstream message or retrying', async status => {
+  it.each([403, 404, 429, 503])('maps HTTP %i without exposing the upstream message or retrying', async status => {
     const { client, fetch } = setup(() => json({ requestId: 'req-error', error: { code: 'UPSTREAM_ERROR', message: 'private-token-in-body' } }, status));
     const result = await client.evaluate(realInput);
     expect(result).toEqual({ kind: 'http-error', status, code: 'UPSTREAM_ERROR', requestId: 'req-error' });
     expect(JSON.stringify(result)).not.toContain('private-token');
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it.each(['profile', 'preferences', 'evaluation'])('invalidates the current session on a %s 401 without replaying the operation', async operation => {
+    const auth = new AbortController();
+    const response = json({ error: 'private-token-in-body' }, 401);
+    const read = vi.spyOn(response, 'json').mockImplementation(() => new Promise(() => undefined));
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => response);
+    const onUnauthorized = vi.fn(async () => { auth.abort(); });
+    const client = createBackendClient({
+      baseUrl: 'https://api.example.test', getAccessToken: async () => 'test-access-token',
+      createIdempotencyKey: () => globalThis.crypto.randomUUID(), getSessionSignal: () => auth.signal, onUnauthorized, fetch
+    });
+    const result = operation === 'profile' ? await client.getProfile()
+      : operation === 'preferences' ? await client.updatePreferences(profile.preferences) : await client.evaluate(realInput);
+    expect(result).toEqual({ kind: 'unauthenticated' });
+    expect(onUnauthorized).toHaveBeenCalledWith('test-access-token', auth.signal);
+    expect(auth.signal.aborted).toBe(true);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(read).not.toHaveBeenCalled();
+  });
+  it('maps 401 to unauthenticated without leaking a failed storage cleanup', async () => {
+    const client = createBackendClient({
+      baseUrl: 'https://api.example.test', getAccessToken: async () => 'test-access-token',
+      createIdempotencyKey: () => globalThis.crypto.randomUUID(),
+      onUnauthorized: async () => { throw new Error('private storage error'); }, fetch: async () => json(null, 401)
+    });
+    expect(await client.getProfile()).toEqual({ kind: 'unauthenticated' });
   });
   it('returns a network error', async () => {
     const { client } = setup(() => { throw new Error('private network exception'); });
@@ -110,6 +154,7 @@ describe('mobile API response boundary', () => {
     const fetch = vi.fn<typeof globalThis.fetch>(async () => json(null));
     const client = createBackendClient({
       baseUrl: 'https://api.example.test', fetch,
+      createIdempotencyKey: () => globalThis.crypto.randomUUID(),
       getAccessToken: async () => 'old-access-token', getSessionSignal: () => auth.signal
     });
     const request = client.getProfile();

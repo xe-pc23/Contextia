@@ -37,6 +37,8 @@ For prod, use separate API / pool / mobile client values and `contextia-prod://a
 
 SecureStore keys are isolated by stage and mobile client. The Phase 1 unscoped session key is not reused, so sign in again after upgrading. Tokens are never shown or logged. A valid access token is acquired at each API call; expired tokens refresh once for concurrent callers. Sign-out invalidates and aborts pending API work immediately, and queued credential writes cannot recreate a cleared session.
 
+Transient refresh failures (network loss, timeout, missing endpoint, or malformed response) preserve saved credentials and return no access token. A later operation can refresh again without another sign-in; expired tokens are never sent. The Cognito adapter maps `invalid_grant` to an explicit refresh rejection, which clears the session. Credential storage failure also clears the session. An API HTTP 401 invalidates the session only if both its session signal and access token are still current, so a late 401 cannot erase a newer login or refreshed token. It returns unauthenticated without automatically replaying GET, PUT, or POST operations.
+
 ## Foreground behavior
 
 - Sign-in fetches `/v1/me` and the recent recommendation list. Failed/missing routes show their actual error state.
@@ -48,6 +50,7 @@ SecureStore keys are isolated by stage and mobile client. The Phase 1 unscoped s
 - Calendar reads cover the device-local current day through the end of the next three days, using the existing 31-day native query margin and overlap projection.
 - Native calendar IDs are hashed. Only `id`, `title`, `startAt`, `endAt`, `location`, and optional `allDay` enter the request. Attendees, email, description, notes, meeting URL, organizer, and calendar IDs are discarded.
 - Every request and response is parsed with the shared contracts. More than three recommendations, unsafe action URLs, unknown fields, and a preview response to a real request are rejected.
+- Each new evaluation sends an Expo Crypto UUID as `Idempotency-Key`, validated with `EvaluationHeadersSchema`. UUID generation failure prevents the request. Other routes do not receive this evaluation header.
 - Native collection has a 45-second wait limit; API operations have a 30-second limit including token acquisition and response reading. Authentication refresh / token exchange have a 12-second limit. API failures never automatically retry mutating requests.
 - Evaluation is single-flight. A successful silent response replaces the previous recommendation instead of leaving old cards visible. Provider failures remain visible while successful data is retained.
 - Foreground results are displayed in the app; there is no local/push notification path in this phase, even for a `notify` decision.
@@ -71,7 +74,7 @@ At implementation base `bbdee8e`, Lambda's live evaluation composition is not in
 
 FR-021 asks the Dashboard to show weather, but `EvaluationResultSchema` exposes only `providerStatus.weather`, not a weather snapshot. The app currently shows the actual weather acquisition status. **A/D handoff:** add the minimum normalized weather summary to the shared contract and API before claiming temperature/condition display complete. E has not added a response field or a separate weather provider call.
 
-Idempotency is D's Phase 2 API work. This client prevents concurrent evaluation and never automatically retries it; it does not claim exactly-once backend processing. No additional dependency, provider, device registration, notification, background permission, or AWS infrastructure is introduced.
+Server-side idempotency records and context fingerprint guards are D's Phase 2 API work. This client prevents concurrent evaluation, sends an evaluation UUID, and never automatically retries mutating operations. A fresh user evaluation collects new context and uses a new UUID; that alone does not prevent duplicate processing when the user repeats an operation after a timeout. Any future transport retry must reuse the original key and payload, and distinct evaluations still require the backend's fingerprint guards. Exactly-once backend processing is not claimed. No additional dependency, provider, device registration, notification, background permission, or AWS infrastructure is introduced.
 
 ## Development builds and live smoke
 
@@ -106,9 +109,9 @@ The current task environment has no ADB or Xcode executable on PATH and no Andro
 | Saved preferences | Blocked by dev API/config and device validation | Blocked by dev API/config and device validation |
 | Map / route / website action | Not verified on device | Not verified on device |
 
-2026-10-02 validation in the isolated Phase 2-E worktree, Node 24.13.1 / pnpm 10.29.3: frozen dependency installation, `pnpm lint`, `pnpm typecheck`, `pnpm test` (491 tests in 26 files; 100 mobile tests), `pnpm build` (including iOS/Android JS exports), and `pnpm cdk:synth` (offline dev/prod) passed. No infrastructure was deployed. Root package manifests and lockfile are unchanged.
+2026-10-02 validation in the isolated Phase 2-E worktree, Node 24.13.1 / pnpm 10.29.3: frozen dependency installation, `pnpm lint`, `pnpm typecheck`, `pnpm test` (506 tests in 26 files; 115 mobile tests), `pnpm build` (including iOS/Android JS exports), and `pnpm cdk:synth` (offline dev/prod) passed. No infrastructure was deployed. Root package manifests and lockfile are unchanged.
 
-Unit coverage includes real-only API requests, privacy projection, notify/silent and provider failure, contract rejection, HTTP errors, bounded waits, cancellation, token-refresh single-flight, logout/write races, stage-isolated credential storage, collection failure, settings acknowledgement, pagination and stale-detail rejection. These checks do not complete the device/live gates above.
+Unit coverage includes real-only API requests, privacy projection, notify/silent and provider failure, contract rejection, evaluation UUID headers, HTTP errors, bounded waits, cancellation, token-refresh single-flight, transient refresh recovery, explicit refresh rejection, current-session 401 cleanup without replay, stale 401 rejection, logout/write races, stage-isolated credential storage, collection failure, settings acknowledgement, pagination and stale-detail rejection. These checks do not complete the device/live gates above.
 
 ## Phase 3 boundaries
 

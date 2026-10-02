@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { Button, ScrollView, Text, View } from 'react-native';
+import { randomUUID } from 'expo-crypto';
 import { apiBaseUrl, createBackendClient, type BackendClient } from './api/backendClient';
 import { MobileController } from './application/mobileController';
 import { readCognitoConfiguration, type CognitoConfiguration } from './auth/cognitoConfig';
@@ -59,7 +60,10 @@ function AuthPanel({ auth }: { auth: CognitoAuthState }) {
 
 function AuthenticatedApp({ config, baseUrl }: { config: CognitoConfiguration; baseUrl: string | null }) {
   const auth = useCognitoAuth(config);
-  const client = useMemo(() => baseUrl ? createBackendClient({ baseUrl, getAccessToken: auth.getAccessToken, getSessionSignal: auth.getSessionSignal }) : null, [baseUrl, auth.getAccessToken, auth.getSessionSignal]);
+  const client = useMemo(() => baseUrl ? createBackendClient({
+    baseUrl, createIdempotencyKey: randomUUID, getAccessToken: auth.getAccessToken,
+    getSessionSignal: auth.getSessionSignal, onUnauthorized: auth.rejectAccessToken
+  }) : null, [baseUrl, auth.getAccessToken, auth.getSessionSignal, auth.rejectAccessToken]);
   return <View style={styles.page}><ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>
     <Text style={styles.brand}>Contextia</Text>
     <AuthPanel auth={auth} />

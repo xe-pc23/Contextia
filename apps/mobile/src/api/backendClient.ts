@@ -1,6 +1,6 @@
 import type { z } from 'zod';
 import {
-  ContextEvaluateResponseSchema, ErrorResponseSchema, GetMeResponseSchema,
+  ContextEvaluateResponseSchema, ErrorResponseSchema, EvaluationHeadersSchema, GetMeResponseSchema,
   GetRecommendationResponseSchema, ListRecommendationsResponseSchema,
   RealContextInputSchema, RecommendationParamsSchema, RecommendationsQuerySchema,
   UpdatePreferencesRequestSchema, UpdatePreferencesResponseSchema
@@ -49,7 +49,9 @@ function invalidFields(issues: readonly { path: readonly PropertyKey[] }[]): Bac
 export function createBackendClient(options: {
   baseUrl: string;
   getAccessToken: () => Promise<string | null>;
+  createIdempotencyKey: () => string;
   getSessionSignal?: () => AbortSignal;
+  onUnauthorized?: (accessToken: string, sessionSignal: AbortSignal | undefined) => Promise<void>;
   fetch?: typeof fetch;
   timeoutMs?: number;
 }): BackendClient {
@@ -65,7 +67,8 @@ export function createBackendClient(options: {
     schema: z.ZodType<{ requestId: string; data: T }>,
     method: 'GET' | 'PUT' | 'POST',
     signal?: AbortSignal,
-    body?: unknown
+    body?: unknown,
+    headers: Record<string, string> = {}
   ): Promise<BackendOutcome<T>> {
     const sessionSignal = options.getSessionSignal?.();
     if (signal?.aborted || sessionSignal?.aborted) return { kind: 'cancelled' };
@@ -94,11 +97,18 @@ export function createBackendClient(options: {
         method,
         headers: {
           accept: 'application/json', authorization: `Bearer ${token}`,
-          ...(body === undefined ? {} : { 'content-type': 'application/json' })
+          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+          ...headers
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         signal: controller.signal, credentials: 'omit', cache: 'no-store', redirect: 'error'
       });
+      if (stopped) return stopped;
+      if (response.status === 401) {
+        stop({ kind: 'unauthenticated' });
+        await options.onUnauthorized?.(token, sessionSignal).catch(() => undefined);
+        return { kind: 'unauthenticated' };
+      }
       let raw: unknown;
       try { raw = await response.json(); } catch { raw = null; }
       if (stopped) return stopped;
@@ -141,7 +151,14 @@ export function createBackendClient(options: {
       if (parsed.data.preferencesOverride !== undefined || parsed.data.scenarioTime !== undefined) {
         return { kind: 'invalid-request', fields: ['preferencesOverride', 'scenarioTime'] };
       }
-      const result = await request('v1/context/evaluate', ContextEvaluateResponseSchema, 'POST', signal, parsed.data);
+      let key: string;
+      try { key = options.createIdempotencyKey(); }
+      catch { return { kind: 'invalid-request', fields: ['idempotencyKey'] }; }
+      const headers = EvaluationHeadersSchema.safeParse({ idempotencyKey: key });
+      if (!headers.success || !headers.data.idempotencyKey) return { kind: 'invalid-request', fields: ['idempotencyKey'] };
+      const result = await request('v1/context/evaluate', ContextEvaluateResponseSchema, 'POST', signal, parsed.data, {
+        'Idempotency-Key': headers.data.idempotencyKey
+      });
       if (result.kind === 'success' && result.data.delivery.mode !== 'proactive') return { kind: 'invalid-response' };
       return result;
     },

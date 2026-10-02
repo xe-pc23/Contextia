@@ -15,7 +15,7 @@ export const guardLabels: Record<GuardCode, string> = {
 export function failureMessage(failure: MobileFailure): string {
   switch (failure.kind) {
     case 'invalid-request': return '入力内容を確認してください。';
-    case 'unauthenticated': return 'もう一度サインインしてください。';
+    case 'unauthenticated': return '認証を確認できません。ネットワークを確認して、もう一度お試しください。';
     case 'invalid-response': return '応答を確認できませんでした。もう一度お試しください。';
     case 'network-error': return '接続できません。ネットワークを確認してください。';
     case 'timeout': return '処理に時間がかかっています。通信や端末の設定を確認して再実行してください。';

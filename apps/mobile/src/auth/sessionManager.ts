@@ -7,6 +7,11 @@ export interface SessionStore {
   clear(): Promise<void>;
 }
 
+export type SessionRefreshResult =
+  | { kind: 'success'; session: StoredSession }
+  | { kind: 'rejected' }
+  | { kind: 'unavailable' };
+
 /** Serializes credential writes and fences refresh/restore against sign-out. */
 export class SessionManager {
   private session: StoredSession | null = null;
@@ -17,7 +22,7 @@ export class SessionManager {
 
   constructor(private readonly options: {
     store: SessionStore;
-    refresh: (session: StoredSession) => Promise<StoredSession | null>;
+    refresh: (session: StoredSession) => Promise<SessionRefreshResult>;
     now: () => number;
     onSessionChange: (signedIn: boolean) => void;
     refreshTimeoutMs?: number;
@@ -40,8 +45,8 @@ export class SessionManager {
     if (generation !== this.generation) return;
     this.session = parseStoredSession(stored);
     if (this.session && this.requests.signal.aborted) this.requests = new AbortController();
-    const token = await this.getAccessToken();
-    if (generation === this.generation) this.options.onSessionChange(token !== null);
+    await this.getAccessToken();
+    if (generation === this.generation) this.options.onSessionChange(this.session !== null);
   }
 
   async accept(value: StoredSession): Promise<boolean> {
@@ -77,10 +82,18 @@ export class SessionManager {
 
     const refresh = async (): Promise<string | null> => {
       try {
-        const result = await withTimeout(this.options.refresh(session), this.options.refreshTimeoutMs ?? 12_000);
+        let result: SessionRefreshResult;
+        const refreshTokens = async (): Promise<SessionRefreshResult> => this.options.refresh(session);
+        try { result = await withTimeout(refreshTokens(), this.options.refreshTimeoutMs ?? 12_000); }
+        catch { return null; }
         if (generation !== this.generation) return null;
-        const next = parseStoredSession(result);
-        if (!next || !this.fresh(next)) throw new Error('Invalid refreshed session');
+        if (result.kind === 'rejected') {
+          await this.clear().catch(() => undefined);
+          return null;
+        }
+        if (result.kind !== 'success') return null;
+        const next = parseStoredSession(result.session);
+        if (!next || !this.fresh(next)) return null;
         await this.enqueue(async () => {
           if (generation === this.generation) await this.options.store.write(next);
         });
@@ -105,6 +118,11 @@ export class SessionManager {
   }
 
   getSessionSignal = (): AbortSignal => this.requests.signal;
+
+  rejectAccessToken = async (token: string, signal: AbortSignal | undefined): Promise<void> => {
+    if (signal !== this.requests.signal || token !== this.session?.accessToken) return;
+    await this.clear();
+  };
 
   async clear(): Promise<void> {
     this.generation++;
