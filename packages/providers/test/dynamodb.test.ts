@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { UserPreferences } from '@contextia/contracts';
 import { EvaluationResultSchema } from '@contextia/contracts';
-import type { DynamoDbClient, DynamoDbRequest } from '../src/adapters/dynamodb.js';
+import type { DynamoDbClient, DynamoDbRequest, DynamoDbUpdateInput } from '../src/adapters/dynamodb.js';
 import { DynamoDbStateRepository } from '../src/adapters/dynamodb.js';
 import type { ContextSnapshot, ProactiveDeliveryWrite, RecommendationWrite } from '../src/ports/StateRepository.js';
 
@@ -149,6 +149,21 @@ function storedState(overrides: Record<string, unknown> = {}): Record<string, un
     schemaVersion: 1,
     ...overrides
   };
+}
+
+function stateUpdateFrom(requests: DynamoDbRequest[]): DynamoDbUpdateInput | undefined {
+  const request = requests.at(-1);
+  if (request?.operation !== 'transactWrite') return undefined;
+  const item = request.input.TransactItems.find(candidate => 'Update' in candidate && candidate.Update.Key.SK === 'STATE');
+  return item !== undefined && 'Update' in item ? item.Update : undefined;
+}
+
+function expectExpressionAttributeDefinitionsToMatch(update: DynamoDbUpdateInput): void {
+  const expression = `${update.UpdateExpression} ${update.ConditionExpression ?? ''}`;
+  const usedNames = [...new Set(expression.match(/#[\w]+/g) ?? [])].sort();
+  const usedValues = [...new Set(expression.match(/:[\w]+/g) ?? [])].sort();
+  expect(usedNames).toEqual(Object.keys(update.ExpressionAttributeNames ?? {}).sort());
+  expect(usedValues).toEqual(Object.keys(update.ExpressionAttributeValues ?? {}).sort());
 }
 
 function storedPointer(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -461,12 +476,35 @@ describe('DynamoDbStateRepository', () => {
     expect(stateUpdate?.ConditionExpression).toMatch(/notificationsSentToday|notificationDay/);
     expect(stateUpdate?.ConditionExpression).toContain('latestContextFingerprint');
     expect(stateUpdate?.ConditionExpression).toContain('recentAnchors');
+    expect(stateUpdate).toBeDefined();
+    if (stateUpdate === undefined) throw new Error('Expected the state update');
+    expect(stateUpdate.ExpressionAttributeValues).toMatchObject({ ':zero': 0, ':max': 3 });
+    expectExpressionAttributeDefinitionsToMatch(stateUpdate);
     const profileCheck = request.input.TransactItems.find(item => 'ConditionCheck' in item);
     const profileCondition = profileCheck !== undefined && 'ConditionCheck' in profileCheck ? profileCheck.ConditionCheck : undefined;
     expect(profileCondition?.ConditionExpression).toContain('timezone');
     expect(profileCondition?.ExpressionAttributeValues).toMatchObject({ ':timezone': 'Asia/Tokyo' });
     expect(pointerUpdate?.ConditionExpression).toContain('deliveryRecordedAt');
     expect(pointerUpdate?.UpdateExpression).toContain('deliveryRecordedAt');
+  });
+
+  it('uses only defined expression attributes when the notification day rolls over', async () => {
+    const fake = fakeClient([
+      { Item: storedProfile() },
+      { Item: storedState({ notificationDay: '2026-09-30' }) },
+      { Item: storedPointer() },
+      {}
+    ]);
+
+    const result = await repository(fake.client).recordProactiveDelivery({ userId: 'user-1', delivery });
+
+    expect(result).toMatchObject({ status: 'ok', data: { recorded: true } });
+    const stateUpdate = stateUpdateFrom(fake.requests);
+    expect(stateUpdate).toBeDefined();
+    if (stateUpdate === undefined) throw new Error('Expected the state update');
+    expect(stateUpdate.ExpressionAttributeValues).not.toHaveProperty(':zero');
+    expect(stateUpdate.ExpressionAttributeValues).not.toHaveProperty(':max');
+    expectExpressionAttributeDefinitionsToMatch(stateUpdate);
   });
 
   it('returns cap and anchor guards without recording when already suppressed', async () => {
