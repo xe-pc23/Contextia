@@ -1,5 +1,20 @@
 # TEST_STRATEGY.md — Test & Quality Plan
 
+## Local delivery verification — 2026-10-03
+
+At `6c5b165` (functional mobile/smoke changes `6ecc2e7`), `pnpm lint`, `pnpm typecheck`,
+`pnpm test` (1,289 tests / 80 files), `pnpm build` and `pnpm cdk:synth` passed locally and in
+[OIDC dev run 37073130086](https://github.com/xe-pc23/Contextia/actions/runs/37073130086).
+Exact-SHA deployment and mandatory authenticated smoke passed, including bounded correlated
+request-log privacy/EMF coverage. Separate independent focused reviews passed 45 native-auth
+tests and 33 log-smoke tests. Log checks prove the specified values/fields in the fully fetched
+time window; they do not establish an exhaustive privacy guarantee or materialized metrics.
+
+The Android arm64 Debug APK compiled successfully and passed independent manifest/ABI/signature
+inspection. Native iOS Simulator foreground results and the Android artifact's Metro dependency
+are recorded in [Mobile validation](MOBILE_VALIDATION.md). Physical sensors, OS notifications,
+background callbacks and remaining device/runtime rows require their own evidence.
+
 Phase 0 contract tests are in `packages/contracts/test`; synthetic input/enrichment integrity tests are in `packages/test-fixtures/test`. Run them through the root Vitest configuration (source aliases work before build). They validate schemas and fixture integrity; they do not prove detector, live provider, authentication, Web or native behavior.
 
 Phase 1 delivery guards are tested in `packages/domain/test/deliveryGuards.test.ts`.

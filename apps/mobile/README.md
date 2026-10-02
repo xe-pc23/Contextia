@@ -59,8 +59,32 @@ autolinking. Do not manually patch generated MainActivity.
 EXPO_PUBLIC_STAGE=dev pnpm --filter @contextia/mobile android --device
 ```
 
-The current Mac has JDK 21 but no Android SDK or verified Android build. SDK licenses were not
-accepted automatically. Rebuild native projects after changing modules or config plugins.
+The owner approved the Android SDK license/install on 2026-10-03. This Mac now has Temurin JDK 21,
+Android SDK 36, Build Tools 36.0.0, NDK 27.1.12297006 and CMake 3.30.5. The arm64 Debug APK
+compiled successfully. Generate the ignored Android project from a fresh checkout before compiling;
+run this from the repository root:
+
+```bash
+EXPO_PUBLIC_STAGE=dev pnpm --filter @contextia/mobile exec expo prebuild \
+  --platform android --no-install --skip-dependency-update react,react-native
+cd apps/mobile/android
+```
+
+Then compile from `apps/mobile/android`:
+
+```bash
+EXPO_PUBLIC_STAGE=dev \
+  JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home \
+  ANDROID_HOME=/Users/xe/Library/Android/sdk \
+  ./gradlew :app:assembleDebug -Pandroid.cmakeVersion=3.30.5 \
+    -PreactNativeArchitectures=arm64-v8a --max-workers=2 --console=plain
+```
+
+Use the pinned Node version above on PATH. The generated, ignored APK is
+`android/app/build/outputs/apk/debug/app-debug.apk`. It uses a Debug certificate and requires
+reachable Metro; it is not a standalone release build. Compilation/manifest/signature evidence is
+in [Mobile validation](../../docs/MOBILE_VALIDATION.md). Android runtime/hardware checks remain open.
+Rebuild native projects after changing modules or config plugins.
 
 ## Foreground flow and privacy
 

@@ -246,3 +246,20 @@ The local AWS profiles and GitHub access should be used where available. If boot
 - Independent review passed the 33 focused smoke tests. All five local gates passed with 1,289 tests
   / 80 files. No infrastructure/model/IAM configuration changed. Live timeout/model-schema evidence,
   AWS MCP OAuth proof, Android SDK/license, physical devices, SNS and owner-controlled prod remain open.
+
+## Android build and live privacy gate update — 2026-10-03 07:50 JST
+
+- Documentation head `6c5b165` passed Validate run `37073133679` and owner dev deployment run
+  `37073130086`: all five commands, 1,289 tests / 80 files, exact-SHA public/authenticated checks,
+  and bounded correlated request-log privacy/EMF coverage. The specified chat markers and three
+  transient tokens were absent in the fully fetched bounded window; this is not an exhaustive
+  guarantee about every private field or materialized CloudWatch metrics. No quota reset was used.
+- Owner-approved Android SDK packages were installed under the accepted SDK license. The arm64
+  Debug APK built successfully from `6c5b165`; independent APK manifest/ABI/signature inspection
+  passed. `docs/MOBILE_VALIDATION.md` records the toolchain, artifact hash and Metro dependency.
+  Android runtime/hardware results and the full Task 7 matrix remain open.
+- AWS MCP `aws-mcp` needs normal OAuth reauthentication. Access to
+  `us-east-1.oauth.signin.aws` was declined; the CLI flow was stopped. The owner is checking
+  Settings → Browser before a fresh same-domain authorization request and will perform login/MFA.
+  No alternate access path, browser-policy change or AWS permission addition was performed.
+  After authentication, use a read-only MCP call to prove recovery. OIDC dev validation remained usable.

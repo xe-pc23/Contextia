@@ -20,8 +20,9 @@ Proof: [Simulator initial screen](hackathon/evidence/task5-simulator-start.png).
 The Task 7 Debug native rebuild also succeeded and installed on the iPhone 17 Simulator,
 including Sensors, SQLite, Notifications and TaskManager. Native SDK resolution/compilation is
 verified. Configured foreground Simulator flows now have the evidence below; OS notification
-display and physical sensor/background behavior remain open. Both native projects prebuild successfully. Android is configured
-with minSdk 26 for Health Connect; APK compilation awaits SDK installation/license consent.
+display and physical sensor/background behavior remain open. Both native projects prebuild successfully.
+After explicit owner SDK license/install approval, the Android arm64 Debug APK compiled successfully
+on 2026-10-03. Android runtime and hardware capabilities remain open; compilation is separate evidence.
 
 The implementation has opportunistic location callbacks and durable local recommendation-ID claims.
 Headless authentication is read-only: an expired access token skips evaluation until the app refreshes
@@ -85,6 +86,34 @@ For each row, record `passed`, `failed` with a reproducible symptom, or `not ava
 An unavailable sensor stays unknown; do not treat it as zero steps. Background callbacks depend
 on the OS and do not promise a fixed interval. Provider acceptance does not prove notification display.
 Hardware rows remain open until the member returns the device, OS, commit and observed result.
+
+## Android native compilation — 2026-10-03 07:46 JST
+
+Source: `6c5b165f6aa4105ca65eb3fbd16aae0259d48fcd`, stage `dev`. Generated native files are
+ignored; no vendor source was patched. The owner approved installation/license acceptance before
+the SDK packages were installed. Temurin 21.0.11 on macOS arm64, SDK/compile/target 36,
+Build Tools 36.0.0, NDK 27.1.12297006 and CMake 3.30.5 produced the APK with
+`:app:assembleDebug -PreactNativeArchitectures=arm64-v8a --max-workers=2` (CMake override 3.30.5).
+Gradle reported `BUILD SUCCESSFUL in 8m 8s`, 346 executed tasks.
+
+Artifact: `apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk`, 68,022,091 bytes.
+SHA-256: `4467cdd609e0ac3b033502ad05a4b18a6db3d52106036e4ee40480682f97195f`.
+The artifact and local build log `/tmp/contextia-android-debug.log` are not committed.
+
+An independent read-only APK inspection with `aapt2` and `apksigner` verified:
+
+- `com.contextia.dev`, version `0.0.1`/code 1, minSdk 26, target/compileSdk 36 and
+  `contextia-dev` callback scheme.
+- Health Connect steps/background-read permission, package visibility and permission rationale/usage
+  entry points; foreground/background location, Calendar and notification permissions; unexported
+  foreground location service with location service type.
+- SecureStore cloud-backup/device-transfer exclusions and only `arm64-v8a` native libraries.
+- Valid APK v2 signature using `CN=Android Debug`.
+
+The Debug APK is debuggable, allows development cleartext traffic and has no embedded JavaScript
+bundle. It needs reachable Metro and is not a standalone, universally compatible or production-signed
+artifact. No emulator or Android device was installed/launched for this check. Health Connect runtime,
+permission UI, background grant, native auth, sensors and OS notification delivery are still unverified.
 
 ## Foreground Simulator evidence — 2026-10-03 07:05–07:30 JST
 
