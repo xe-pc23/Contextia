@@ -18,7 +18,7 @@ This directory is the implementation contract for Contextia.
 12. [BACKLOG.md](./BACKLOG.md) — explicitly deferred scope.
 13. [PHASED_IMPLEMENTATION.md](./PHASED_IMPLEMENTATION.md) — five-person ownership, phase gates, and AI work orders.
 14. [hackathon/TEAM_BOARD.md](./hackathon/TEAM_BOARD.md) — historical five-person task board; verify current Git branches before using it.
-15. [Codex Cloud solo delivery plan](./superpowers/plans/2026-10-02-codex-cloud-solo-delivery.md) — current single-owner setup, integration order, and Phase 1–4 gates.
+15. [Local solo delivery plan](./superpowers/plans/2026-10-02-local-solo-delivery.md) — current single-owner setup, integration order, and Phase 1–4 gates.
 
 Repository-level agent instructions live at [`../AGENTS.md`](../AGENTS.md).
 

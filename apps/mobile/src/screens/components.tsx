@@ -80,6 +80,10 @@ export function RecommendationCards({ items, timezone }: { items: readonly ApiRe
         <Text style={styles.body}>移動時間: {Math.ceil(item.route.durationMinutes)} 分{item.route.transfers === undefined ? '' : ` / 乗換 ${item.route.transfers} 回`}</Text>
         {item.route.departAt ? <Text style={styles.note}>出発: {formatTime(item.route.departAt, timezone)}</Text> : null}
         {item.route.arriveAt ? <Text style={styles.note}>到着: {formatTime(item.route.arriveAt, timezone)}</Text> : null}
+        {item.route.attributions?.map((attribution, index) => <View key={`${attribution.text}-${index}`}>
+          <Text style={styles.note}>{attribution.text}</Text>
+          {attribution.url ? <Button title="提供元を開く" onPress={() => void open(item.id, attribution.url!)} /> : null}
+        </View>)}
       </> : null}
       {url ? <Button title={item.action.type === 'MAP' ? '地図を開く' : item.action.type === 'TRANSIT' ? '移動経路を開く' : 'Web サイトを開く'} onPress={() => void open(item.id, url)} /> : null}
       {failedAction === item.id ? <Text style={styles.error}>リンクを開けませんでした。</Text> : null}

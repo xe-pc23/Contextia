@@ -12,6 +12,8 @@ Do not store secrets, OAuth tokens, AWS credentials, Cognito passwords, or full 
 
 ## Evidence checklist
 
+Local delivery on 2026-10-02: Phase 2 Web `a4d32fc`, Mobile `8da1e2e`, and MCP evidence `a777e16` were merged into `codex/local-delivery`. The original checkout's `.DS_Store` and `error.log` were preserved. Codex AWS MCP `GetCallerIdentity` succeeded for the approved account; its `DescribeStacks` was denied by the MCP identity. The local `hackathon-dev` CDK template diff succeeded without modifying resources. The dev bootstrap lookup role could not be assumed; deployment/bootstrap remains unverified. No deployment was performed in this step.
+
 - [x] Codex connected to AWS MCP Server
 - [ ] Claude Code connected to AWS MCP Server
 - [x] agent performed a real AWS inspect/deploy/debug operation

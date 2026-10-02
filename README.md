@@ -9,11 +9,11 @@ A separate Web **Scenario Console** lets judges choose arbitrary location/time/s
 ## Status
 
 Specification: **v1.1 candidate**  
-Implementation on this branch: **Phase 2 A/B/D code integrated; live phase gates remain open**
+Implementation on this branch: **Phase 2 A/B/C/D/E code integrated; local delivery in progress; live gates remain open**
 
 Public production URL: `TBD after deployment`
 
-This branch contains the contracts, five detectors, provider adapters, API evaluation paths, Web Scenario Console, Expo foreground baseline, dev/prod CDK, and GitHub validation/deployment workflows. The Phase 2 Web and Mobile branches still need integration. No AWS deployment or public URL has been verified. For the single-owner Codex Cloud setup, integration order, and remaining gates, see the [Cloud delivery plan](docs/superpowers/plans/2026-10-02-codex-cloud-solo-delivery.md). The [Phase 0 handoff](docs/hackathon/PHASE0_HANDOFF.md) and [Phase 1 assignments](docs/hackathon/PHASE1_ASSIGNMENTS.md) are historical records.
+This branch contains the contracts, five detectors, provider adapters, API evaluation paths, five-preset Web Scenario Console, Expo foreground application, dev/prod CDK, and GitHub validation/deployment workflows. No AWS deployment or public URL has been verified. Follow the [local delivery plan](docs/superpowers/plans/2026-10-02-local-solo-delivery.md) for the single-owner execution order and remaining gates. The [Phase 0 handoff](docs/hackathon/PHASE0_HANDOFF.md) and [Phase 1 assignments](docs/hackathon/PHASE1_ASSIGNMENTS.md) are historical records.
 
 ```bash
 pnpm install --frozen-lockfile
