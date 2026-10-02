@@ -1,8 +1,8 @@
 import { ScenarioContextInputSchema } from '@contextia/contracts';
 import type { ScenarioContextInput, ScenarioId } from '@contextia/contracts';
-import { getScenarioInput } from '@contextia/test-fixtures';
+import presetInputs from './presetInputs.json';
 import { DEFAULT_TIMEZONE } from './form.js';
-import { formatInstantInZone } from './time.js';
+import { formatInstantInZone, isoToZonedWallTime, zonedWallTimeToIso } from './time.js';
 
 export const DEFAULT_PRESET_ID: ScenarioId = 'step-goal';
 export const CONSOLE_PRESETS: readonly { readonly id: ScenarioId; readonly label: string; readonly description: string }[] = [
@@ -13,18 +13,22 @@ export const CONSOLE_PRESETS: readonly { readonly id: ScenarioId; readonly label
   { id: 'early-arrival', label: '目的地へ早く到着', description: '目的地の近くで、予定開始までに収まる立ち寄りを考えます。' }
 ];
 
-/** Loads only fixture inputs, preserving event offsets relative to the current minute. */
+/** Loads input-only presets on today's local date at their fixed scenario time. */
 export function createPresetInput(id: ScenarioId, now: Date): ScenarioContextInput {
-  const template = getScenarioInput(id);
+  const template = ScenarioContextInputSchema.parse(presetInputs[id]);
   const timezone = template.preferencesOverride?.timezone ?? DEFAULT_TIMEZONE;
-  const minute = Math.floor(now.getTime() / 60_000) * 60_000;
-  const shiftMs = minute - Date.parse(template.scenarioTime ?? template.capturedAt);
+  const templateAt = template.scenarioTime ?? template.capturedAt;
+  const today = formatInstantInZone(now.getTime(), timezone);
+  const wallTime = isoToZonedWallTime(templateAt, timezone);
+  if (today === null || wallTime === null) throw new RangeError('Invalid preset clock or timestamp');
+  const at = zonedWallTimeToIso(`${today.slice(0, 10)}T${wallTime.slice(11)}`, timezone);
+  if (at === null) throw new RangeError('Invalid preset clock or timestamp');
+  const shiftMs = Date.parse(at) - Date.parse(templateAt);
   const shift = (timestamp: string): string => {
     const shifted = formatInstantInZone(Date.parse(timestamp) + shiftMs, timezone);
     if (shifted === null) throw new RangeError('Invalid preset clock or timestamp');
     return shifted;
   };
-  const at = shift(template.scenarioTime ?? template.capturedAt);
   return ScenarioContextInputSchema.parse({
     ...template,
     capturedAt: at,

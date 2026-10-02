@@ -64,7 +64,7 @@ export function App({ access, now = systemNow }: { access: EvaluationAccess; now
                 <span className="preset-description">{preset.description}</span>
               </button>
             ))}
-            <p className="hint">読み込み時の現在時刻を基準に、予定との時間差を保って入力欄を埋めます。入力は自由に変更できます。結果は「シナリオを実行」で毎回APIに評価を依頼します。</p>
+            <p className="hint">今日の日付と各プリセットの固定時刻を使い、予定との時間差を保って入力欄を埋めます。入力は自由に変更できます。「シナリオを実行」は入力欄の時刻で毎回APIに評価を依頼します。</p>
           </div>
           <ClockEditor form={form} errors={errors} dispatch={dispatch} />
           <StepsEditor form={form} errors={errors} dispatch={dispatch} />

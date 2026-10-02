@@ -20,7 +20,7 @@ Its delivery policy is `preview`: the evaluation/providers/Bedrock path is real,
 - Implemented in `apps/web`:
   - editors for coordinates (with Tokyo/Osaka Station shortcuts), scenario time with an IANA timezone, steps and goal, multiple calendar events, interests and notification preference overrides;
   - all five input presets (`upcoming-transit`, `step-goal`, `free-time`, `weather-adaptation`, `early-arrival`);
-  - preset timestamps anchored to the load-time current minute, preserving calendar offsets and durations;
+  - input-only preset data, with dates anchored to today in the preset timezone and fixed daytime scenario times; calendar offsets and durations are preserved;
   - immediate per-field validation against the shared contract, with a view of the exact request to be sent;
   - a schema-validating API client;
   - the result panel: up to 3 cards, used signals, all six provider status values, explicit `wouldSuppress` and guard codes, and a closed sent-context toggle;
@@ -32,7 +32,7 @@ Its delivery policy is `preview`: the evaluation/providers/Bedrock path is real,
 
   Until then the Console shows "未接続" and keeps Run disabled.
 - **Phase 1-B remains unfinished and is not merged into the C worktree.** Input editing and Web tests can run independently, but live Places/Weather/Bedrock/persistence, all five detector/provider paths, and repeated-preview notification-counter checks remain integration work after B/A/D deliver. These checks have not been run; five visible preset controls do not prove backend completion.
-- The context toggle shows the exact shared-schema-validated request. A separately backend-normalized context is not part of the current response contract. Details: `apps/web/README.md`.
+- The context toggle shows the exact shared-schema-validated request. **SPEC FR-020's backend-normalized context toggle remains incomplete**: that context is not part of the current response contract. A/D must define and return the normalized context before C can display it. Details: `apps/web/README.md`.
 
 ## 2. Judge flow
 
@@ -109,15 +109,17 @@ API key:
 
 ## 5. Presets
 
-Presets only fill input forms. They never return precomputed recommendation results.
+Presets only fill input forms. They never return precomputed recommendation results. The Web bundle contains input-only snapshots, checked against the canonical fixtures in tests; mock provider responses are excluded.
+
+Each load uses today's date in `Asia/Tokyo` and the fixed scenario times below. It preserves the time between the scenario and its events, including event duration. Run submits the displayed scenario time, including manual edits, so leaving the page open does not advance the simulated timeline. Reload a preset to move it to today's date again.
 
 ### Preset A — Upcoming event + transit
-Example:
-- current: Tokyo urban point
-- time: 14:10
-- next event: 16:00 at another reachable station
-- steps: 4,000
-- interests: none required
+- ID: `upcoming-transit`
+- current: Tokyo urban point (35.658581, 139.745433)
+- time: 15:10 JST
+- next event: 16:00–17:00 at Tokyo Station (50 minutes until start)
+- steps: 3,000; goal: 10,000
+- interests: cafe/park
 
 Expected demonstration:
 - route/transit provider used
@@ -128,9 +130,11 @@ What judge learns:
 "Calendar + GPS + real transit data can create a proactive leave-soon recommendation."
 
 ### Preset B — Step goal + rest
+- ID: `step-goal`
+- time: 14:10 JST
 - steps: 10,432
 - goal: 10,000
-- current position: dense area with POIs
+- current position: Tokyo Station (35.681236, 139.767125)
 - no imminent event
 - interests: cafe/park
 
@@ -143,10 +147,12 @@ What judge learns:
 "Physical activity changes what nearby options are useful."
 
 ### Preset C — Free time
-- current time between events
-- next event 90–120 minutes away
-- current area with several POIs
-- interests: museum/cafe
+- ID: `free-time`
+- time: 14:10 JST
+- next event: 16:00–17:00 at Tokyo Station (110 minutes until start)
+- current: Tokyo Station (35.681236, 139.767125)
+- steps: 3,000; goal: 10,000
+- interests: cafe/park
 
 Expected:
 - gap calculation
@@ -157,9 +163,13 @@ What judge learns:
 "AI does not just search nearby; it considers available time."
 
 ### Preset D — Weather adaptation
-- current location
-- real weather that is relevant if possible
-- upcoming outdoor-ish context
+- ID: `weather-adaptation`
+- time: 14:30 JST
+- current: Tokyo Station (35.681236, 139.767125)
+- steps: 3,000; goal: 10,000
+- calendar: no events
+- interests: cafe/park
+- weather: supplied only by the real provider, when covered and relevant
 
 Because weather is real in v1, preset must not promise rain. The demo UI should support a location known to have current weather, but the recommendation only triggers if actual conditions justify it.
 
@@ -169,10 +179,12 @@ What judge learns:
 "External real-time context can change the recommendation."
 
 ### Preset E — Early arrival
-- current position near event destination
-- event sufficiently later
-- current time early
-- interests set
+- ID: `early-arrival`
+- current: Tokyo Station (35.681236, 139.767125)
+- time: 15:20 JST
+- next event: 16:00–17:00 at Tokyo Station (40 minutes until start)
+- steps: 3,000; goal: 10,000
+- interests: cafe/park
 
 Expected:
 - destination-area places

@@ -51,10 +51,10 @@ describe('Scenario Console shell', () => {
     expect(html).not.toContain('recommendation-card');
   });
 
-  it('initializes the editor at the injected current minute instead of a fixed fixture date', () => {
+  it('initializes the editor on the injected local date at the preset time', () => {
     const html = renderToStaticMarkup(<App access={{ status: 'unconnected', pending: [] }} now={() => new Date('2026-10-02T05:25:59.999Z')} />);
-    expect(html).toContain('value="2026-10-02T14:25"');
-    expect(html).toContain('送信値: 2026-10-02T14:25:00+09:00');
+    expect(html).toContain('value="2026-10-02T14:10"');
+    expect(html).toContain('送信値: 2026-10-02T14:10:00+09:00');
     expect(html).not.toContain('2026-10-01T14:10');
   });
 });
