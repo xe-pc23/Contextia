@@ -130,6 +130,12 @@ describe.each(stages)('%s core stack', (stage) => {
   });
 
   it('deploys immutable assets and an uncached entry point with generated runtime config', () => {
+    template.resourceCountIs('AWS::Lambda::LayerVersion', 2);
+    for (const deployment of ['assets', 'entry']) {
+      template.hasResourceProperties('AWS::Lambda::LayerVersion', {
+        LayerName: `contextia-${stage}-core-web-${deployment}-aws-cli`
+      });
+    }
     template.resourceCountIs('Custom::CDKBucketDeployment', 2);
     template.hasResourceProperties('Custom::CDKBucketDeployment', { Prune: false, SystemMetadata: { 'cache-control': 'public, max-age=31536000, immutable' } });
     template.hasResourceProperties('Custom::CDKBucketDeployment', {

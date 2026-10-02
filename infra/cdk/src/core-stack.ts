@@ -11,7 +11,7 @@ import { AccountRecovery, OAuthScope, UserPool, UserPoolClientIdentityProvider }
 import { AttributeType, BillingMode, Table } from 'aws-cdk-lib/aws-dynamodb';
 import { FederatedPrincipal, PolicyStatement, Role, ServicePrincipal } from 'aws-cdk-lib/aws-iam';
 import { CfnAPIKey } from 'aws-cdk-lib/aws-location';
-import { LoggingFormat, Runtime } from 'aws-cdk-lib/aws-lambda';
+import { CfnLayerVersion, LoggingFormat, Runtime } from 'aws-cdk-lib/aws-lambda';
 import { NodejsFunction, OutputFormat } from 'aws-cdk-lib/aws-lambda-nodejs';
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { BlockPublicAccess, Bucket, BucketEncryption, ObjectOwnership } from 'aws-cdk-lib/aws-s3';
@@ -266,6 +266,13 @@ export class ContextiaCoreStack extends Stack {
       distribution,
       distributionPaths: ['/', '/index.html', '/config.json']
     });
+    // BucketDeployment's layers otherwise use only the logical ID as their names.
+    // Name both helpers so the stage-scoped CloudFormation role can manage them.
+    for (const [deployment, name] of [[assets, 'assets'], [entry, 'entry']] as const) {
+      const layer = deployment.node.findChild('AwsCliLayer').node.defaultChild;
+      if (!(layer instanceof CfnLayerVersion)) throw new Error('BucketDeployment AWS CLI layer is missing');
+      layer.layerName = `${prefix}-core-web-${name}-aws-cli`;
+    }
     entry.node.addDependency(assets);
 
     new CfnOutput(this, 'Stage', { value: target.stage });
