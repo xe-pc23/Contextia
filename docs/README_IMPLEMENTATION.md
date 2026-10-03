@@ -1,6 +1,6 @@
 # AWS Hackathon Context-Aware Concierge — Implementation Blueprint
 
-> Status: **Specification freeze candidate v1.0**
+> Status: **Specification freeze candidate v1.1**
 >
 > Last verified: **2026-09-30**
 >
@@ -107,7 +107,7 @@ Pull Request
 merge to main
      |
      +--> full validation
-     +--> deploy PROD
+     +--> project owner starts deploy PROD
      +--> web smoke test
      +--> API smoke test
      +--> record deployment metadata

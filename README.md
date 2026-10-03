@@ -9,9 +9,30 @@ A separate Web **Scenario Console** lets judges choose arbitrary location/time/s
 ## Status
 
 Specification: **v1.1 candidate**  
-Implementation: **not started / bootstrap next**
+Implementation on this branch: **Web/API and native code integrated; dev deployed; hardware and production gates remain open**
+
+Public dev URL: [Scenario Console](https://d1grgebh7iqqmf.cloudfront.net/)
 
 Public production URL: `TBD after deployment`
+
+This branch contains the contracts, five detectors, provider adapters, authenticated API, five-preset Web Scenario Console, Expo foreground/background application, dev/prod CDK, and GitHub OIDC workflows. Dev `0e443f8` passed validation, deployment and mandatory authenticated smoke ([run](https://github.com/xe-pc23/Contextia/actions/runs/37057828984)): five previews, live step/transit cards, weather-fault degradation, ownership/idempotency, Mobile SRP, one client reservation with one quota increment, duplicate/cap guards and recent EMF metric coverage. Browser PKCE login, map selection/editing, live preview and logout worked; the corrected Japanese prose and selected-place signal were observed on screen. Physical-device capability results and production remain open. Follow the [local delivery plan](docs/superpowers/plans/2026-10-02-local-solo-delivery.md) for remaining gates. The [Phase 0 handoff](docs/hackathon/PHASE0_HANDOFF.md) and [Phase 1 assignments](docs/hackathon/PHASE1_ASSIGNMENTS.md) are historical records.
+
+```bash
+pnpm install --frozen-lockfile
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
+pnpm cdk:synth
+pnpm dev:api
+# In separate terminals:
+pnpm dev:web
+pnpm dev:mobile
+```
+
+Use Node.js 24.13.1 from `.node-version` (minimum 24.3.0, below 25) and pnpm 10.29.3. `pnpm dev:api` serves health at `http://127.0.0.1:3001/health`; `pnpm dev:web` opens the Web app at `http://127.0.0.1:5173`. Runtime authentication and live evaluation require deployed stage configuration. Mobile uses a development client; follow [its README](apps/mobile/README.md) for native setup.
+
+On 2026-10-03, the current mobile session-cleanup/log privacy slice passed all five verification commands with 1,289 tests / 80 files. The `79ff4cd` iOS Simulator development build compiled and installed. Native PKCE login, public simulated GPS, a neutral Calendar event, dev evaluation, owned detail/chat, preference readback and explicit sign-out were subsequently observed. Dev live smoke has observed Places/Weather/Bedrock, a scheduled transit card, owned chat, cross-user denial and preview quota invariants. Real iOS/Android capability results and production deployment remain open; see [mobile validation](docs/MOBILE_VALIDATION.md) and the [agent log](docs/hackathon/AGENT_LOG.md). Mobile JavaScript export does not verify APK/IPA compilation or native device behavior.
 
 ## Stack
 
@@ -67,6 +88,8 @@ The core contracts are:
 
 Coding agents must read [AGENTS.md](AGENTS.md) before making implementation changes.
 
+The [five-person phased implementation plan](docs/PHASED_IMPLEMENTATION.md) assigns file ownership and phase gates for the build.
+
 ## Core architecture
 
 ```text
@@ -111,7 +134,7 @@ feature branch
   -> deploy dev
   -> smoke test
   -> merge main
-  -> deploy prod
+  -> project owner starts prod deploy from validated main
   -> production smoke test
 ```
 

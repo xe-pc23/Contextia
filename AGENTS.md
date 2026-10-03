@@ -13,6 +13,18 @@ Optimize for:
 
 Do not expand product scope without an explicit human decision.
 
+## Current delivery mode (2026-10-02)
+
+One human owner will drive implementation locally with Codex. The primary agent
+implements and integrates; subagents review completed slices. The A–E lane
+assignments in older planning documents describe responsibility boundaries for
+the former team workflow; they do not restrict which repository paths this local
+task may edit. Preserve the product specification, dependency direction, phase
+gates, tests, and owner-controlled production release. Start work from a
+GitHub branch containing the latest integrated implementation, not from `main`
+until that implementation has been validated and merged. See
+`docs/superpowers/plans/2026-10-02-local-solo-delivery.md`.
+
 ## 1. Read these first
 
 Before editing implementation code, read:

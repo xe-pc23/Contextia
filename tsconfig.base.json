@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "verbatimModuleSyntax": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "baseUrl": ".",
+    "paths": {
+      "@contextia/contracts": ["packages/contracts/src/index.ts"],
+      "@contextia/domain": ["packages/domain/src/index.ts"],
+      "@contextia/providers": ["packages/providers/src/index.ts"],
+      "@contextia/config": ["packages/config/src/index.ts"],
+      "@contextia/test-fixtures": ["packages/test-fixtures/src/index.ts"]
+    }
+  }
+}

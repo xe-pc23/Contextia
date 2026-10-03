@@ -10,12 +10,15 @@ This directory is the implementation contract for Contextia.
 4. [API.md](./API.md) — HTTP contracts and shared enums/limits.
 5. [DATA_MODEL.md](./DATA_MODEL.md) — DynamoDB access patterns and retention.
 6. [TEST_STRATEGY.md](./TEST_STRATEGY.md) — automated/live test requirements.
-7. [CI_CD.md](./CI_CD.md) — PR→dev / main→prod pipeline.
+7. [CI_CD.md](./CI_CD.md) — PR→dev / validated main→owner-triggered prod pipeline.
 8. [DEMO.md](./DEMO.md) — judge Scenario Console and demo narrative.
 9. [DECISIONS.md](./DECISIONS.md) — consolidated decisions.
 10. [REVIEW_RESOLUTION.md](./REVIEW_RESOLUTION.md) — v1.0 review findings and v1.1 resolution.
 11. [REFERENCES.md](./REFERENCES.md) — verified official references.
 12. [BACKLOG.md](./BACKLOG.md) — explicitly deferred scope.
+13. [PHASED_IMPLEMENTATION.md](./PHASED_IMPLEMENTATION.md) — five-person ownership, phase gates, and AI work orders.
+14. [hackathon/TEAM_BOARD.md](./hackathon/TEAM_BOARD.md) — historical five-person task board; verify current Git branches before using it.
+15. [Local solo delivery plan](./superpowers/plans/2026-10-02-local-solo-delivery.md) — current single-owner setup, integration order, and Phase 1–4 gates.
 
 Repository-level agent instructions live at [`../AGENTS.md`](../AGENTS.md).
 

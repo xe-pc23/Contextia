@@ -15,6 +15,25 @@ The Console injects synthetic device context into the **same production backend*
 
 Its delivery policy is `preview`: the evaluation/providers/Bedrock path is real, but the judge does not consume notification quota or get blocked from seeing an answer because another judge ran the same scenario seconds earlier.
 
+### 1.1 Console status (local integration, 2026-10-03)
+
+- Implemented in `apps/web`:
+  - editors for coordinates (with Tokyo/Osaka Station shortcuts), scenario time with an IANA timezone, steps and goal, multiple calendar events, interests and notification preference overrides;
+  - all five input presets (`upcoming-transit`, `step-goal`, `free-time`, `weather-adaptation`, `early-arrival`);
+  - input-only preset data, with dates anchored to today in the preset timezone and fixed daytime scenario times; calendar offsets and durations are preserved;
+  - immediate per-field validation against the shared contract, with a view of the exact request to be sent;
+  - a schema-validating API client;
+  - the result panel: up to 3 cards, used signals, all six provider status values, explicit `wouldSuppress` and guard codes, and a closed sent-context toggle;
+  - a notice when inputs have changed since submission, so the last result is identified as belonging to the submitted context;
+  - runtime configuration, Cognito authorization-code/PKCE login/logout, profile initialization and MapLibre/Amazon Location Maps V2 selection;
+  - the backend-normalized preview context toggle, alongside the exact sent request.
+- Every run is fixed to `mode="simulation"` / `deliveryMode="preview"`. There is no mode switch.
+- Dev is available at https://d1grgebh7iqqmf.cloudfront.net/. OIDC run [37046597403](https://github.com/xe-pc23/Contextia/actions/runs/37046597403) at `ba15f30` passed authenticated five-preset smoke, preview persistence/quota invariants, a live step recommendation, an actual transit card and chat ownership checks. Weather-adaptation's model call timed out and displayed degradation.
+- Earlier successful dev `0e443f828d84441ac032c045a47e40bfdb5437c8` passed [OIDC run 37057828984](https://github.com/xe-pc23/Contextia/actions/runs/37057828984): all five previews, live step/transit cards, explicit weather-unavailable fault with valid step recommendation, ownership/chat/idempotency/snapshot/quota invariants, Mobile SRP, one client reservation and quota increment, replay/duplicate/cap suppression, and recent EMF metric records. Some Routes calls were explicitly degraded; all five live inputs do not prove each named trigger will always be selected.
+- Current dev head `6c5b165` (mobile/session and smoke changes `6ecc2e7`) passed [OIDC run 37073130086](https://github.com/xe-pc23/Contextia/actions/runs/37073130086), including the five validation commands, exact-SHA deployment, mandatory authenticated gates and bounded correlated request-log privacy checks. Both owned chat 200/400 records were checked against strict fields; specified synthetic markers and three transient tokens were absent in the fully fetched bounded window. This is bounded evidence, not an exhaustive privacy guarantee. Existing daily caps were preserved; the uncapped positive reservation proof remains the separate run above. The arm64 Android Debug APK also compiled and passed independent manifest/signature inspection; [native validation](MOBILE_VALIDATION.md) records its Metro dependency and unverified runtime rows.
+- Actual dev browser PKCE callback, live preview, map clicking/coordinate editing and logout worked. [Map proof](hackathon/evidence/dev-map-53dfd72.jpg), [Japanese preview](hackathon/evidence/dev-preview-0e443f8.jpg) and [signal/provider diagnostics](hackathon/evidence/dev-diagnostics-0e443f8.jpg) contain public test data and no credentials. Natural Japanese prose and selected Places usage were observed after the fixes; this is observed output quality, not a guarantee of every future model response.
+- Earlier `79ff4cd`/`53dfd72` failed live gates are preserved in the agent log. The successful run used the smoke identity without concurrent manual evaluations. Mobile SRP and synthetic proactive reservation are API/script evidence, not native sensor or OS notification proof. Simulator PKCE login, public simulated GPS, a neutral Calendar event, dev evaluation, owned detail/chat, preference save/readback and explicit logout passed; [dated native evidence](MOBILE_VALIDATION.md) records their limits. Physical-device capability results, refresh/denial, OS notifications, SNS delivery and production release remain open. The [local delivery plan](superpowers/plans/2026-10-02-local-solo-delivery.md) records these gates.
+
 ## 2. Judge flow
 
 ```text
@@ -22,7 +41,7 @@ Open public URL
   ↓
 Sign in with shared demo account
   ↓
-Console selects preview delivery mode
+Console runs in fixed preview delivery mode
   ↓
 Choose preset or create custom scenario
   ↓
@@ -80,7 +99,7 @@ Responsive mobile browser support is nice but secondary.
 - Lat/lon fields update map marker.
 - Optional place search/geocoder may be added if cheap.
 - Display current coordinates visibly.
-- "Use Tokyo Station", "Use Osaka Station" shortcuts may exist as demo presets, but raw arbitrary coordinates remain possible.
+- "Use Tokyo Station", "Use Osaka Station" shortcuts may exist as demo presets, but raw arbitrary coordinates remain possible. Implemented shortcuts: Tokyo Station (35.681236, 139.767125) and Osaka Station (34.702485, 135.495951).
 
 API key:
 - map-only or minimum required actions,
@@ -90,15 +109,17 @@ API key:
 
 ## 5. Presets
 
-Presets only fill input forms. They never return precomputed recommendation results.
+Presets only fill input forms. They never return precomputed recommendation results. The Web bundle contains input-only snapshots, checked against the canonical fixtures in tests; mock provider responses are excluded.
+
+Each load uses today's date in `Asia/Tokyo` and the fixed scenario times below. It preserves the time between the scenario and its events, including event duration. Run submits the displayed scenario time, including manual edits, so leaving the page open does not advance the simulated timeline. Reload a preset to move it to today's date again.
 
 ### Preset A — Upcoming event + transit
-Example:
-- current: Tokyo urban point
-- time: 14:10
-- next event: 16:00 at another reachable station
-- steps: 4,000
-- interests: none required
+- ID: `upcoming-transit`
+- current: Tokyo urban point (35.658581, 139.745433)
+- time: 15:10 JST
+- next event: 16:00–17:00 at Tokyo Station (50 minutes until start)
+- steps: 3,000; goal: 10,000
+- interests: cafe/park
 
 Expected demonstration:
 - route/transit provider used
@@ -109,9 +130,11 @@ What judge learns:
 "Calendar + GPS + real transit data can create a proactive leave-soon recommendation."
 
 ### Preset B — Step goal + rest
+- ID: `step-goal`
+- time: 14:10 JST
 - steps: 10,432
 - goal: 10,000
-- current position: dense area with POIs
+- current position: Tokyo Station (35.681236, 139.767125)
 - no imminent event
 - interests: cafe/park
 
@@ -124,10 +147,12 @@ What judge learns:
 "Physical activity changes what nearby options are useful."
 
 ### Preset C — Free time
-- current time between events
-- next event 90–120 minutes away
-- current area with several POIs
-- interests: museum/cafe
+- ID: `free-time`
+- time: 14:10 JST
+- next event: 16:00–17:00 at Tokyo Station (110 minutes until start)
+- current: Tokyo Station (35.681236, 139.767125)
+- steps: 3,000; goal: 10,000
+- interests: cafe/park
 
 Expected:
 - gap calculation
@@ -138,9 +163,13 @@ What judge learns:
 "AI does not just search nearby; it considers available time."
 
 ### Preset D — Weather adaptation
-- current location
-- real weather that is relevant if possible
-- upcoming outdoor-ish context
+- ID: `weather-adaptation`
+- time: 14:30 JST
+- current: Tokyo Station (35.681236, 139.767125)
+- steps: 3,000; goal: 10,000
+- calendar: no events
+- interests: cafe/park
+- weather: supplied only by the real provider, when covered and relevant
 
 Because weather is real in v1, preset must not promise rain. The demo UI should support a location known to have current weather, but the recommendation only triggers if actual conditions justify it.
 
@@ -150,10 +179,12 @@ What judge learns:
 "External real-time context can change the recommendation."
 
 ### Preset E — Early arrival
-- current position near event destination
-- event sufficiently later
-- current time early
-- interests set
+- ID: `early-arrival`
+- current: Tokyo Station (35.681236, 139.767125)
+- time: 15:20 JST
+- next event: 16:00–17:00 at Tokyo Station (40 minutes until start)
+- steps: 3,000; goal: 10,000
+- interests: cafe/park
 
 Expected:
 - destination-area places
@@ -169,6 +200,7 @@ Judge can change all supported synthetic device inputs:
 - map location
 - coordinates
 - time
+- timezone (IANA)
 - steps
 - goal
 - calendar list
@@ -176,6 +208,8 @@ Judge can change all supported synthetic device inputs:
 - notification preference override
 
 The Console should show validation immediately.
+
+Time and calendar inputs are wall-clock times in the selected IANA timezone and are sent with that zone's offset. A blank step count is sent as unknown (`null`) and makes no goal claim.
 
 ## 7. "Why did the system do this?" panel
 
@@ -206,6 +240,12 @@ Decision summary
 ## 8. Provider degradation demo
 
 Add a developer/demo toggle only in `dev` to force one provider failure.
+
+The dev Console now offers `通常`, weather unavailable, or routes unavailable. It sends a closed
+`X-Contextia-Demo-Fault` selector to the same evaluation API. The backend accepts it only from the
+authenticated dev Web client in preview mode and rejects it in prod. An unneeded provider stays
+`not_requested`; changing the selector does not add candidates or bypass guards. After running,
+the result identifies which failure was selected. The mandatory dev smoke at `0e443f8` verified weather unavailable/null alongside a valid step recommendation and unchanged preview quota; the routes selector has unit proof and still needs its own live demo evidence.
 
 Do not expose a production toggle that can call arbitrary upstream endpoints.
 

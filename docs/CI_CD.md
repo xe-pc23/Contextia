@@ -5,8 +5,8 @@
 Create a simple, auditable pipeline:
 
 ```text
-PR -> validate -> deploy DEV -> smoke
-main -> validate -> deploy PROD -> smoke
+PR -> validate -> owner starts DEV deployment -> smoke
+main -> validate -> human-triggered PROD deployment -> smoke
 ```
 
 No staging environment.
@@ -27,7 +27,7 @@ Purpose:
 - judge evaluation,
 - stable demo.
 
-Only `main` deploys it.
+Only a release from validated `main` deploys it. The project owner starts the production job.
 
 ## 3. Branch workflow
 
@@ -49,7 +49,7 @@ PR checks
 main
    |
    +-- validation
-   +-- PROD deployment
+   +-- project owner starts PROD deployment
    +-- prod smoke
 ```
 
@@ -64,9 +64,22 @@ Store environment-specific non-AWS-secret configuration such as:
 - public API URLs after bootstrap if not read from CDK outputs
 - test configuration
 
-For prod, optionally enable GitHub environment protection/reviewer if it does not slow the hackathon too much. The selected behavior is automatic `main -> prod`, so manual approval is optional, not required.
+Production deployment is a manual GitHub Actions `workflow_dispatch` from `main`, started by the project owner after validation. If available for the repository, add a required reviewer to the `prod` environment as an additional gate.
 
-## 5. AWS authentication
+## 5. AWS account, Region, and local profiles
+
+Both stages use AWS account `634512763705` in `ap-northeast-1`. CDK creates separate `contextia-dev-*` and `contextia-prod-*` stacks/resources, including separate application data and auth resources. A different profile name alone does not isolate resources or IAM permissions.
+
+| Stage | Local AWS CLI profile | Local use |
+|---|---|---|
+| `dev` | `hackathon-dev` | Routine implementation, verification, `cdk synth`, `cdk diff` for the dev stack, and dev deployment |
+| `prod` | `hackathon-prod` | Project-owner pre-release prod diff, production deployment, and production incident investigation only |
+
+Before the first deployment, verify each profile's account with `aws sts get-caller-identity --profile <profile> --query Account --output text` and Region with `aws configure get region --profile <profile>`. The expected values above were verified on 2026-10-01. Do not commit credentials or copy a local profile to teammates.
+
+The CDK app must require an explicit stage, use separate stack IDs/resource names, and reject an unexpected account or Region before deployment. The dev diff command must select only dev stacks; avoid `cdk diff --all` for routine changes. Before starting a production release, the project owner reviews the prod-only diff locally with `hackathon-prod`. Local named profiles do not exist in GitHub Actions: workflows assume the stage-specific OIDC role below, so package scripts must not hardcode local profile names.
+
+## 6. AWS authentication
 
 Use GitHub OIDC.
 
@@ -82,7 +95,7 @@ Prod trust should only permit the expected main/environment subject.
 
 Do not store long-lived AWS keys.
 
-## 6. Permissions
+## 7. Permissions
 
 Prefer CDK bootstrap deployment roles where possible.
 
@@ -92,7 +105,7 @@ Avoid a permanent human/agent `AdministratorAccess` policy merely for convenienc
 
 During initial bootstrap a human may require broader rights, but runtime/deploy roles should be scoped.
 
-## 7. Workflow commands
+## 8. Workflow commands
 
 Canonical package scripts should exist:
 
@@ -104,6 +117,7 @@ Canonical package scripts should exist:
     "test": "...",
     "build": "...",
     "cdk:synth": "...",
+    "cdk:diff:dev": "...",
     "deploy:dev": "...",
     "deploy:prod": "...",
     "smoke:dev": "...",
@@ -112,7 +126,7 @@ Canonical package scripts should exist:
 }
 ```
 
-## 8. PR workflow outline
+## 9. PR workflow outline
 
 ```yaml
 name: pr
@@ -152,14 +166,13 @@ jobs:
 
 Exact action versions must be pinned/current when implemented.
 
-## 9. Main workflow outline
+## 10. Production workflow outline
 
 ```yaml
 name: prod
 
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -171,6 +184,7 @@ concurrency:
 
 jobs:
   validate:
+    # Verify the selected ref is main, then run all required checks.
     ...
 
   deploy-prod:
@@ -178,11 +192,15 @@ jobs:
     environment: prod
     steps:
       - assume prod AWS role via OIDC
+      - confirm AWS account 634512763705 and Region ap-northeast-1
+      - record the prod-only CDK diff
       - pnpm deploy:prod
       - pnpm smoke:prod
 ```
 
-## 10. CDK outputs
+Reject a dispatch from any ref other than `main`. A separate push-to-main workflow may run validation, but must not deploy production automatically.
+
+## 11. CDK outputs
 
 Output at least:
 - API base URL
@@ -195,7 +213,7 @@ Output at least:
 
 Prefer generating client runtime config from outputs rather than manually copying values.
 
-## 11. Static Web deployment
+## 12. Static Web deployment
 
 Two acceptable implementations:
 
@@ -217,11 +235,103 @@ For the hackathon either is valid. Choose one and keep it consistent.
 
 Recommended initial: **BucketDeployment** for fewer workflow steps.
 
-## 12. Rollback
+Implemented in Phase 2-D: BucketDeployment inside `contextia-{stage}-core`; credential-free `validate.yml` runs lint, typecheck, tests, build, then dev/prod synth. `deploy.yml` is owner-triggered, repeats validation/build at the same SHA, assumes the selected OIDC role, deploys one stack, and runs public smoke. All external actions use verified commit SHAs. The GitHub credential used to publish this branch must allow workflow changes; the existence of these files does not prove a successful Actions run or AWS deployment.
+
+### Owner bootstrap and parameters
+
+Before the first deployment, the owner must create the account's GitHub OIDC provider (`token.actions.githubusercontent.com`, audience `sts.amazonaws.com`) and protect the GitHub environments. **Prod environment deployment branches must allow only `main`**; require owner review where available. GitHub's environment OIDC subject omits the branch, so this environment setting is essential in addition to the workflow and script main checks. The repository OIDC API confirmed `use_immutable_subject=true` and `sub_claim_prefix=repo:xe-pc23@208585459/Contextia@1395735696` on 2026-10-02. Each CDK role uses StringEquals for exactly this prefix plus `:environment:dev` or `:environment:prod`. Dev no longer trusts feature-branch subjects. See [GitHub's AWS OIDC guidance](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-aws).
+
+The workflow's credential-free `authorize` job fails if prod is requested outside
+main or by anyone other than the repository owner. Deploy requires both
+authorization and validation, so an invalid dispatch is visibly failed rather
+than reported as a successful skipped deployment.
+
+Core stacks now use separate CDK bootstrap qualifiers: `ctiadev` and `ctiaprod`. The owner bootstraps both in `634512763705/ap-northeast-1` with stage-appropriate CloudFormation execution policies and inspects the change before deployment. Existing `hnb659fds` bootstrap resources are not reused or modified automatically. Each GitHub role can assume only its stage's CDK deploy/file-publishing roles and read that stage's core outputs. Initial core deployment is performed by the owner because it creates the GitHub roles themselves. No bootstrap or IAM change has been performed by D.
+
+Set these non-secret GitHub environment variables (or local shell variables for owner commands):
+
+| Variable | Purpose |
+|---|---|
+| `BEDROCK_MODEL_ID` | Enabled model or inference profile ID |
+| `BEDROCK_REGION` | Region for Converse, default `ap-northeast-1` |
+| `BEDROCK_MODEL_RESOURCES` | Comma-separated exact foundation-model/profile ARNs. Include required destination model ARNs for cross-region profiles. Wildcards rejected |
+| `BEDROCK_STRUCTURED_OUTPUT` | `true` (default) for native JSON Schema support; `false` for locally validated JSON on models without that capability. Both paths enforce Zod and supplied references |
+
+The current dev configuration uses `amazon.nova-lite-v1:0` in Tokyo with
+`BEDROCK_STRUCTURED_OUTPUT=false`. Anthropic access in this account returned the missing-use-case
+declaration error; Nova Lite accepted a schema-valid response without that owner prerequisite.
+Dev functional SHA `0e443f8` passed the extended authenticated gate in
+[run 37057828984](https://github.com/xe-pc23/Contextia/actions/runs/37057828984), including weather fault,
+Mobile SRP, one client reservation/quota increment, duplicate/cap suppression and recent EMF metric coverage.
+Run these checks without simultaneous manual evaluations on the dedicated smoke identity: its latest
+context fingerprint can be replaced by another evaluation. Naturally capped later runs verify cap/replay;
+the recorded uncapped positive run remains separate evidence. Never reset counters to produce a pass.
+The authenticated smoke rebases fixture times to a future Tokyo daytime window and uses a precise
+public Shibuya Station address for event destinations. It preserves each fixture's timing gaps and
+requires actual geocoding/transit results; it does not substitute estimated transit times.
+
+If the original upcoming preset is outside the detector's departure lead window, the smoke adds
+one public Tokyo Tower → Tokyo Station case with an event 40 minutes ahead. The provider still
+supplies the timetable; the gate requires a validated scheduled transit/intermodal card and unchanged
+preview delivery state. It does not count successful pedestrian routes as transit proof.
+
+Runtime emits bounded CloudWatch EMF metrics to stdout for HTTP/evaluation count and latency,
+actual provider calls, and Bedrock initial/fallback/repair attempts. Dimensions contain only stage,
+provider, operation and status. Tokens, user IDs, coordinates, context and recommendation text are absent.
+
+Remote delivery defaults to Expo via `EXPO_PUSH_ENDPOINT` (optional `EXPO_PUSH_ACCESS_TOKEN`).
+SNS remains disabled until stage-specific platform credentials/applications and the minimum verified
+IAM policy are available. The adapter accepts `SNS_IOS_APPLICATION_ARN` / `SNS_ANDROID_APPLICATION_ARN`
+and `REMOTE_PUSH_PROVIDER=sns`; current CDK intentionally grants no SNS actions while it is disabled.
+Native push credentials and actual provider/OS delivery remain separate hardware/owner gates.
+| `MAP_KEY_EXPIRE_TIME` | Future UTC timestamp, `YYYY-MM-DDTHH:MM:SSZ`. Rotate before expiry |
+
+`pnpm deploy:dev` / `pnpm deploy:prod` verify STS account and Region, require deploy parameters, and set `BUILD_ID` to the actual Git HEAD. A supplied build marker must equal HEAD. Prod accepts only a manual main workflow, or the owner's local main checkout. Review `pnpm cdk:diff:dev` / `pnpm cdk:diff:prod` first. No script hardcodes a local AWS profile. Synth stays credential-free and does not need parameter values.
+
+### Smoke commands
+
+After deployment, run `BUILD_ID=<deployed-sha> SMOKE_OUTPUTS_FILE=cdk.out/dev/outputs.json pnpm smoke:dev` (or prod). The output file is generated by deploy and ignored by Git. Alternatively supply `SMOKE_API_URL` and `SMOKE_WEB_URL`. Public smoke checks HTTPS web/config/JavaScript assets, matching stage/API/build SHA, health, and unauthenticated rejection on `/v1/me`.
+
+Dev defaults to the authenticated gate and fails if two distinct test-user tokens or protected dev test-user credentials are unavailable. The existing dev Web client enables `USER_PASSWORD_AUTH` for this automation; prod keeps authorization code/PKCE. The deploy workflow reads `SMOKE_USER_1_USERNAME`, `SMOKE_USER_1_PASSWORD`, `SMOKE_USER_2_USERNAME`, and `SMOKE_USER_2_PASSWORD` from the dev environment. `scripts/smoke-auth.ts` mints fresh access tokens directly in memory; no token is written to a workflow output or evidence artifact. New dedicated users receive a default preference profile only after a schema-valid `PROFILE_NOT_FOUND` response.
+
+Authenticated smoke now checks all five previews, same-key replay, fresh-key duplicate diagnostics, step-goal Places/Bedrock readiness, owned recommendation detail/chat, cross-user detail/chat denial, persisted context, and unchanged notification count/anchors. The GitHub dev role can read only `GetItem` on its stage table for these checks. Tokens obtained with PKCE can be supplied for an explicit prod authenticated check. `SMOKE_MODE=public` is a labeled public diagnostic and does not pass the authenticated dev gate. Native delivery remains a separate gate.
+
+The dev gate also runs the authenticated Web-only weather fault selector, requiring explicit unavailable
+weather and a valid step recommendation with unchanged preview delivery state. It uses USER_SRP_AUTH
+on the public Mobile client for the same dedicated user, verifies Web cannot submit real/proactive
+context, and exercises ordinary low-frequency preferences, persisted client reservation/quota,
+same-key replay, and fresh-key duplicate/daily-cap suppression before providers. Original preferences
+are restored; notification counters and anchors are never reset. An already capped user's run verifies
+suppression, while an uncapped run must produce exactly one reserved client delivery and count 1.
+This synthetic context proves API behavior, not sensor provenance or an OS notification.
+
+After smoke, the dev role can `logs:FilterLogEvents` only on `/aws/lambda/contextia-dev-api`.
+A bounded recent-log check requires matching EMF metric records for HTTP/evaluation/Places/model attempts
+and notify/silent decisions. It verifies emitted metric coverage; it does not verify live log redaction or materialized CloudWatch metric data.
+Model validation failures are counted at each rejected output, including successful repairs or a
+subsequent transport failure; terminal results do not double-count them. Decision counts represent
+successful evaluation responses, including idempotent replays, not delivered notifications.
+
+### Local bootstrap preparation
+
+The pinned CDK v32 bootstrap is adapted by `infra/cdk/src/bootstrap.ts`; `scripts/bootstrap.ts` writes an inspectable template and validates/applies it through the AWS SDK using the selected profile. It removes AdministratorAccess/read-all policies, Docker publishing, cross-account artifact permissions and refactoring. File assets are private; role assumption is limited to the corresponding local stage role and GitHub role. CloudFormation deployment targets only `contextia-{stage}-core` and its named change sets. Core execution uses service actions on stage resource names/tags. HTTP API child resources and untaggable CloudFront OAC require regional/account ARN patterns until resource IDs exist; these are documented bootstrap exceptions, not a claim of resistance to malicious template edits.
+
+```bash
+pnpm cdk:synth
+pnpm bootstrap:prepare:dev
+AWS_PROFILE=hackathon-dev AWS_REGION=ap-northeast-1 node --import tsx scripts/bootstrap.ts validate dev
+AWS_PROFILE=hackathon-dev AWS_REGION=ap-northeast-1 pnpm bootstrap:dev
+```
+
+The dev bootstrap owns the shared GitHub OIDC provider. `RetainExceptOnCreate` cleans it up if initial bootstrap creation rolls back, then retains it after successful creation. Prod uses that provider and its own `ctiaprod` assets/roles; its bootstrap apply requires main. Existing `CDKToolkit`/`hnb659fds` resources are preserved.
+
+2026-10-02 readiness: approved account/Region and local stage role confirmed through SDK; core/dev bootstrap/OIDC absent. GitHub environments were created: dev allows `codex/*`, `feature/*`, `main`; prod allows only `main` and requires owner review. MCP STS succeeded but its fixed principal could not read CFN/Bedrock/IAM; local SDK was used for role-bound inspection. CloudFormation ValidateTemplate passed for the generated bootstrap. This preparation is not a live application completion claim.
+
+## 13. Rollback
 
 Fast rollback:
 - revert merge on main,
-- pipeline redeploys previous code.
+- project owner triggers the production workflow for the validated revert commit.
 
 Keep each merge small.
 
@@ -229,7 +339,7 @@ For severe prod issue:
 - disable problematic recommendation feature via config/feature flag if one exists,
 - do not manually mutate many console resources.
 
-## 13. Smoke test requirements
+## 14. Smoke test requirements
 
 Dev/prod:
 - Web root responds.
@@ -245,7 +355,7 @@ Prod:
 - at least health/public page automatically.
 - authenticated full scenario can be a controlled pre-submission test to avoid credentials in CI where not needed.
 
-## 14. Agent development
+## 15. Agent development
 
 Agents may:
 - edit workflows,
@@ -258,7 +368,7 @@ Agents must not:
 - widen prod IAM without reason,
 - bypass failing tests simply to get green status.
 
-## 15. Required repository protections
+## 16. Required repository protections
 
 If practical:
 - main requires PR.

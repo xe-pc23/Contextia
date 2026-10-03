@@ -1,0 +1,88 @@
+name: Owner deployment
+on:
+  push:
+    branches: ['codex/local-delivery']
+  workflow_dispatch:
+    inputs:
+      stage:
+        type: choice
+        options: [dev, prod]
+        default: dev
+        required: true
+permissions:
+  contents: read
+jobs:
+  authorize:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Authorize deployment request
+        shell: bash
+        env:
+          REQUESTED_STAGE: ${{ inputs.stage || 'dev' }}
+          REQUESTED_EVENT: ${{ github.event_name }}
+          REQUESTED_REF: ${{ github.ref }}
+          REQUESTED_ACTOR: ${{ github.actor }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+        run: |
+          case "$REQUESTED_STAGE" in
+            dev) ;;
+            prod)
+              if [ "$REQUESTED_EVENT" != 'workflow_dispatch' ] || [ "$REQUESTED_REF" != 'refs/heads/main' ] || [ "$REQUESTED_ACTOR" != "$REPOSITORY_OWNER" ]; then
+                echo '::error::Production requires main and the repository owner.'
+                exit 1
+              fi
+              ;;
+            *) echo '::error::Unknown deployment stage.'; exit 1 ;;
+          esac
+  validate:
+    uses: ./.github/workflows/validate.yml
+  deploy:
+    needs: [authorize, validate]
+    environment: ${{ inputs.stage || 'dev' }}
+    concurrency:
+      group: contextia-deploy-${{ inputs.stage || 'dev' }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BUILD_ID: ${{ github.sha }}
+      CONTEXTIA_STAGE: ${{ inputs.stage || 'dev' }}
+      AWS_REGION: ap-northeast-1
+      AWS_EC2_METADATA_DISABLED: 'true'
+      BEDROCK_MODEL_ID: ${{ vars.BEDROCK_MODEL_ID }}
+      BEDROCK_REGION: ${{ vars.BEDROCK_REGION }}
+      BEDROCK_MODEL_RESOURCES: ${{ vars.BEDROCK_MODEL_RESOURCES }}
+      BEDROCK_STRUCTURED_OUTPUT: ${{ vars.BEDROCK_STRUCTURED_OUTPUT }}
+      MAP_KEY_EXPIRE_TIME: ${{ vars.MAP_KEY_EXPIRE_TIME }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 10.29.3
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.13.1
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          aws-region: ap-northeast-1
+          allowed-account-ids: '634512763705'
+          role-to-assume: arn:aws:iam::634512763705:role/GitHub${{ inputs.stage == 'prod' && 'Prod' || 'Dev' }}DeployRole
+      - name: Deploy selected stage
+        run: pnpm "deploy:$CONTEXTIA_STAGE"
+      - name: Web/API smoke at the deployed SHA (authenticated dev gate)
+        env:
+          SMOKE_OUTPUTS_FILE: cdk.out/${{ inputs.stage || 'dev' }}/outputs.json
+          SMOKE_MODE: ${{ inputs.stage != 'prod' && 'authenticated' || 'public' }}
+          SMOKE_USER_1_USERNAME: ${{ secrets.SMOKE_USER_1_USERNAME }}
+          SMOKE_USER_1_PASSWORD: ${{ secrets.SMOKE_USER_1_PASSWORD }}
+          SMOKE_USER_2_USERNAME: ${{ secrets.SMOKE_USER_2_USERNAME }}
+          SMOKE_USER_2_PASSWORD: ${{ secrets.SMOKE_USER_2_PASSWORD }}
+        run: pnpm "smoke:$CONTEXTIA_STAGE"
