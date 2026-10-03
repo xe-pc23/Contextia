@@ -2,8 +2,10 @@
 
 ## Current approach — 2026-10-03
 
-The owner cannot attach an iPhone to this Mac. Local development uses the React Native / Expo
-development build on the iOS Simulator. A member with a device can perform the hardware checks below.
+The owner assigned physical-device testing to another member on 2026-10-03. Local development uses
+the React Native / Expo development build on the iOS Simulator. The member records actual hardware
+results using [the iPhone handoff](IOS_DEVICE_HANDOFF.md); the owner does not need to pair their own
+iPhone with this Mac for that work. Android work remains paused at the owner's request.
 No credentials or messages have been sent to another member.
 
 The local Simulator Debug build succeeded with Xcode 26.6, iOS 26.5 runtime and iPhone 17.
@@ -54,8 +56,17 @@ private calendar event or push token.
 The member checks out the reviewed `codex/local-delivery` commit and uses their own local signing setup.
 For an iPhone, build with their own Apple development team and connected device using
 `EXPO_PUBLIC_STAGE=dev pnpm --filter @contextia/mobile ios --device` after native preparation.
-Personal Team provisioning is local development signing; it does not create an install link
-for every other iPhone. The simulator `.app` cannot be installed on an iPhone.
+The current `expo-notifications` plugin generates the `aps-environment` entitlement. Use a signing
+team/profile that supports Push Notifications; the current full native configuration is not assumed
+to provision with a free Personal Team. Apple documents program-specific capability support in its
+[iOS capability table](https://developer.apple.com/help/account/reference/supported-capabilities-ios/).
+Do not use the Simulator's ad hoc signature or disable signing for a physical iPhone. The simulator
+`.app` cannot be installed on an iPhone; local development signing does not create an install link
+for every other iPhone.
+
+For the physical iPhone, start Metro with `--lan`, use the member Mac's actual LAN IP address and keep
+both devices on the same trusted LAN. The Simulator's `--localhost` flow does not provide a reachable
+server to the iPhone. See the handoff for preparation, prioritized checks and the result template.
 
 For an already paired iPhone, Xcode can use a compatible wireless connection. Follow Apple's current
 [device connection instructions](https://developer.apple.com/documentation/xcode/managing-your-simulated-and-physical-devices-in-device-hub)

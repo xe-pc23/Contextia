@@ -285,3 +285,13 @@ exception in 298 retrieved lines. `docs/MOBILE_VALIDATION.md` records artifact/s
 reproduction commands, image references and the limited log evidence. Independent read-only review
 found no documentation/privacy issue. The native UI tool cannot bind this emulator; the owner
 performs its screen actions. PKCE, permission and native capability rows remain open.
+
+## Physical-device responsibility update — 2026-10-03 10:03 JST
+
+The owner assigned physical-device testing to another member. The member uses their own Mac,
+signing setup and iPhone; the owner's Mac/iPhone update and pairing are no longer a prerequisite
+for that test path. `docs/IOS_DEVICE_HANDOFF.md` records the reviewed source target, public dev
+Mobile client configuration, LAN Metro preparation, native signing constraints, prioritized checks
+and a result template. No member message or credential transfer was performed by the agent.
+Task 5/7 physical capability gates stay open until actual results return. Android remains paused,
+and the earlier local-build interruption remains in effect until the owner requests further work.
