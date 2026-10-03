@@ -15,7 +15,7 @@ The Console injects synthetic device context into the **same production backend*
 
 Its delivery policy is `preview`: the evaluation/providers/Bedrock path is real, but the judge does not consume notification quota or get blocked from seeing an answer because another judge ran the same scenario seconds earlier.
 
-### 1.1 Console status (local integration, 2026-10-03)
+### 1.1 Console status (2026-10-03)
 
 - Implemented in `apps/web`:
   - editors for coordinates (with Tokyo/Osaka Station shortcuts), scenario time with an IANA timezone, steps and goal, multiple calendar events, interests and notification preference overrides;
@@ -30,9 +30,11 @@ Its delivery policy is `preview`: the evaluation/providers/Bedrock path is real,
 - Every run is fixed to `mode="simulation"` / `deliveryMode="preview"`. There is no mode switch.
 - Dev is available at https://d1grgebh7iqqmf.cloudfront.net/. OIDC run [37046597403](https://github.com/xe-pc23/Contextia/actions/runs/37046597403) at `ba15f30` passed authenticated five-preset smoke, preview persistence/quota invariants, a live step recommendation, an actual transit card and chat ownership checks. Weather-adaptation's model call timed out and displayed degradation.
 - Earlier successful dev `0e443f828d84441ac032c045a47e40bfdb5437c8` passed [OIDC run 37057828984](https://github.com/xe-pc23/Contextia/actions/runs/37057828984): all five previews, live step/transit cards, explicit weather-unavailable fault with valid step recommendation, ownership/chat/idempotency/snapshot/quota invariants, Mobile SRP, one client reservation and quota increment, replay/duplicate/cap suppression, and recent EMF metric records. Some Routes calls were explicitly degraded; all five live inputs do not prove each named trigger will always be selected.
-- Current dev head `6c5b165` (mobile/session and smoke changes `6ecc2e7`) passed [OIDC run 37073130086](https://github.com/xe-pc23/Contextia/actions/runs/37073130086), including the five validation commands, exact-SHA deployment, mandatory authenticated gates and bounded correlated request-log privacy checks. Both owned chat 200/400 records were checked against strict fields; specified synthetic markers and three transient tokens were absent in the fully fetched bounded window. This is bounded evidence, not an exhaustive privacy guarantee. Existing daily caps were preserved; the uncapped positive reservation proof remains the separate run above. The arm64 Android Debug APK also compiled and passed independent manifest/signature inspection; [native validation](MOBILE_VALIDATION.md) records its Metro dependency and unverified runtime rows.
+- Earlier dev head `6c5b165` (mobile/session and smoke changes `6ecc2e7`) passed [OIDC run 37073130086](https://github.com/xe-pc23/Contextia/actions/runs/37073130086), including the five validation commands, exact-SHA deployment, mandatory authenticated gates and bounded correlated request-log privacy checks. Both owned chat 200/400 records were checked against strict fields; specified synthetic markers and three transient tokens were absent in the fully fetched bounded window. This is bounded evidence, not an exhaustive privacy guarantee. Existing daily caps were preserved; the uncapped positive reservation proof remains the separate run above. The arm64 Android Debug APK also compiled and passed independent manifest/signature inspection; [native validation](MOBILE_VALIDATION.md) records its Metro dependency and unverified runtime rows.
+- Current dev commit `8bb6c9a` passed all five local validation commands (1,290 tests / 80 files) and [OIDC deployment run 37084235490](https://github.com/xe-pc23/Contextia/actions/runs/37084235490). Its authenticated smoke passed five previews, a real scheduled transit recommendation carrying its route, live Places/Bedrock step recommendation, weather-fault degradation, ownership/idempotency, Mobile SRP, capped proactive invariants, and bounded log/EMF checks. These results use synthetic context and do not prove native OS delivery.
+- Production is live at [the public Scenario Console](https://dc9g8dlhqsr5j.cloudfront.net/) from main merge `7111bee`. The isolated `contextia-prod-bootstrap` and `contextia-prod-core` stacks reached `CREATE_COMPLETE`; public HTTPS/assets/config/health/401 smoke passed. The owner-authorized [production OIDC run 37085408256](https://github.com/xe-pc23/Contextia/actions/runs/37085408256) completed authorize, validate and deploy successfully. A dedicated synthetic judge account passed Cognito SRP, profile initialization, live step-goal preview (`notify` / `STEP_GOAL_REST`), owned detail and chat. Places, Weather, Routes and Bedrock were all reported `ok` for that API evaluation. Browser incognito PKCE sign-in was observed; its scenario result is still being checked separately.
 - Actual dev browser PKCE callback, live preview, map clicking/coordinate editing and logout worked. [Map proof](hackathon/evidence/dev-map-53dfd72.jpg), [Japanese preview](hackathon/evidence/dev-preview-0e443f8.jpg) and [signal/provider diagnostics](hackathon/evidence/dev-diagnostics-0e443f8.jpg) contain public test data and no credentials. Natural Japanese prose and selected Places usage were observed after the fixes; this is observed output quality, not a guarantee of every future model response.
-- Earlier `79ff4cd`/`53dfd72` failed live gates are preserved in the agent log. The successful run used the smoke identity without concurrent manual evaluations. Mobile SRP and synthetic proactive reservation are API/script evidence, not native sensor or OS notification proof. Simulator PKCE login, public simulated GPS, a neutral Calendar event, dev evaluation, owned detail/chat, preference save/readback and explicit logout passed; [dated native evidence](MOBILE_VALIDATION.md) records their limits. Physical-device capability results, refresh/denial, OS notifications, SNS delivery and production release remain open. The [local delivery plan](superpowers/plans/2026-10-02-local-solo-delivery.md) records these gates.
+- Earlier `79ff4cd`/`53dfd72` failed live gates are preserved in the agent log. The successful dev run used the smoke identity without concurrent manual evaluations. Mobile SRP and synthetic proactive reservation are API/script evidence, not native sensor or OS notification proof. Simulator PKCE login, public simulated GPS, a neutral Calendar event, dev evaluation, owned detail/chat, preference save/readback and explicit logout passed; [dated native evidence](MOBILE_VALIDATION.md) records their limits. Physical-device capability results, refresh/denial, OS notifications and SNS delivery remain open. The [local delivery plan](superpowers/plans/2026-10-02-local-solo-delivery.md) records these gates.
 
 ## 2. Judge flow
 
@@ -327,32 +329,21 @@ Hackathon qualification currently requires:
 - documented coding-agent connection to AWS,
 - accessible to AI scoring and human judges.
 
-Before final submission:
-- open production URL in incognito.
-- verify static assets from CloudFront.
-- verify judge authentication path.
-- verify one scenario end-to-end.
-- verify no IP allowlist/VPN restriction.
-- verify no localhost callback remains.
-- verify production account has sufficient quotas.
-- verify demo account is enabled.
-- verify credentials/instructions are supplied through allowed submission fields.
-- verify AWS MCP proof is documented.
+Verified on 2026-10-03:
+- [x] Production URL and static assets served over public CloudFront HTTPS; API health and unauthenticated 401 smoke passed.
+- [x] A dedicated synthetic judge account is enabled and passed Cognito SRP, production preview, owned detail and chat via the API.
+- [x] Production URL opened in a fresh browser incognito window and completed Cognito PKCE login with a public callback.
+- [x] AWS MCP connection and successful STS read are documented in the [sanitized execution record](hackathon/evidence/aws-mcp-recovery-2026-10-03.json).
+
+Still to finish before submission:
+- [ ] Confirm the recommendation result in the production browser after pressing **Run Scenario**. API success and browser login are separate checks.
+- [ ] Supply judge credentials and short instructions through the submission's permitted fields, without committing or posting the password.
+- [ ] Check production service quotas during the final rehearsal; a successful live request is a point-in-time result.
+- [ ] Complete the remaining physical-device capability rows in [Mobile validation](MOBILE_VALIDATION.md), if the native experience is part of the submitted demonstration.
 
 ## 13. Agent proof plan
 
-Store:
-```text
-docs/hackathon/
-├── AGENT_LOG.md
-├── codex-aws-mcp.png
-├── claude-aws-mcp.png
-└── cloudtrail-mcp-proof.png   # optional
-```
-
-AGENT_LOG should describe concrete tasks the agent completed with AWS interaction.
-
-Avoid cosmetic proof only; use the agent to perform real inspect/deploy/debug work.
+The [agent log](hackathon/AGENT_LOG.md) records concrete Codex development, AWS inspect, deployment and debugging work. The [sanitized AWS MCP execution record](hackathon/evidence/aws-mcp-recovery-2026-10-03.json) shows a successful real STS API call; it is a JSON execution record, not a UI screenshot. An additional screenshot or CloudTrail export is optional only if the submission form needs it. Keep credentials, OAuth values and private calendar context out of evidence.
 
 ## 14. Demo resilience
 
