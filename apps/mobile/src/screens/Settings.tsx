@@ -2,10 +2,17 @@ import { useState } from 'react';
 import { Button, Switch, Text, TextInput, View } from 'react-native';
 import type { Profile } from '@contextia/contracts';
 import type { MobileController, MobileState } from '../application/mobileController';
+import { useMessages } from '../i18n/I18nContext';
+import { languageForLocale } from '../i18n/messages';
 import { Card, Failure, styles } from './components';
 import { parsePreferencesDraft, preferencesDraft, type PreferencesDraft } from './presentation';
 
+// Language names stay in their own language so either can be found from the other.
+const languageChoices = [['ja-JP', '日本語'], ['en-US', 'English']] as const;
+
 function PreferencesForm({ profile, state, controller }: { profile: Profile; state: MobileState; controller: MobileController }) {
+  const t = useMessages();
+  const s = t.settings;
   const [draft, setDraft] = useState(() => preferencesDraft(profile.preferences));
   const parsed = parsePreferencesDraft(draft);
   const disabled = state.saving || state.collecting || state.evaluation.status === 'loading' || state.profile.status === 'loading';
@@ -17,27 +24,33 @@ function PreferencesForm({ profile, state, controller }: { profile: Profile; sta
       onChangeText={value => update(key, value)} />
   </View>;
   return <>
-    {textField('興味・好み（カンマ区切り）', 'interests')}
-    {textField('歩数目標', 'stepGoal')}
-    <Text style={styles.body}>通知の頻度</Text>
-    <View style={styles.row}>{([['low', '控えめ'], ['normal', '標準'], ['high', '多め']] as const).map(([value, label]) =>
-      <Button key={value} title={`${draft.notificationFrequency === value ? '✓ ' : ''}${label}`} disabled={disabled} onPress={() => update('notificationFrequency', value)} />
+    {textField(s.interests, 'interests')}
+    {textField(s.stepGoal, 'stepGoal')}
+    <Text style={styles.body}>{s.frequency}</Text>
+    <View style={styles.row}>{(['low', 'normal', 'high'] as const).map(value =>
+      <Button key={value} title={`${draft.notificationFrequency === value ? '✓ ' : ''}${s.frequencies[value]}`} disabled={disabled} onPress={() => update('notificationFrequency', value)} />
     )}</View>
-    <View style={styles.row}><Text style={styles.body}>通知を有効にする</Text><Switch accessibilityLabel="通知を有効にする" disabled={disabled} value={draft.notificationsEnabled} onValueChange={value => update('notificationsEnabled', value)} /></View>
-    {textField('言語（例: ja-JP）', 'locale')}
-    {textField('タイムゾーン（例: Asia/Tokyo）', 'timezone')}
-    {!parsed.success ? <Text style={styles.error}>歩数目標は 1～200000 の整数、好みは各64文字以内で20件まで、タイムゾーンは IANA 名で入力してください。</Text> : null}
-    <Button title={state.saving ? '保存中…' : '設定を保存'} disabled={disabled || !parsed.success} onPress={() => { if (parsed.success) void controller.savePreferences(parsed.data); }} />
-    {state.saveResult === 'saved' ? <Text accessibilityLiveRegion="polite" style={styles.success}>設定を保存しました。</Text> : null}
+    <View style={styles.row}><Text style={styles.body}>{s.notificationsEnabled}</Text><Switch accessibilityLabel={s.notificationsEnabled} disabled={disabled} value={draft.notificationsEnabled} onValueChange={value => update('notificationsEnabled', value)} /></View>
+    <Text style={styles.body}>{s.languageQuick}</Text>
+    <View style={styles.row}>{languageChoices.map(([locale, label]) =>
+      <Button key={locale} title={`${languageForLocale(draft.locale) === languageForLocale(locale) ? '✓ ' : ''}${label}`} disabled={disabled} onPress={() => update('locale', locale)} />
+    )}</View>
+    {textField(s.language, 'locale')}
+    {textField(s.timezone, 'timezone')}
+    {!parsed.success ? <Text style={styles.error}>{s.invalid}</Text> : null}
+    <Button title={state.saving ? s.saving : s.save} disabled={disabled || !parsed.success} onPress={() => { if (parsed.success) void controller.savePreferences(parsed.data); }} />
+    {state.saveResult === 'saved' ? <Text accessibilityLiveRegion="polite" style={styles.success}>{s.saved}</Text> : null}
     {typeof state.saveResult === 'object' ? <Failure error={state.saveResult} /> : null}
   </>;
 }
 
 export function Settings({ state, controller }: { state: MobileState; controller: MobileController }) {
-  return <Card title="設定">
-    <Button title={state.profile.status === 'loading' ? '取得中…' : '設定を再取得'} disabled={state.profile.status === 'loading' || state.saving} onPress={() => void controller.loadProfile()} />
-    {state.profile.status === 'loading' ? <Text style={styles.body}>設定を取得しています…</Text> : null}
+  const t = useMessages();
+  const s = t.settings;
+  return <Card title={s.title}>
+    <Button title={state.profile.status === 'loading' ? t.common.fetching : s.reload} disabled={state.profile.status === 'loading' || state.saving} onPress={() => void controller.loadProfile()} />
+    {state.profile.status === 'loading' ? <Text style={styles.body}>{s.loadingBody}</Text> : null}
     {state.profile.status === 'error' ? <Failure error={state.profile.error} /> : null}
-    {state.profile.data ? <PreferencesForm key={JSON.stringify(state.profile.data.preferences)} profile={state.profile.data} state={state} controller={controller} /> : <Text style={styles.note}>設定の取得後に編集できます。</Text>}
+    {state.profile.data ? <PreferencesForm key={JSON.stringify(state.profile.data.preferences)} profile={state.profile.data} state={state} controller={controller} /> : <Text style={styles.note}>{s.editAfterLoad}</Text>}
   </Card>;
 }

@@ -111,6 +111,17 @@ Rebuild native projects after changing modules or config plugins.
 - History/detail/chat use owned API routes and cancel stale screen work. Dashboard weather uses the
   normalized backend reading. Map links use supplied safe actions or supplied coordinates.
 
+## Display language
+
+UI strings live in `src/i18n/messages.ts` (Japanese and English, with a typed key set). The app
+chooses its own display language and never reads the device language. While signed in, the saved
+profile `locale` decides it (`ja*` → Japanese, anything else → English); Settings offers 日本語 /
+English shortcuts for that same field, which the backend also uses for Bedrock prose and
+Places/Geocoding language. The resulting choice is stored on the device (`contextia.ui-language` in
+SecureStore) so the sign-in screen keeps it after sign-out or restart; that screen also has its own
+日本語 / English switch. With no stored choice the app starts in Japanese. Model, place and calendar
+text are displayed as returned and are not translated on the device.
+
 ## Optional background suggestions and local notifications
 
 Enable background suggestions explicitly in Settings. The app checks saved notification preferences
