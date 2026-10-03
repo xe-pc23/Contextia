@@ -327,11 +327,24 @@ export function createEvaluateContext(deps: EvaluationDependencies): EvaluateCon
         providerStatus.places = { status: 'degraded', code: 'PLACE_STORAGE_UNAVAILABLE' };
         return finish(silent('Selected website could not be stored safely.', [...previewCodes, 'NO_MEANINGFUL_OPPORTUNITY']));
       }
-      const items = decision.recommendations.map(item => {
+      // The transit detector selected this exact scheduled journey before Bedrock. If the
+      // model omits its optional reference, keep the verified provider fact on the card.
+      const selectedTransitRoute = candidate.type === 'UPCOMING_EVENT_TRANSIT'
+        ? enrichment.routes.find(entry => entry.need === 'route-to-next-event' && entry.anchorKey === candidate.anchorKey
+          && (entry.result.status === 'ok' || entry.result.status === 'degraded')
+          && entry.result.data?.routeId === candidate.facts.routeId)?.result.data
+        : undefined;
+      const transitCardIndex = selectedTransitRoute && !decision.recommendations.some(item => item.route)
+        ? decision.recommendations.findIndex(item => !item.place || item.place.placeId === candidate.facts.destinationPlaceId)
+        : -1;
+      const usedSignals = transitCardIndex >= 0 && !decision.usedSignals.includes('transit')
+        ? [...decision.usedSignals, 'transit' as const] : decision.usedSignals;
+      const items = decision.recommendations.map((item, index) => {
         const id = deps.newId('item');
         const storagePlace = item.place ? storagePlaces.get(item.place.placeId) ?? null : null;
         const place = storagePlace ? publicPlace(storagePlace.place) : null;
-        const sourceRoute = item.route ? matchingRoute(item.route, associatedRoutes(item, enrichment)) : undefined;
+        const sourceRoute = item.route ? matchingRoute(item.route, associatedRoutes(item, enrichment))
+          : index === transitCardIndex ? selectedTransitRoute : undefined;
         const api: ApiRecommendationItem = { id, title: item.title, reason: item.reason, place, route: sourceRoute ? publicRoute(sourceRoute) : null, action: item.action };
         const storage: StorageRecommendationItem = { ...api, place: storagePlace };
         return { api, storage };
@@ -341,7 +354,7 @@ export function createEvaluateContext(deps: EvaluationDependencies): EvaluateCon
       const recommendation: RecommendationWrite = {
         id: recommendationId, evaluationId, contextReference: { evaluationId, capturedAt: context.capturedAt }, createdAt,
         triggerType: chosen.candidate.type, urgency: decision.urgency, message: decision.message,
-        recommendations: items.map(item => item.storage), usedSignals: decision.usedSignals,
+        recommendations: items.map(item => item.storage), usedSignals,
         summaryForDedup: decision.message.slice(0, 200), providerStatus,
         expiresAt: epochSeconds(now, policy.recommendationTtlSeconds)
       };
@@ -377,7 +390,7 @@ export function createEvaluateContext(deps: EvaluationDependencies): EvaluateCon
       return finish(EvaluationResultSchema.parse({
         ...base, decision: 'notify', recommendationId, triggerType: chosen.candidate.type, urgency: decision.urgency,
         message: decision.message, recommendations: items.map(item => item.api), decisionReason: decision.decisionReason,
-        usedSignals: decision.usedSignals, delivery: delivery(context, previewCodes, false), providerStatus
+        usedSignals, delivery: delivery(context, previewCodes, false), providerStatus
       }), [...storagePlaces.values()]);
     } catch (error: unknown) {
       const claim = pendingClaim;

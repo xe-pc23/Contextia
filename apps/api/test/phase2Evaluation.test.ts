@@ -103,6 +103,22 @@ describe('Phase 2: five fixtures through the same evaluation pipeline', () => {
     expect(state.writeRecommendation).not.toHaveBeenCalled();
     expect(state.commitProactiveRecommendation).not.toHaveBeenCalled();
   });
+  it('attaches the selected scheduled transit route when the model omits its optional reference', async () => {
+    const fixture = scenarios.find(value => value.id === 'upcoming-transit');
+    if (!fixture) throw new Error('Missing fixture');
+    const { evaluate, model, state } = setup(fixture, true);
+    model.decide.mockResolvedValue(ok({ decision: 'notify', decisionReason: 'Leave soon', urgency: 'medium',
+      message: 'Leave for the event.', usedSignals: ['calendar'], recommendations: [
+        { title: 'Head to the station', reason: 'The event is approaching.', action: { type: 'TRANSIT' } }
+      ] }));
+
+    const result = await evaluate({ userId: 'user-1', context: fixture.context });
+
+    expect(result).toMatchObject({ decision: 'notify', triggerType: 'UPCOMING_EVENT_TRANSIT', usedSignals: ['calendar', 'transit'],
+      recommendations: [{ route: { mode: 'transit', durationMinutes: 34,
+        departAt: '2026-10-01T15:10:00+09:00', arriveAt: '2026-10-01T15:44:00+09:00' } }] });
+    expect(state.writeRecommendation.mock.calls[0]?.[0].recommendation.recommendations[0]?.route).toEqual(result.recommendations[0]?.route);
+  });
   it('rejects a provider route from a candidate excluded from model input', async () => {
     const fixture = scenarios.find(value => value.id === 'free-time');
     const excludedRoute = fixture?.providers.routes.data?.[0];
