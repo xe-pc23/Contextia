@@ -1,8 +1,10 @@
 import { useState, type ReactNode } from 'react';
 import { Button, Linking, StyleSheet, Text, View } from 'react-native';
-import type { ApiRecommendationItem, ProviderStatusMap, ProviderStatusValue } from '@contextia/contracts';
+import type { ApiRecommendationItem, ProviderStatusMap } from '@contextia/contracts';
 import type { MobileFailure } from '../application/mobileController';
 import type { ContextCollectionResult, NativeReadStatus } from '../context/types';
+import { useMessages } from '../i18n/I18nContext';
+import type { Messages } from '../i18n/messages';
 import { failureMessage, formatTime } from './presentation';
 
 export const styles = StyleSheet.create({
@@ -24,46 +26,44 @@ export function Card({ title, children }: { title: string; children: ReactNode }
   return <View style={styles.card}><Text accessibilityRole="header" style={styles.heading}>{title}</Text>{children}</View>;
 }
 export function Failure({ error }: { error: MobileFailure }) {
+  const t = useMessages();
   return <View accessibilityLiveRegion="polite">
-    <Text style={styles.error}>{failureMessage(error)}</Text>
+    <Text style={styles.error}>{failureMessage(error, t)}</Text>
     {error.kind === 'http-error' && error.requestId && /^[A-Za-z0-9_-]{1,128}$/.test(error.requestId)
-      ? <Text style={styles.note}>問い合わせ ID: {error.requestId}</Text> : null}
+      ? <Text style={styles.note}>{t.failures.requestId}: {error.requestId}</Text> : null}
   </View>;
 }
-export function permissionLabel(status: NativeReadStatus): string {
-  return status === 'granted' ? '取得済み' : status === 'denied' ? '許可なし' : '未取得';
+export function permissionLabel(status: NativeReadStatus, t: Messages): string {
+  return status === 'granted' ? t.permission.granted : status === 'denied' ? t.permission.denied : t.permission.unknown;
 }
 export function CollectionSummary({ collection, timezone }: { collection: ContextCollectionResult | null; timezone: string | undefined }) {
-  if (!collection) return <Text style={styles.note}>端末の情報はまだ読み取っていません。</Text>;
+  const t = useMessages();
+  const c = t.collection;
+  if (!collection) return <Text style={styles.note}>{c.notRead}</Text>;
   if (collection.status !== 'ready') return <>
-    <Text style={styles.error}>{collection.status === 'location-unavailable' ? '現在地を取得できませんでした。' : '取得した情報を確認できませんでした。'}</Text>
-    <Text style={styles.note}>予定: {permissionLabel(collection.calendar)} / 歩数: {permissionLabel(collection.steps)}</Text>
+    <Text style={styles.error}>{collection.status === 'location-unavailable' ? c.locationUnavailable : c.invalid}</Text>
+    <Text style={styles.note}>{c.calendar}: {permissionLabel(collection.calendar, t)} / {t.signals.steps}: {permissionLabel(collection.steps, t)}</Text>
   </>;
   const { input, permissions } = collection;
   return <>
-    <Text style={styles.body}>現在地: {input.location.latitude.toFixed(5)}, {input.location.longitude.toFixed(5)}</Text>
-    <Text style={styles.note}>取得時刻: {formatTime(input.location.capturedAt, timezone)}</Text>
-    <Text style={styles.body}>予定: {input.calendar.length} 件 / {permissionLabel(permissions.calendar)}</Text>
-    <Text style={styles.body}>今日の歩数: {input.activity?.stepsToday === null || input.activity?.stepsToday === undefined ? '未取得' : `${input.activity.stepsToday.toLocaleString('ja-JP')} 歩`}</Text>
-    {input.activity?.stepGoal ? <Text style={styles.note}>歩数目標: {input.activity.stepGoal.toLocaleString('ja-JP')} 歩</Text> : null}
-    {input.activity?.confidence === 'low' ? <Text style={styles.note}>歩数は前景センサーの参考値です。</Text> : null}
+    <Text style={styles.body}>{c.location}: {input.location.latitude.toFixed(5)}, {input.location.longitude.toFixed(5)}</Text>
+    <Text style={styles.note}>{c.capturedAt}: {formatTime(input.location.capturedAt, timezone, t)}</Text>
+    <Text style={styles.body}>{c.calendar}: {c.calendarCount(input.calendar.length)} / {permissionLabel(permissions.calendar, t)}</Text>
+    <Text style={styles.body}>{c.stepsToday}: {input.activity?.stepsToday === null || input.activity?.stepsToday === undefined ? t.common.notFetched : c.steps(input.activity.stepsToday.toLocaleString(t.intlLocale))}</Text>
+    {input.activity?.stepGoal ? <Text style={styles.note}>{c.stepGoal}: {c.steps(input.activity.stepGoal.toLocaleString(t.intlLocale))}</Text> : null}
+    {input.activity?.confidence === 'low' ? <Text style={styles.note}>{c.lowConfidenceSteps}</Text> : null}
   </>;
 }
 
-const providerLabels: Record<keyof ProviderStatusMap, string> = {
-  weather: '天気', places: '周辺の場所', routes: '移動経路', geocoding: '目的地の確認', bedrock: '提案の生成'
-};
-const providerStateLabels: Record<ProviderStatusValue, string> = {
-  ok: '取得済み', degraded: '一部取得', unavailable: '取得できません',
-  timeout: '時間切れ', error: '取得に失敗', not_requested: '未取得'
-};
 export function ProviderHealth({ value }: { value: ProviderStatusMap | undefined }) {
-  return <Card title="情報の取得状況">{(Object.keys(providerLabels) as (keyof ProviderStatusMap)[]).map(key =>
-    <Text key={key} style={styles.body}>{providerLabels[key]}: {value ? providerStateLabels[value[key].status] : '未取得'}</Text>
+  const t = useMessages();
+  return <Card title={t.providerHealthTitle}>{(Object.keys(t.providers) as (keyof ProviderStatusMap)[]).map(key =>
+    <Text key={key} style={styles.body}>{t.providers[key]}: {value ? t.providerStates[value[key].status] : t.common.notFetched}</Text>
   )}</Card>;
 }
 
 export function RecommendationCards({ items, timezone }: { items: readonly ApiRecommendationItem[]; timezone: string | undefined }) {
+  const t = useMessages();
   const [failedAction, setFailedAction] = useState<string | null>(null);
   const open = async (id: string, url: string) => {
     setFailedAction(null);
@@ -77,16 +77,16 @@ export function RecommendationCards({ items, timezone }: { items: readonly ApiRe
       <Text style={styles.body}>{item.reason}</Text>
       {item.place ? <Text style={styles.body}>{item.place.name}{item.place.distanceMeters === undefined ? '' : ` / ${Math.round(item.place.distanceMeters)} m`}</Text> : null}
       {item.route ? <>
-        <Text style={styles.body}>移動時間: {Math.ceil(item.route.durationMinutes)} 分{item.route.transfers === undefined ? '' : ` / 乗換 ${item.route.transfers} 回`}</Text>
-        {item.route.departAt ? <Text style={styles.note}>出発: {formatTime(item.route.departAt, timezone)}</Text> : null}
-        {item.route.arriveAt ? <Text style={styles.note}>到着: {formatTime(item.route.arriveAt, timezone)}</Text> : null}
+        <Text style={styles.body}>{t.cards.travelTime(Math.ceil(item.route.durationMinutes))}{item.route.transfers === undefined ? '' : t.cards.transfers(item.route.transfers)}</Text>
+        {item.route.departAt ? <Text style={styles.note}>{t.cards.depart}: {formatTime(item.route.departAt, timezone, t)}</Text> : null}
+        {item.route.arriveAt ? <Text style={styles.note}>{t.cards.arrive}: {formatTime(item.route.arriveAt, timezone, t)}</Text> : null}
         {item.route.attributions?.map((attribution, index) => <View key={`${attribution.text}-${index}`}>
           <Text style={styles.note}>{attribution.text}</Text>
-          {attribution.url ? <Button title="提供元を開く" onPress={() => void open(item.id, attribution.url!)} /> : null}
+          {attribution.url ? <Button title={t.cards.openSource} onPress={() => void open(item.id, attribution.url!)} /> : null}
         </View>)}
       </> : null}
-      {url ? <Button title={item.action.type === 'MAP' ? '地図を開く' : item.action.type === 'TRANSIT' ? '移動経路を開く' : 'Web サイトを開く'} onPress={() => void open(item.id, url)} /> : null}
-      {failedAction === item.id ? <Text style={styles.error}>リンクを開けませんでした。</Text> : null}
+      {url ? <Button title={item.action.type === 'MAP' ? t.cards.openMap : item.action.type === 'TRANSIT' ? t.cards.openRoute : t.cards.openWebsite} onPress={() => void open(item.id, url)} /> : null}
+      {failedAction === item.id ? <Text style={styles.error}>{t.cards.linkFailed}</Text> : null}
     </View>;
   })}</>;
 }

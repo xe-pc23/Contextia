@@ -5,6 +5,7 @@ import { Platform } from 'react-native';
 import type { BackendClient } from '../api/backendClient';
 import type { CognitoConfiguration } from '../auth/cognitoConfig';
 import { readBackgroundSession } from '../auth/secureSessionStore';
+import { languageForLocale, messagesFor } from '../i18n/messages';
 import { clearDisplayedNotifications, notificationPermission } from '../notifications/nativeNotifications';
 import { backgroundSessionIdentity } from './session';
 import { backgroundSettingsKey, hashIdentity, LOCATION_TASK, readBackgroundSettings, writeBackgroundSettings } from './locationTask';
@@ -68,7 +69,7 @@ async function enroll(config: CognitoConfiguration, client: Pick<BackendClient, 
     if (!await eligible()) { await clearEnrollment(config); return false; }
     await Location.startLocationUpdatesAsync(LOCATION_TASK, { accuracy: Location.Accuracy.Balanced, distanceInterval: 100,
       deferredUpdatesDistance: 100, pausesUpdatesAutomatically: true, showsBackgroundLocationIndicator: true,
-      ...(Platform.OS === 'android' ? { foregroundService: { notificationTitle: 'Contextia', notificationBody: 'バックグラウンドで周辺の提案を確認しています', killServiceOnDestroy: true } } : {}) });
+      ...(Platform.OS === 'android' ? { foregroundService: { notificationTitle: 'Contextia', notificationBody: messagesFor(languageForLocale(profile.data.preferences.locale)).background.androidServiceBody, killServiceOnDestroy: true } } : {}) });
     if (!await eligible()) { await clearEnrollment(config); return false; }
     return true;
   } catch { await clearEnrollment(config).catch(() => undefined); return false; }

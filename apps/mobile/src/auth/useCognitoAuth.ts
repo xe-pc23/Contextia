@@ -8,11 +8,13 @@ import { SessionManager } from './sessionManager';
 import { toStoredSession, type StoredSession } from './sessionModel';
 import { withTimeout } from '../async/withTimeout';
 import { disableBackground } from '../background/control';
+import type { AuthMessageKey } from '../i18n/messages';
 
 export type CognitoAuthState = {
   status: 'loading' | 'signed-out' | 'signed-in' | 'error';
   busy: boolean;
-  message: string | null;
+  /** Key into the localized auth messages; the screen chooses the language. */
+  message: AuthMessageKey | null;
   signIn: () => Promise<void>;
   signOut: () => Promise<void>;
   getAccessToken: () => Promise<string | null>;
@@ -35,7 +37,7 @@ export function useCognitoAuth(config: CognitoConfiguration): CognitoAuthState {
   const working = useRef(false);
   const [status, setStatus] = useState<CognitoAuthState['status']>('loading');
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useState<AuthMessageKey | null>(null);
   const requestConfiguration = useMemo<AuthSession.AuthRequestConfig>(() => ({
     clientId: config.clientId, redirectUri: config.redirectUri, scopes: ['openid'],
     responseType: AuthSession.ResponseType.Code, usePKCE: true,
@@ -70,7 +72,7 @@ export function useCognitoAuth(config: CognitoConfiguration): CognitoAuthState {
     if (discovery?.authorizationEndpoint && discovery.tokenEndpoint) return;
     const timer = setTimeout(() => {
       setStatus('error');
-      setMessage('認証サービスに接続できません。ネットワークを確認してください。');
+      setMessage('serviceUnreachable');
     }, 12_000);
     return () => clearTimeout(timer);
   }, [discovery?.authorizationEndpoint, discovery?.tokenEndpoint]);
@@ -81,14 +83,14 @@ export function useCognitoAuth(config: CognitoConfiguration): CognitoAuthState {
     void manager.restore().catch(async () => {
       if (generation !== lifecycle.current) return;
       await manager.clear().catch(() => undefined);
-      if (generation === lifecycle.current) setMessage('保存済みの認証を復元できませんでした。もう一度サインインしてください。');
+      if (generation === lifecycle.current) setMessage('restoreFailed');
     });
   }, [manager, discovery?.tokenEndpoint]);
 
   const signIn = useCallback(async () => {
     if (working.current) return;
     if (!request || !discovery?.tokenEndpoint) {
-      setMessage('認証サービスへの接続を確認してから、もう一度サインインしてください。');
+      setMessage('checkServiceThenSignIn');
       return;
     }
     working.current = true;
@@ -100,7 +102,7 @@ export function useCognitoAuth(config: CognitoConfiguration): CognitoAuthState {
       if (generation !== lifecycle.current) return;
       if (result.type !== 'success') {
         setStatus(result.type === 'error' ? 'error' : 'signed-out');
-        if (result.type === 'error') setMessage('サインインできませんでした。認証設定を確認してください。');
+        if (result.type === 'error') setMessage('signInFailed');
         return;
       }
       const code = result.params['code'];
@@ -117,7 +119,7 @@ export function useCognitoAuth(config: CognitoConfiguration): CognitoAuthState {
     } catch {
       if (generation === lifecycle.current) {
         setStatus('error');
-        setMessage('サインインできませんでした。ネットワークと認証設定を確認してください。');
+        setMessage('signInNetworkFailed');
       }
     } finally {
       if (generation === lifecycle.current) { working.current = false; setBusy(false); }
@@ -151,8 +153,8 @@ export function useCognitoAuth(config: CognitoConfiguration): CognitoAuthState {
       // The local session was already invalidated; never expose upstream errors.
     } finally {
       if (generation === lifecycle.current) {
-        if (!cleared) setMessage('端末に保存した認証を削除できませんでした。端末の設定を確認してください。');
-        else if (!browserCompleted) setMessage('認証サービスからのサインアウトを確認できませんでした。ネットワークを確認してください。');
+        if (!cleared) setMessage('localClearFailed');
+        else if (!browserCompleted) setMessage('remoteSignOutUnconfirmed');
         working.current = false;
         setBusy(false);
       }
